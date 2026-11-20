@@ -1,0 +1,11 @@
+{
+  "name": "pc-package",
+  "private": true,
+  "description": "PC管理パッケージ（Google Apps Script）",
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "eslint": "^10.1.0"
+  }
+}
