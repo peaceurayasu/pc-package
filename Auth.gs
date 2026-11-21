@@ -9,6 +9,7 @@
  *   ログアウト・パスワードの変更・スタッフの無効化・期限（REMEMBER_DAYS 日）で、使えなくなる
  * - 公開関数：login / loginWithRemember / logout / changeMyPassword / saveMyStartView / saveMyView / listStaff / saveStaff / resetStaffPassword
  */
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.111.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // ハッシュ・乱数
@@ -28,9 +29,77 @@ function newToken_() {
   return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '').toLowerCase();
 }
 
+/**
+ * SHA-256 を、GAS のサービスを呼ばずに計算する（結果は Utilities.computeDigest と同じ）。
+ * パスワードの確認は300回くり返すので、1回ずつサービスを呼ぶと、ログインが1秒前後かかっていた（v0.88.0）。
+ */
+const SHA256_K_ = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+];
+function utf8Bytes_(text) {
+  const out = [];
+  const s = String(text);
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+      const d = s.charCodeAt(i + 1);
+      if (d >= 0xdc00 && d <= 0xdfff) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i++; }
+    }
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return out;
+}
+function sha256HexJs_(text) {
+  const bytes = utf8Bytes_(text);
+  const bitLen = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const hi = Math.floor(bitLen / 4294967296), lo = bitLen >>> 0;
+  bytes.push((hi >>> 24) & 255, (hi >>> 16) & 255, (hi >>> 8) & 255, hi & 255, (lo >>> 24) & 255, (lo >>> 16) & 255, (lo >>> 8) & 255, lo & 255);
+  const H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+  const w = new Array(64);
+  for (let off = 0; off < bytes.length; off += 64) {
+    for (let t = 0; t < 16; t++) {
+      const j = off + t * 4;
+      w[t] = ((bytes[j] << 24) | (bytes[j + 1] << 16) | (bytes[j + 2] << 8) | bytes[j + 3]) | 0;
+    }
+    for (let t = 16; t < 64; t++) {
+      const x = w[t - 15], y = w[t - 2];
+      const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
+      const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+    }
+    let a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], h = H[7];
+    for (let t = 0; t < 64; t++) {
+      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + SHA256_K_[t] + w[t]) | 0;
+      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) | 0;
+      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+    }
+    H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+    H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + h) | 0;
+  }
+  let hex = '';
+  for (let i = 0; i < 8; i++) hex += ('00000000' + (H[i] >>> 0).toString(16)).slice(-8);
+  return hex;
+}
+
 function hashPassword_(password, salt, rounds) {
-  let h = sha256Hex_(salt + ':' + password);
-  for (let i = 0; i < rounds; i++) h = sha256Hex_(h + ':' + salt);
+  let h = sha256HexJs_(salt + ':' + password);
+  for (let i = 0; i < rounds; i++) h = sha256HexJs_(h + ':' + salt);
   return h;
 }
 
@@ -250,7 +319,7 @@ function dropRemembersOf_(staffId, keep, newHash) {
 }
 
 /** セッションを作って、最初の画面のデータと一緒に返す（login と loginWithRemember で同じ） */
-function openSession_(staff, withRest) {
+function openSession_(staff, withRest, longTicket) {
   const id = normStaffId_(staff['スタッフID']);
   const token = newToken_();
   putSession_(token, staff, Date.now());
@@ -266,9 +335,9 @@ function openSession_(staff, withRest) {
     console.warn('最終ログインを書けませんでした（ほかの保存と重なった）');
   }
   const role = staff['権限'] === ROLE_ADMIN ? ROLE_ADMIN : ROLE_STAFF;
-  const me = { id: id, name: staff['表示名'] || id, role: role, isAdmin: role === ROLE_ADMIN, startView: staffStartView_(staff) };
+  const me = { id: id, name: staff['表示名'] || id, role: role, isAdmin: role === ROLE_ADMIN, startView: staffStartView_(staff), lastLogin: String(staff['最終ログイン'] || '') };
   // 最初の画面に要るデータも一緒に返す（ログインのあとにもう1往復しないで済むように）
-  const out = { token: token, me: me, boot: bootCore_(me), resume: issueResume_(token, { id: id, stamp: passwordStamp_(staff['パスワードハッシュ']) }) };
+  const out = { token: token, me: me, boot: bootCore_(me), resume: issueResume_(token, { id: id, stamp: passwordStamp_(staff['パスワードハッシュ']) }, longTicket === true) };
   // パソコンは、残りのデータも同じ返事で渡す（もう1往復しないで済むように。v0.20.0）
   if (withRest === true) { const rest = bootRestIfWarm_(me); if (rest) out.rest = rest; }
   return out;
@@ -299,7 +368,7 @@ function resumeParse_(raw) {
   let r = null;
   try { r = JSON.parse(String(raw || '')); } catch (e) { r = null; }
   if (!r || typeof r !== 'object' || typeof r.id !== 'string' || typeof r.stamp !== 'string' || !(Number(r.exp) > 0)) return null;
-  return { id: r.id, stamp: r.stamp, exp: Number(r.exp) };
+  return { id: r.id, stamp: r.stamp, exp: Number(r.exp), long: r.long === 1 };
 }
 /** 期限の切れた券・多すぎる券を片づける */
 function tidyResumeProps_(props) {
@@ -319,7 +388,13 @@ function tidyResumeProps_(props) {
  * @param {string} token
  * @param {{id:string, stamp:string}=} who 分かっていれば渡す（無ければ控えのセッションから読む）
  */
-function issueResume_(token, who) {
+/*
+ * v0.106.0：「ログインしたまま」の端末では、券を REMEMBER_DAYS 日使えるようにする（long）。
+ *   iPhone の Safari は、Google の枠の中の保存（localStorage）とクッキーを、閉じたときや数日で消すことがある。
+ *   そのとき残るのは、ページのURLの券だけ。12時間で切れると、翌日に開くとログアウトしていた。
+ *   券は使うたび・20分ごとに替わり、前の券は2分で使えなくなるので、長くしても、古いURLは使えない。
+ */
+function issueResume_(token, who, long) {
   try {
     const cache = CacheService.getScriptCache();
     const ticket = newToken_();
@@ -328,7 +403,7 @@ function issueResume_(token, who) {
     if (who && who.id) {
       const props = PropertiesService.getScriptProperties();
       if (Math.random() < 0.2) tidyResumeProps_(props);
-      props.setProperty(resumePropKey_(ticket), JSON.stringify({ id: String(who.id), stamp: String(who.stamp || ''), exp: Date.now() + RESUME_KEEP_HOURS * 3600000 }));
+      props.setProperty(resumePropKey_(ticket), JSON.stringify({ id: String(who.id), stamp: String(who.stamp || ''), exp: Date.now() + (long ? REMEMBER_DAYS * 86400000 : RESUME_KEEP_HOURS * 3600000), long: long ? 1 : 0 }));
     }
     return ticket;
   } catch (e) {
@@ -352,7 +427,8 @@ function dropResume_(ticket) {
  * @return {{ok:boolean, token:string, me:Object, remember:string=}}
  */
 function login(params) {
-  return api_(function () {
+  const tStart = Date.now();
+  return apiPack_(params, function () {
     const p = params || {};
     const id = normStaffId_(p.staffId);
     const pw = typeof p.password === 'string' ? p.password : '';
@@ -377,8 +453,15 @@ function login(params) {
     }
     cache.remove(failKey);
 
-    const out = openSession_(staff, p.withRest === true);
+    const out = openSession_(staff, p.withRest === true, p.remember === true);
     if (p.remember === true) {
+      // この端末が前に持っていた合言葉は、新しいものと入れ替える（ログインし直すたびに、端末の枠が減っていかないように。v0.91.0）
+      if (isHex64_(p.prevRemember)) {
+        try {
+          const pk = rememberKey_(p.prevRemember), pr = rememberParse_(PropertiesService.getScriptProperties().getProperty(pk));
+          if (pr && pr.id === id) PropertiesService.getScriptProperties().deleteProperty(pk);
+        } catch (e) { console.warn('前の合言葉を消せませんでした: ' + e); }
+      }
       // 合言葉を保存できなくても（プロパティの一時的なエラーなど）、ログインは通す
       try {
         out.remember = issueRemember_(staff);
@@ -388,6 +471,7 @@ function login(params) {
         out.rememberFailed = true;
       }
     }
+    out.srvMs = Date.now() - tStart;      // サーバーで使った時間（画面の下に出す。v0.88.0）
     return out;
   });
 }
@@ -399,22 +483,34 @@ function login(params) {
  * @return {{ok:boolean, token:string, me:Object}}
  */
 function loginWithRemember(params) {
-  return api_(function () {
+  return apiPack_(params, function () {
     const secret = params && params.remember;
-    const fail = function () { return appError_('unauthorized', 'ログインし直してください。'); };
+    // 画面に出す理由も分けておく（どれで切れたか、あとで分かるように。v0.92.0）
+    const fail = function (why) { return appError_('unauthorized', why || 'ログインし直してください。'); };
     if (!isHex64_(secret)) throw fail();
     const props = PropertiesService.getScriptProperties();
     const key = rememberKey_(secret);
     const raw = props.getProperty(key);
-    if (!raw) throw fail();
+    if (!raw) throw fail('この端末の「ログインしたまま」が、サーバーに残っていません（ほかの端末で6台以上ログインした・ログアウトした・長く使わなかった、のどれか）。');
     const r = rememberParse_(raw);
-    const staff = r && r.exp > Date.now() ? findStaff_(r.id) : null;
-    if (!staff || staff['有効'] !== YES || passwordStamp_(staff['パスワードハッシュ']) !== r.stamp) {
-      props.deleteProperty(key);
-      throw fail();
+    if (!r || r.exp <= Date.now()) { props.deleteProperty(key); throw fail('「ログインしたまま」の期限（' + REMEMBER_DAYS + '日）が切れました。'); }
+    const staff = findStaff_(r.id);
+    if (!staff || staff['有効'] !== YES) { props.deleteProperty(key); throw fail('このスタッフは、いま使えない設定になっています。'); }
+    if (passwordStamp_(staff['パスワードハッシュ']) !== r.stamp) { props.deleteProperty(key); throw fail('パスワードが変わったので、「ログインしたまま」が切れました。'); }
+    const out = openSession_(staff, !!(params && params.withRest === true), true);
+    // 使うたびに期限を延ばす（最後に使った日から REMEMBER_DAYS 日。毎日使う端末が、30日めに切れないように。v0.91.0）
+    let exp = r.exp;
+    const now = Date.now();
+    if (exp - now < (REMEMBER_DAYS - 1) * 86400000) {
+      try {
+        exp = now + REMEMBER_DAYS * 86400000;
+        props.setProperty(key, JSON.stringify({ id: r.id, exp: exp, stamp: r.stamp }));
+      } catch (e) {
+        exp = r.exp;
+        console.warn('「ログインしたまま」の期限を延ばせませんでした: ' + e);
+      }
     }
-    const out = openSession_(staff, !!(params && params.withRest === true));
-    out.rememberUntil = Utilities.formatDate(new Date(r.exp), scriptTz_(), 'yyyy-MM-dd');
+    out.rememberUntil = Utilities.formatDate(new Date(exp), scriptTz_(), 'yyyy-MM-dd');
     return out;
   });
 }
@@ -501,11 +597,15 @@ function saveMyView(params) {
 }
 
 /**
+ * ログアウト。この端末の「ログインしたまま」も取り消す。
+ * @param {{token:string, remember:string=}} params
+ */
+/**
  * 読み直したとき：URLの券から、ログインを戻す。最初の画面のデータと、新しい券も返す。
  * @param {{ticket:string}} params
  */
 function resumeSession(params) {
-  return api_(function () {
+  return apiPack_(params, function () {
     const ticket = params && params.ticket;
     const fail = function () { return appError_('unauthorized', 'ログインし直してください。'); };
     if (!isHex64_(ticket)) throw fail();
@@ -514,10 +614,16 @@ function resumeSession(params) {
     const token = cache.get(key);
     let me = null;
     if (isHex64_(token)) { try { me = requireSession_(token); } catch (e) { me = null; } }
+    const keep = params.keep === true;      // この端末は「ログインしたまま」（長い券を出す）
     if (me) {
       cache.put(key, token, RESUME_GRACE_SECONDS); // 前の券は、すぐには消さない（2つのタブで同時に読み直したとき用）
-      try { PropertiesService.getScriptProperties().deleteProperty(resumePropKey_(ticket)); } catch (e) { /* 期限で切れる */ }
-      const out = { token: token, me: me, boot: bootCore_(me), resume: issueResume_(token) };
+      let wasLong = false;
+      try {
+        const pp = PropertiesService.getScriptProperties(), pkk = resumePropKey_(ticket), old = resumeParse_(pp.getProperty(pkk));
+        wasLong = !!(old && old.long);
+        pp.deleteProperty(pkk);
+      } catch (e) { /* 期限で切れる */ }
+      const out = { token: token, me: me, boot: bootCore_(me), resume: issueResume_(token, null, keep || wasLong) };
       if (params.withRest === true) { const rest = bootRestIfWarm_(me); if (rest) out.rest = rest; }
       return out;
     }
@@ -529,7 +635,7 @@ function resumeSession(params) {
     const staff = findStaff_(r.id);
     if (!staff || staff['有効'] !== YES || passwordStamp_(staff['パスワードハッシュ']) !== r.stamp) { props.deleteProperty(pk); throw fail(); }
     props.deleteProperty(pk);                      // 使った券は使えなくする（新しい券を返す）
-    return openSession_(staff, params.withRest === true);
+    return openSession_(staff, params.withRest === true, keep || r.long);
   });
 }
 
@@ -547,14 +653,10 @@ function renewResume(params) {
       if (cache.get(key) === p.token) cache.put(key, p.token, RESUME_GRACE_SECONDS);
       try { PropertiesService.getScriptProperties().deleteProperty(resumePropKey_(p.ticket)); } catch (e) { /* 期限で切れる */ }
     }
-    return { resume: issueResume_(p.token) };
+    return { resume: issueResume_(p.token, null, p.keep === true) };
   });
 }
 
-/**
- * ログアウト。この端末の「ログインしたまま」と、読み直し用の券も取り消す。
- * @param {{token:string, remember:string=, ticket:string=}} params
- */
 function logout(params) {
   return api_(function () {
     const token = params && params.token;
@@ -590,7 +692,7 @@ function changeMyPassword(params) {
     });
     // この端末の読み直し用の券も、新しいパスワードに合わせて出し直す（v0.28.0。古い券は印が合わず使えないため）
     if (isHex64_(p.ticket)) dropResume_(p.ticket);
-    return { resume: issueResume_(p.token) };
+    return { resume: issueResume_(p.token, null, p.keep === true) };
   });
 }
 

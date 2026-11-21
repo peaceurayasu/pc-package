@@ -1,8 +1,12 @@
 <!DOCTYPE html>
 <html lang="ja">
+<meta name="file-version" content="@file-version 0.111.1">
 <head>
 <meta charset="utf-8">
 <base target="_top">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all';this.onload=null;" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap">
 <?!= include_('AdminCss') ?>
 </head>
 <body data-logo="<?= logo ?>">
@@ -34,13 +38,21 @@
       <button class="btn small phone-only" type="button" id="topMenu" data-act="openMenu" aria-label="メニュー">☰ メニュー</button>
       <div class="user">
         <button class="btn small primary" type="button" data-act="quickAdd">＋ 記録</button>
-        <details class="acct" id="acct"><summary class="btn small"><span class="who" id="who"></span> ▾</summary>
-          <div class="acct-menu">
-            <button class="btn small" type="button" data-act="openMyPrefs">自分の設定</button>
-            <button class="btn small" type="button" data-act="openPassword">パスワード変更</button>
-            <button class="btn small" type="button" data-act="logout">ログアウト</button>
-          </div></details>
       </div>
+    </div>
+    <div class="welcome" id="welcome">
+      <details class="acct" id="acct"><summary class="btn small"><span class="w-msg" id="welcomeMsg"></span> ▾</summary>
+        <div class="acct-menu left">
+          <button class="btn small" type="button" data-act="openMyPrefs">自分の設定</button>
+          <button class="btn small" type="button" data-act="openPassword">パスワード変更</button>
+          <button class="btn small" type="button" data-act="refreshFull" title="スプレッドシートを手で直したあとなど">すべて読み直す</button>
+        </div></details>
+      <span class="w-sub" id="lastLogin"></span>
+      <span class="w-right">
+        <span class="w-sub" id="timingSlot"></span>
+        <button class="btn small" type="button" id="refreshAll" data-act="refreshAll" title="いま見ている画面のぶんだけを、読み直します。全部を読み直すときは、名前の横のメニューの「すべて読み直す」を使います">⟳ 更新</button>
+        <button class="btn small" type="button" id="welcomeLogout" data-act="logout">ログアウト</button>
+      </span>
     </div>
   </header>
   <main id="main"></main>
@@ -52,18 +64,21 @@
 document.addEventListener('click', function (e) {
   var d = document.getElementById('acct');
   if (d && d.open && (!d.contains(e.target) || e.target.closest('.acct-menu button'))) d.open = false;
+  var n = document.getElementById('navMore');
+  if (n && n.open && (!n.contains(e.target) || e.target.closest('.navpop button'))) n.open = false;
 }, true);
-document.addEventListener('keydown', function (e) { var d = document.getElementById('acct'); if (e.key === 'Escape' && d && d.open) d.open = false; });
+document.addEventListener('keydown', function (e) {
+  var d = document.getElementById('acct'), n = document.getElementById('navMore');
+  if (e.key === 'Escape') { if (d && d.open) d.open = false; if (n && n.open) n.open = false; }
+});
 </script>
 <div id="printArea"></div>
 <div id="toast" hidden role="status"></div>
 
-<?!= include_('AdminJsCore') ?>
-<?!= include_('AdminJsViews') ?>
-<?!= include_('AdminJsMobile') ?>
-<?!= include_('AdminJsUi') ?>
-<?!= include_('AdminJsLayout') ?>
-<?!= include_('AdminJsPhoto') ?>
-<?!= include_('AdminJsActions') ?>
+<?!= include_('AdminCore') ?>
+<?!= include_('AdminViews') ?>
+<?!= include_('AdminMobile') ?>
+<?!= include_('AdminModals') ?>
+<?!= include_('AdminActions') ?>
 </body>
 </html>

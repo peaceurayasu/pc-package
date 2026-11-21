@@ -1,0 +1,2356 @@
+<script>
+'use strict';
+var FILE_VERSION_ADMINMODALS = '@file-version 0.127.2';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+// ===========================================================================
+// 重ねる窓
+// ===========================================================================
+function openModal(html, narrow, sheet) {
+  var wrap = document.createElement('div');
+  wrap.className = 'overlay' + (sheet ? ' sheet' : '');
+  wrap.innerHTML = '<div class="dialog' + (narrow ? ' narrow' : '') + '" role="dialog" aria-modal="true">' + html + '</div>';
+  $('modals').appendChild(wrap);
+  // スマホでは、開いた瞬間にキーボードを出さない（候補やボタンが隠れるので）。押したところから打ち始める
+  var first = wrap.querySelector(isPhone() ? 'button.primary' : 'input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea, button.primary');
+  if (first && !isPhone()) first.focus();
+  armBack();
+  linkPreviewAll(wrap);
+  setTimeout(function () { linkPreviewAll(wrap); }, 0);
+  if (typeof addVoiceButtons === 'function') addVoiceButtons(wrap);
+  return wrap;
+}
+/** 入力欄にリンクが入っているとき、欄の下に「押せるリンク」の見え方を出す（v0.103.0） */
+function linkPreviewOne(el) {
+  if (!el || !el.matches || !el.matches('textarea, input[type="text"]')) return;
+  if (!el.closest('form') || LINK_SKIP_NAMES[el.name] || el.closest('[data-nolink]') || el.id === 'askInput' || el.id === 'linkLabel' || el.id === 'linkUrl') return;
+  var has = /\]\(https?:\/\/|https?:\/\//.test(el.value);
+  var prev = el.nextElementSibling && el.nextElementSibling.classList.contains('linkprev') ? el.nextElementSibling : null;
+  if (!has) { if (prev) prev.remove(); return; }
+  if (!prev) { prev = document.createElement('div'); prev.className = 'linkprev'; el.parentNode.insertBefore(prev, el.nextSibling); }
+  prev.innerHTML = '<span class="minor">リンクの見え方：</span>' + linkify(el.value);
+}
+function linkPreviewAll(root) {
+  var els = root.querySelectorAll('form textarea, form input[type="text"]');
+  for (var i = 0; i < els.length; i++) linkPreviewOne(els[i]);
+}
+document.addEventListener('input', function (e) { linkPreviewOne(e.target); });
+function closeModal(el) {
+  var wrap = el && el.closest ? el.closest('.overlay') : null;
+  if (!wrap) { var all = $('modals').children; wrap = all[all.length - 1]; }
+  if (wrap && wrap.querySelector('form[data-form]')) { S.openRec = ''; saveLocSoon(); }
+  if (wrap && wrap.classList.contains('scanwrap') && SCAN && SCAN.pages && SCAN.pages.length && !wrap._confirmed) { ACT.scanClose(); return; }   // 撮りためたページがあれば、確かめてから
+  if (wrap && wrap.classList.contains('scanwrap')) closeScanner();     // カメラを止める
+  if (wrap && wrap._blobUrl) { try { URL.revokeObjectURL(wrap._blobUrl); } catch (e) { /* そのまま */ } }
+  if (wrap && VOICE.rec && VOICE.btn && wrap.contains(VOICE.btn)) voiceStop();   // 音声入力を止める（v0.117.0）
+  if (wrap) {
+    // 入力の途中で閉じたときは、下書きに残す（まちがって「やめる」や「戻る」を押しても、打ち直さなくてよいように）
+    var dform = wrap.querySelector('form[data-form]');
+    if (dform && !wrap._noDraft && S.D && S.D.schema[dform.dataset.form] && draftable(dform) && formDirty(dform)) {
+      draftPut(dform);
+      if (dform._draftId && draftById(dform._draftId)) {
+        toast('下書きに残しました（上の「続きから」で戻せます' + (dform._photos && dform._photos.length ? '。添付ファイルは残りません' : '') + '）');
+        S.renderPending = true;
+      }
+    }
+    wrap.remove();
+  }
+  // 窓を開いている間に届いたデータは、閉じたときに画面へ出す
+  if (S.renderPending && S.D && !$('modals').children.length) render();
+}
+function confirmDialog(title, message, okLabel, danger, noLabel) {
+  return new Promise(function (resolve) {
+    var wrap = openModal('<header><h2>' + esc(title) + '</h2></header><div class="body"><p style="margin:0;white-space:pre-wrap">' + esc(message) + '</p></div>' +
+      '<footer><span class="grow"></span><button type="button" class="btn" data-answer="no">' + esc(noLabel || 'やめる') + '</button><button type="button" class="btn ' + (danger ? 'danger' : 'primary') + '" data-answer="yes">' + esc(okLabel) + '</button></footer>', true, true);
+    wrap.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-answer]');
+      if (!b) return;
+      wrap.remove();
+      resolve(b.dataset.answer === 'yes');
+      // 窓を開いている間に届いたデータは、閉じたときに画面へ出す（closeModal と同じ）
+      setTimeout(function () { if (S.renderPending && S.D && !$('modals').children.length) render(); }, 0);
+    });
+  });
+}
+function infoDialog(title, bodyHtml) {
+  openModal('<header><h2>' + esc(title) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body">' + bodyHtml + '</div>' +
+    '<footer><span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>', true, true);
+}
+
+
+// ===========================================================================
+// 印刷（ブラウザの印刷でPDFにする）。印刷するものを #printArea に写し、ほかは印刷のときだけ隠す
+// ===========================================================================
+function printHtml(html, opt) {
+  opt = opt || {};
+  // v0.127.2：bare のときは、上下の余白を「毎ページくり返す表の見出し・足」で取る（用紙の余白が0なので、
+  //   2ページめ以降は上下の端まで印刷され、プリンターが刷れない端の項目が切れて見えなくなっていた）
+  $('printArea').innerHTML = opt.bare
+    ? '<table class="pbare"><thead><tr><td><div class="pbare-sp top"></div></td></tr></thead>' +
+      '<tfoot><tr><td><div class="pbare-sp bot"></div></td></tr></tfoot><tbody><tr><td>' + html + '</td></tr></tbody></table>'
+    : html;
+  document.body.classList.add('printing');
+  // v0.124.0：bare … 用紙の余白を0にして、ブラウザが上下に付ける日付・ページ名・URLを出さない（余白は中身の側で取る）
+  var st = null, oldTitle = document.title;
+  if (opt.bare) {
+    st = document.createElement('style'); st.id = 'printBare';
+    st.textContent = '@page { size: A4 portrait; margin: 0; } @media print { #printArea { padding: 0 14mm; } html, body { background: #fff !important; } }';
+    document.head.appendChild(st);
+    document.body.classList.add('printbare');
+  }
+  if (opt.title) { try { document.title = opt.title; } catch (e) { /* そのまま */ } }
+  var done = function () {
+    document.body.classList.remove('printing');
+    document.body.classList.remove('printbare');
+    if (st && st.parentNode) st.parentNode.removeChild(st);
+    if (opt.title) { try { document.title = oldTitle; } catch (e) { /* そのまま */ } }
+    $('printArea').innerHTML = '';
+    window.removeEventListener('afterprint', done);
+  };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+
+// ---- 顧客ごとの印刷（会社の情報・機器の一覧・ライセンス・レイアウト図）
+//   認証情報（ID・パスワード）は入れない。備考は、選んだときだけ入れる（社内用）。
+/** 印刷用の表。どの行も空の列は出さない（No. は残す）。tight に入れた見出しの列は折り返さない */
+function ptableHtml(headers, rows, tight, loose) {
+  var keep = headers.map(function (h, i) { return i === 0 || rows.some(function (r) { return r[i] !== '' && r[i] !== null && r[i] !== undefined; }); });
+  // nw … 折り返さない列（日付・種類など短いもの）。brk … 文字の途中でも折り返してよい列（シリアルなど、空白の無い長い文字）
+  var cls = function (i) { return tight && tight.indexOf(headers[i]) !== -1 ? ' class="nw"' : loose && loose.indexOf(headers[i]) !== -1 ? ' class="brk"' : ''; };
+  return '<table class="ptable"><thead><tr>' + headers.map(function (h, i) { return keep[i] ? '<th>' + esc(h) + '</th>' : ''; }).join('') + '</tr></thead><tbody>' +
+    rows.map(function (r) { return '<tr>' + r.map(function (v, i) { return keep[i] ? '<td' + cls(i) + '>' + esc(v) + '</td>' : ''; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+}
+/**
+ * 印刷する中身を作る。
+ * opt: {info, devices, licenses, notes（備考も入れる）, gone（廃棄した機器も入れる）}、layouts: [{name, data, ratio}]
+ */
+function customerPrintHtml(customerId, opt, layouts) {
+  var D = S.D, c = IDX.cust[customerId];
+  var mine = function (r) { return r['顧客ID'] === customerId; };
+  var html = '<h1 class="ptitle">' + printLogoHtml() + esc(c['顧客名']) + ' 様　<small>' + esc(D.settings['自社名']) + '　' + esc(D.today) + ' 時点</small></h1>';
+  if (opt.info) {
+    var rows = [['ふりがな', c['ふりがな']], ['住所', [c['郵便番号'] ? '〒' + c['郵便番号'] : '', c['住所']].filter(function (x) { return x; }).join(' ')], ['電話', c['電話']], ['メール', c['メール']],
+      ['ご担当者', c['先方担当者']], ['保守契約', c['保守契約']], ['最後の保守', IDX.lastMaint[customerId] || '']];
+    if (opt.notes) rows.push(['備考', c['備考']]);
+    html += '<section class="psec" id="pInfo"><h2>会社の情報</h2><table class="ptable pinfo"><tbody>' +
+      rows.filter(function (r) { return r[1]; }).map(function (r) { return '<tr><th>' + esc(r[0]) + '</th><td>' + esc(r[1]) + '</td></tr>'; }).join('') + '</tbody></table></section>';
+  }
+  if (opt.devices) {
+    var devs = D.devices.filter(mine).filter(function (d) { return opt.gone || d['状況'] !== '廃棄'; })
+      .sort(function (a, b) { return cmp(a['設置場所'], b['設置場所']) || cmp(a['部署'], b['部署']) || cmp(a['ふりがな'] || a['利用者'], b['ふりがな'] || b['利用者']) || cmp(a['機器ID'], b['機器ID']); });
+    var kinds = {};
+    devs.forEach(function (d) { var k = d['種類'] || '（種類なし）'; kinds[k] = (kinds[k] || 0) + 1; });
+    var head = ['No.', '利用者', '部署', '設置場所', '種類', 'メーカー・機種', 'シリアル', 'コンピューター名', 'OS', 'キッティング日／購入日', '保証期限', '状況'];
+    if (opt.notes) head.push('備考');
+    html += '<section class="psec" id="pDevices"><h2>機器の一覧　' + devs.length + '台' +
+      (devs.length ? '<small>（' + Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; }).map(function (k) { return esc(k) + ' ' + kinds[k]; }).join('、') + '）</small>' : '') + '</h2>' +
+      (devs.length ? ptableHtml(head, devs.map(function (d, i) {
+        var g = IDX.diag[d['機器ID']] || {};
+        var row = [i + 1, d['利用者'], d['部署'], d['設置場所'], d['種類'], [d['メーカー'], d['機種名']].filter(function (x) { return x; }).join(' '), d['シリアル'], g['コンピューター名'] || '', String(g['OS'] || '').replace(/^Microsoft\s+/i, ''), d['購入日'], d['保証期限'], d['状況']];
+        if (opt.notes) row.push(d['備考']);
+        return row;
+      }), ['No.', '種類', 'OS', 'キッティング日／購入日', '保証期限', '状況'], ['シリアル', 'コンピューター名']) : '<p class="pnote">機器は登録されていません。</p>') + '</section>';
+  }
+  if (opt.licenses) {
+    var lics = D.licenses.filter(mine).sort(function (a, b) { return cmp(a['製品名'], b['製品名']) || cmp(a['有効期限'], b['有効期限']); });
+    var lhead = ['No.', '製品名', '契約期間', '数量', '割当', '有効期限', '使っている機器'];
+    if (opt.notes) lhead.push('備考');
+    html += '<section class="psec" id="pLicenses"><h2>ライセンス　' + lics.length + '件</h2>' +
+      (lics.length ? ptableHtml(lhead, lics.map(function (l, i) {
+        var al = IDX.alloc[l['ライセンスID']] || [];
+        var n = daysUntil(l['有効期限']);
+        var row = [i + 1, l['製品名'], l['契約期間'], l['数量'], al.length, l['有効期限'] ? l['有効期限'] + (n !== null && n < 0 ? '（期限切れ）' : '') : '', al.map(function (a) { return devLabel(a['機器ID']); }).join('、')];
+        if (opt.notes) row.push(l['備考']);
+        return row;
+      }), ['No.', '数量', '割当', '有効期限']) : '<p class="pnote">ライセンスは登録されていません。</p>') + '</section>';
+  }
+  (layouts || []).forEach(function (l, i) {
+    html += '<section class="psec play" id="pLayout' + i + '"><h2>レイアウト図　' + esc(l.name) + '</h2>' +
+      layoutCanvasHtml(l.data, { edit: false, sels: [], ratio: l.ratio, id: 'layPrint' + i }) + '</section>';
+  });
+  return '<div class="cprint">' + html + '</div>';
+}
+/** レイアウト図を全部読む（背景の画像の縦横比も測る）。→ [{name, data, ratio}] */
+function loadLayoutsForPrint(customerId) {
+  return call('listLayouts', { customerId: customerId }).then(function (r) {
+    var out = [];
+    return r.layouts.reduce(function (chain, l) {
+      return chain.then(function () { return call('getLayout', { layoutId: l['レイアウトID'] }); }).then(function (res) {
+        var data = res.layout;
+        return new Promise(function (resolve) {
+          var push = function (ratio) { out.push({ name: l['名前'], data: data, ratio: ratio }); resolve(); };
+          if (!data.imageBase64) { push(4 / 3); return; }
+          var img = new Image();
+          img.onload = function () { push(img.naturalWidth && img.naturalHeight ? Math.min(4, Math.max(0.4, img.naturalWidth / img.naturalHeight)) : 4 / 3); };
+          img.onerror = function () { push(4 / 3); };
+          img.src = 'data:' + data.imageMimeType + ';base64,' + data.imageBase64;
+        });
+      });
+    }, Promise.resolve()).then(function () { return out; });
+  });
+}
+
+// ===========================================================================
+// 添付
+// ===========================================================================
+function fileSizeText(n) {
+  if (typeof n !== 'number') return '';
+  return n >= 1024 * 1024 ? (Math.round(n / 1024 / 1024 * 10) / 10) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+}
+function loadAttachments() {
+  var id = S.customerId;
+  if (S.files && S.files.customerId === id) return;
+  S.files = null;
+  call('listAttachments', { customerId: id }).then(function (r) {
+    S.files = { customerId: id, list: r.attachments, shared: r.shared };
+    var el = $('filesBox');
+    if (el && S.customerId === id) el.innerHTML = filesBoxHtml();
+  }).catch(failToast);
+}
+function filesBoxHtml() {
+  var f = S.files;
+  if (!f || f.customerId !== S.customerId) return '<p class="empty">読み込んでいます…</p>';
+  return '<div class="pad"><div class="filerow"><input type="file" id="attachFile" aria-label="添付するファイル" style="max-width:100%">' +
+      '<button type="button" class="btn primary" data-act="uploadAttachment">添付する</button></div>' +
+      '<p class="note" style="margin-top:6px">' + Math.floor(S.D.attachMaxBytes / 1024 / 1024) + 'MBまで。使える種類：' + esc(S.D.attachExtensions.join('・')) + '</p>' +
+      (f.shared ? '' : '<p class="note">設定「添付をリンクで共有する」が「いいえ」なので、開けるのはドライブの権限がある人だけです。お客様ページには出せません。</p>') + '</div>' +
+    tableHtml('cFiles', [
+      { label: 'ファイル', cls: 'title strong', html: function (a) {
+        if (a['対象区分'] === '収集レポート') return '<button type="button" class="link" data-act="openDiagReport" data-id="' + esc(a['添付ID']) + '">' + esc(a['ファイル名']) + '</button><span class="minor">収集ツールのレポート（' + esc(devLabel(a['対象ID']) || a['対象ID']) + '）</span>';
+        return '<a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a['ファイル名']) + '</a>' + (a['対象区分'] ? '<span class="minor">' + esc(a['対象区分'] + ' ' + a['対象ID']) + ' の添付' + '</span>' : ''); }, key: function (a) { return a['ファイル名']; } },
+      { label: '大きさ', cls: 'nowrap', html: function (a) { return esc(fileSizeText(a['サイズ'])); } },
+      { label: '登録', cls: 'nowrap', ml: '登録', html: function (a) { return esc(String(a['登録日時']).slice(0, 10)) + '<span class="minor">' + esc(a['登録者']) + '</span>'; }, key: function (a) { return a['登録日時']; } },
+      { label: 'お客様ページ', cls: 'nowrap', html: function (a) {
+        var on = a['お客様に見せる'] === 'はい';
+        if (a['対象区分'] === '収集レポート') return pill('社内だけ');
+        return (on ? pill('見せる', 'ok') : pill('見せない')) + (f.shared ? ' <button type="button" class="btn small" data-act="toggleAttachment" data-id="' + esc(a['添付ID']) + '" data-on="' + (on ? '1' : '') + '">' + (on ? '見せないにする' : '見せるにする') + '</button>' : '');
+      } },
+      { label: '', cls: 'nowrap', html: function (a) { return S.D.me.isAdmin || (a['対象区分'] && a['自分のもの']) ? '<button type="button" class="btn small danger" data-act="deleteAttachment" data-id="' + esc(a['添付ID']) + '">削除</button>' : ''; } }
+    ], f.list, { empty: '添付はまだありません。' }) +
+    '<p class="more">「見せる」にした添付は、顧客の「ポータル表示」で「資料」を選んでいると、お客様ページに出ます。</p>';
+}
+/** ロゴにする画像を、決めた大きさ（文字数）に収まるまで小さくする。透明なところは残す（PNG）。だめなら白地の JPEG */
+function shrinkLogo(file) {
+  return loadImageFile(file).then(function (img) {
+    var sides = [360, 280, 220, 160, 120], i, url;
+    for (i = 0; i < sides.length; i++) {
+      url = drawImage(img, sides[i], 'image/png');
+      if (safeImage(url) && url.length <= S.D.logoMaxChars) return url;
+    }
+    for (i = 0; i < sides.length; i++) {
+      url = drawImage(img, sides[i], 'image/jpeg', 0.85, '#ffffff');
+      if (safeImage(url) && url.length <= S.D.logoMaxChars) return url;
+    }
+    throw { message: 'この画像は、ロゴ用に小さくできませんでした。別の画像で試してください。' };
+  });
+}
+/** ファイルを読み、Base64にして返す */
+function readFileBase64(file) {
+  return new Promise(function (resolve, reject) {
+    var fr = new FileReader();
+    fr.onload = function () { var str = String(fr.result); resolve(str.slice(str.indexOf(',') + 1)); };
+    fr.onerror = function () { reject({ message: 'ファイルを読めませんでした。' }); };
+    fr.readAsDataURL(file);
+  });
+}
+
+// ===========================================================================
+// 月次レポート
+// ===========================================================================
+function loadReport() {
+  var id = S.customerId;
+  if (!S.reportMonth) S.reportMonth = S.D.today.slice(0, 7);
+  var month = S.reportMonth;
+  if (S.report && S.report.customerId === id && S.report.month === month) return;
+  S.report = null;
+  call('getMonthlyReport', { customerId: id, month: month }).then(function (r) {
+    S.report = { customerId: id, month: month, data: r.report, published: r.published || null, portal: !!r.portalReport };
+    if (r.published) S.reportNote = r.published.note || '';      // 公開している月は、そのときのひとことにする（打っていたものは、公開していない月だけ残す）
+    var ta = $('reportNote'); if (ta && S.customerId === id && S.reportMonth === month) ta.value = S.reportNote;
+    var el = $('reportBox');
+    if (el && S.customerId === id && S.reportMonth === month) el.innerHTML = reportBoxHtml();
+  }).catch(function (e) {
+    failToast(e);
+    S.report = { customerId: id, month: month, data: null };
+    var el = $('reportBox'); if (el) el.innerHTML = reportBoxHtml();
+  });
+}
+function reportBoxHtml() {
+  var head = '<div class="pad"><div class="row"><div class="field" style="flex:0 1 200px"><label for="reportMonth">月</label>' +
+    '<input type="month" id="reportMonth" data-reportmonth="1" max="' + esc(S.D.today.slice(0, 7)) + '" value="' + esc(S.reportMonth || S.D.today.slice(0, 7)) + '"></div>' +
+    '<button type="button" class="btn primary" data-act="printReport" style="align-self:flex-end">印刷・PDFにする</button></div>' +
+    '<div class="field" style="margin-top:10px"><label for="reportNote">ひとこと（レポートの最後に入ります。お客様ページに出すときは一緒に残ります）</label>' +
+    '<textarea id="reportNote" rows="2" data-reportnote="1" maxlength="' + (S.D.reportNoteMax || 300) + '">' + esc(S.reportNote) + '</textarea></div>' +
+    '<p class="note" style="margin-top:6px">お客様に渡す用です。備考・社内メモ・認証情報・修理の内容は入りません。対応の内容はそのまま入るので、渡す前に目を通してください。</p></div>';
+  var r = S.report;
+  if (!r || r.customerId !== S.customerId || r.month !== S.reportMonth) return head + '<p class="empty">読み込んでいます…</p>';
+  if (!r.data) return head + '<p class="empty">このレポートは作れませんでした。月を選び直してください。</p>';
+  return head + reportPubHtml(r) + '<div class="scroll" style="border-top:1px solid var(--line-soft)"><div id="reportSheet">' + reportHtml(r.data, S.reportNote) + '</div></div>';
+}
+/** お客様ページに出す・出さない（v0.30.0） */
+function reportPubHtml(r) {
+  var onlyPub = S.D.settings['レポートは公開した月だけ見せる'] !== 'いいえ';
+  var body;
+  if (!r.portal) body = '<span class="note">お客様ページに月次レポートは出していません（顧客の情報を編集して、「ポータル表示」で「レポート」にチェックすると出せます）。</span>';
+  else if (!onlyPub) body = '<span class="note">設定「レポートは公開した月だけ見せる」が「いいえ」なので、終わった月はお客様ページで自動で見られます' + (r.month === S.D.today.slice(0, 7) ? '（今月は、月が終わってから）' : '') + '。</span>';
+  else if (!S.D.me.isAdmin) body = r.published ? pill('お客様ページに出しています', 'ok') + '<span class="note">出す・やめるは管理者がします。</span>' : pill('お客様ページには出していません') + '<span class="note">出すのは管理者がします。</span>';
+  else body = (r.published ? pill('お客様ページに出しています', 'ok') + '<span class="note">' + esc(r.published.at) + '　' + esc(r.published.by) + '</span>' +
+      '<button type="button" class="btn small" data-act="publishReport" data-on="1">ひとことを直して出し直す</button><button type="button" class="btn small" data-act="publishReport" data-on="0">出すのをやめる</button>'
+    : pill('お客様ページには出していません') + '<button type="button" class="btn small primary" data-act="publishReport" data-on="1">この月をお客様ページに出す</button>');
+  return '<div class="pad row reportpub" id="reportPub">' + body + '</div>';
+}
+/** レポートの本体。お客様ページ（Portal.html）にも同じものがある */
+function reportHtml(d, note) {
+  var ym = d.month.split('-');
+  var tbl = function (heads, rows) {
+    return '<table><thead><tr>' + heads.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+  };
+  var none = function (text) { return '<p class="rnone">' + esc(text) + '</p>'; };
+  var sum = function (n, label) { return '<div><b>' + esc(n) + '</b><span>' + esc(label) + '</span></div>'; };
+  return '<div class="report">' +
+    '<div class="rhead"><div><h1>' + esc(d.customerName) + ' 様　' + Number(ym[0]) + '年' + Number(ym[1]) + '月のご報告</h1></div>' +
+    '<div class="rmeta">' + (d.provider ? esc(d.provider) + '<br>' : '') + '対象：' + esc(d.from) + ' 〜 ' + esc(d.to) + '<br>作成：' + esc(d.createdOn) + '</div></div>' +
+    '<div class="rsum">' + sum(d.summary.activities, '対応') + sum(d.summary.maintenances, '保守の実施') + sum(d.summary.repairsReceived, '修理の受付') + sum(d.summary.repairsDone, '修理の完了') + sum(d.summary.devices, '管理している機器') + '</div>' +
+    '<h2>対応したこと' + (d.summary.kinds.length ? '（' + d.summary.kinds.map(function (k) { return esc(k.name) + ' ' + k.count + '件'; }).join('・') + '）' : '') + '</h2>' +
+    (d.activities.length ? tbl(['日付', '種別', '内容', '状況'], d.activities.map(function (a) {
+      return '<tr><td class="nowrap">' + esc(a['受付日']) + '</td><td class="nowrap">' + esc(a['対応種別']) + (a['インシデント種別'] ? '<br><small>' + esc(a['インシデント種別']) + '</small>' : '') + '</td><td class="body">' + esc(a['内容']) + '</td><td class="nowrap">' + esc(a['ステータス']) + '</td></tr>';
+    })) : none('この月の対応はありませんでした。')) +
+    '<h2>保守の実施</h2>' +
+    (d.maintenances.length ? tbl(['日付', '種別', '内容'], d.maintenances.map(function (m) {
+      return '<tr><td class="nowrap">' + esc(m['実施日']) + '</td><td class="nowrap">' + esc(m['種別']) + '</td><td class="body">' + esc(m['内容']) + '</td></tr>';
+    })) : none('この月の保守の実施はありませんでした。')) +
+    '<h2>修理</h2>' +
+    (d.repairs.length ? tbl(['受付日', '件名', '種別', '状況', '完了日'], d.repairs.map(function (x) {
+      return '<tr><td class="nowrap">' + esc(x['受付日']) + '</td><td>' + esc(x['件名']) + '</td><td class="nowrap">' + esc(x['種別']) + '</td><td class="nowrap">' + esc(x['ステータス']) + '</td><td class="nowrap">' + (x['完了日'] ? esc(x['完了日']) : '—') + '</td></tr>';
+    })) : none('この月に動いた修理はありませんでした。')) +
+    '<h2>機器の状態（' + d.deviceKinds.map(function (k) { return esc(k.name) + ' ' + k.count + '台'; }).join('・') + '）</h2>' +
+    (d.deviceNotes.length ? tbl(['機器', 'お知らせしたいこと'], d.deviceNotes.map(function (n) {
+      return '<tr><td>' + esc(n.name) + '</td><td class="body">' + esc(n.note) + '</td></tr>';
+    })) : none('とくにお知らせすることはありません。')) +
+    '<h2>ライセンスの期限</h2>' +
+    (d.licenses.length ? tbl(['製品', '数量', '有効期限', ''], d.licenses.map(function (l) {
+      return '<tr><td>' + esc(l['製品名']) + '</td><td class="nowrap">' + (l['数量'] === '' ? '—' : esc(l['数量'])) + '</td><td class="nowrap">' + esc(l['有効期限']) + '</td><td class="nowrap">' + esc(l.state) + '</td></tr>';
+    })) : none('期限が近いライセンスはありません。')) +
+    (String(note || '').trim() ? '<h2>ひとこと</h2><div class="rnote">' + esc(note) + '</div>' : '') +
+    '<div class="rfoot">' + (d.provider ? esc(d.provider) : '') + '</div></div>';
+}
+
+
+// ===========================================================================
+// レイアウト図
+//   位置と大きさは、図の幅・高さに対する％で持つ（画面の大きさや印刷で崩れない）。
+//   ドラッグ中は図の中身だけを描き直し、図の枠（#layCanvas）は作り直さない（ポインターをつかんだままにするため）。
+// ===========================================================================
+var L = null;
+// 幹線図（v0.71.0）。ネットワーク機器の記号 net：[記号の文字, 名前, 色]。回線 link：[名前, 色, 太さ, 点線]
+var NET_ORDER = ['onu', 'router', 'fw', 'hub', 'ap', 'nas', 'server', 'mfp', 'port'];
+var NET_KINDS = {
+  onu: ['ONU', '回線終端装置（ONU）', '#17508f'], router: ['RT', 'ルーター', '#2d6a4f'], fw: ['FW', 'UTM・ファイアウォール', '#b3261e'],
+  hub: ['SW', 'スイッチ・HUB', '#0f766e'], ap: ['AP', '無線アクセスポイント', '#b36b00'], nas: ['NAS', 'NAS', '#6b4e9b'],
+  server: ['SV', 'サーバー', '#3d4854'], mfp: ['複合', '複合機', '#7a5c2e'], port: ['LAN', '情報コンセント', '#5b6876']
+};
+var LINK_ORDER = ['wan', 'trunk', 'lan', 'wifi'];
+var LINK_KINDS = { wan: ['外部回線（光など）', '#17508f', 3, ''], trunk: ['幹線', '#b3261e', 4.2, ''], lan: ['LAN', '#2d6a4f', 2, ''], wifi: ['無線', '#b36b00', 2, '8 7'] };
+var LAY_COLORS = ['', '#f3e6cf', '#dfe6ee', '#d9ecd9', '#fbe3e0', '#fff3bf', '#17508f', '#b3261e', '#18222d'];
+var LAY_BG_COLORS = ['#ffffff', '#f4f6f8', '#fbf7ee', '#eef5fb', '#eff7ef'];
+// 箱の形をした図形（大きさを持ち、回せる）。足したときの大きさ（％）と、最初に入れる文字
+var LAY_NEW = {
+  desk: { w: 16, h: 10, text: '' }, chair: { w: 5, h: 6.5, text: '' }, rect: { w: 22, h: 16, text: '' }, circle: { w: 10, h: 13, text: '' },
+  shelf: { w: 18, h: 5, text: '本棚' }, rack: { w: 8, h: 10, text: 'ラック' }, counter: { w: 26, h: 6, text: 'カウンター' }, copier: { w: 8, h: 9, text: '複合機' }
+};
+var LAY_FURNITURE = [['shelf', '本棚'], ['rack', 'ラック'], ['counter', 'カウンター'], ['copier', '複合機']];
+/**
+ * まとめて置くセット。大きさと位置は「図の幅を1000としたときの長さ」で持つ（背景の画像で縦横比が変わっても形が崩れない）。
+ * items: [種類, x, y, 幅, 高さ, 回転, 文字]
+ */
+function layIsland(cols) {
+  var items = [];
+  for (var c = 0; c < cols; c++) {
+    items.push(['chair', c * 160 + 55, 0, 50, 50, 0, ''], ['desk', c * 160, 58, 160, 75, 0, ''], ['desk', c * 160, 133, 160, 75, 0, ''], ['chair', c * 160 + 55, 216, 50, 50, 180, '']);
+  }
+  return items;
+}
+/** 壁に向いた机の列（椅子は手前） */
+function layWallRow(cols) {
+  var items = [];
+  for (var c = 0; c < cols; c++) items.push(['desk', c * 160, 0, 160, 75, 0, ''], ['chair', c * 160 + 55, 83, 50, 50, 180, '']);
+  return items;
+}
+/** 位置をずらした写し（部屋の下書きを組み立てるとき用） */
+function layAt(items, dx, dy) {
+  return items.map(function (it) { var c = it.slice(); c[1] += dx; c[2] += dy; return c; });
+}
+/** 部屋の枠と名前 */
+function layRoomBox(x, y, w, h, label) { return [['rect', x, y, w, h, 0, '']].concat(label ? [['text', x + 14, y + 8, label, 15]] : []); }
+/** 会議テーブル（横長）。椅子は上下に n 脚ずつ */
+function layMeeting(n, label) {
+  var w = n * 110, items = [['desk', 0, 58, w, 110, 0, label || '']];
+  for (var i = 0; i < n; i++) items.push(['chair', i * 110 + 30, 0, 50, 50, 0, ''], ['chair', i * 110 + 30, 176, 50, 50, 180, '']);
+  return items;
+}
+// items の書き方：箱 [種類, x, y, 幅, 高さ, 回転, 文字] ／ 文字 ['text', x, y, 文字, 大きさ] ／ アイコン ['icon', x, y, 絵, 文字]
+var LAY_TEMPLATES = [
+  { key: 'seat', name: '机＋椅子（1席）', items: [['desk', 0, 0, 160, 75, 0, ''], ['chair', 55, 83, 50, 50, 180, '']] },
+  { key: 'pair2', name: '向かい合わせ（2席）', items: layIsland(1) },
+  { key: 'island4', name: '島（4席）', items: layIsland(2) },
+  { key: 'island6', name: '島（6席）', items: layIsland(3) },
+  { key: 'island8', name: '島（8席）', items: layIsland(4) },
+  { key: 'wall3', name: '壁向き（3席）', items: layWallRow(3) },
+  { key: 'meeting4', name: '会議テーブル（4席）', items: layMeeting(2, '会議') },
+  { key: 'meeting', name: '会議テーブル（6席）', items: [['desk', 0, 58, 330, 120, 0, '会議'],
+    ['chair', 30, 0, 50, 50, 0, ''], ['chair', 140, 0, 50, 50, 0, ''], ['chair', 250, 0, 50, 50, 0, ''],
+    ['chair', 30, 186, 50, 50, 180, ''], ['chair', 140, 186, 50, 50, 180, ''], ['chair', 250, 186, 50, 50, 180, '']] },
+  { key: 'sofa', name: '応接セット', items: [['rect', 0, 0, 180, 50, 0, 'ソファ'], ['desk', 20, 62, 140, 70, 0, ''], ['rect', 0, 144, 180, 50, 0, 'ソファ']] },
+  { key: 'reception', name: '受付カウンター', items: [['chair', 105, 0, 50, 50, 0, ''], ['counter', 0, 58, 260, 45, 0, '受付']] },
+  { key: 'counter3', name: 'カウンター席（3席）', items: [['counter', 0, 0, 330, 45, 0, ''], ['chair', 30, 53, 50, 50, 180, ''], ['chair', 140, 53, 50, 50, 180, ''], ['chair', 250, 53, 50, 50, 180, '']] },
+  { key: 'server', name: 'サーバー・通信機器', items: [['rack', 0, 0, 80, 75, 0, 'ラック'], ['rack', 90, 0, 80, 75, 0, 'NAS'], ['icon', 215, 38, '📡', 'ルーター']] },
+  { key: 'copier', name: '複合機コーナー', items: [['copier', 0, 0, 80, 68, 0, '複合機'], ['shelf', 95, 30, 180, 38, 0, '用紙・書庫']] }
+];
+/**
+ * 部屋まるごとの下書き。図の幅を1000・高さを750とした長さで書いてある（置くときに、いまの図に収まるように合わせる）。
+ * 置いたあとは、ふつうの図形として1つずつ動かす・消す・足すことができる。
+ */
+var LAY_ROOMS = [
+  { key: 'office4', name: '小さな事務所（4席）', sub: '島4席・打合せ・複合機・ラック', items: function () {
+    return layRoomBox(30, 30, 940, 690, '事務所').concat(
+      layAt(layIsland(2), 110, 190),
+      layAt(layMeeting(2, '打合せ'), 600, 400),
+      [['copier', 860, 70, 80, 68, 0, '複合機'], ['shelf', 560, 50, 260, 38, 0, '書庫'], ['rack', 60, 610, 80, 75, 0, 'ラック'], ['icon', 190, 650, '📡', 'ルーター'], ['icon', 500, 700, '🚪', '入口']]);
+  } },
+  { key: 'office8', name: '事務所（8席＋会議室）', sub: '島8席・会議室・個別席・複合機・サーバー', items: function () {
+    return layRoomBox(30, 30, 940, 690, '事務所').concat(
+      layAt(layIsland(4), 60, 100),
+      layRoomBox(720, 30, 250, 330, '会議室'),
+      [['desk', 790, 110, 110, 190, 0, ''], ['chair', 732, 135, 50, 50, 270, ''], ['chair', 732, 225, 50, 50, 270, ''], ['chair', 908, 135, 50, 50, 90, ''], ['chair', 908, 225, 50, 50, 90, '']],
+      [['desk', 740, 450, 180, 80, 0, ''], ['chair', 805, 538, 50, 50, 180, ''], ['text', 740, 420, '個別席', 13]],
+      [['copier', 60, 440, 80, 68, 0, '複合機'], ['shelf', 160, 455, 260, 38, 0, '書庫'], ['rack', 60, 610, 80, 75, 0, 'サーバー'], ['rack', 150, 610, 80, 75, 0, 'NAS'], ['icon', 280, 650, '📡', 'ルーター'], ['icon', 520, 700, '🚪', '入口']]);
+  } },
+  { key: 'office12', name: '事務所（12席・会議室・サーバー室）', sub: '島6席×2・会議室6席・サーバー室', items: function () {
+    return layRoomBox(30, 30, 940, 690, '事務所').concat(
+      layAt(layIsland(3), 70, 80), layAt(layIsland(3), 70, 410),
+      layRoomBox(620, 30, 350, 310, '会議室'), layAt(layMeeting(3, ''), 630, 85),
+      layRoomBox(770, 520, 200, 200, 'サーバー室'),
+      [['rack', 785, 570, 80, 75, 0, 'サーバー'], ['rack', 875, 570, 80, 75, 0, 'NAS'], ['icon', 870, 685, '📡', 'ルーター']],
+      [['copier', 640, 380, 80, 68, 0, '複合機'], ['shelf', 740, 395, 200, 38, 0, '書庫'], ['icon', 620, 700, '🚪', '入口']]);
+  } },
+  { key: 'frontoffice', name: '受付＋応接室＋事務', sub: '受付・応接室・島6席（士業・小さな会社）', items: function () {
+    return layRoomBox(30, 30, 940, 690, '').concat(
+      layRoomBox(30, 30, 330, 330, '応接室'),
+      [['rect', 105, 90, 180, 50, 0, 'ソファ'], ['desk', 125, 155, 140, 80, 0, ''], ['rect', 105, 250, 180, 50, 0, 'ソファ']],
+      [['chair', 165, 500, 50, 50, 0, ''], ['counter', 60, 560, 260, 45, 0, '受付'], ['icon', 190, 700, '🚪', '入口']],
+      [['text', 420, 45, '事務', 15]], layAt(layIsland(3), 420, 110),
+      [['copier', 420, 450, 80, 68, 0, '複合機'], ['shelf', 520, 465, 260, 38, 0, '書庫'], ['rack', 860, 600, 80, 75, 0, 'ラック'], ['icon', 800, 640, '📡', 'ルーター']]);
+  } },
+  { key: 'clinic', name: 'クリニック（受付・待合・診察室）', sub: '受付・待合10席・診察室2・処置室・事務', items: function () {
+    var waiting = [];
+    for (var i = 0; i < 5; i++) waiting.push(['chair', 70 + i * 70, 520, 50, 50, 0, ''], ['chair', 70 + i * 70, 610, 50, 50, 0, '']);
+    var exam = function (y, label) {
+      return layRoomBox(520, y, 450, 220, label).concat([['desk', 560, y + 70, 160, 75, 0, ''], ['chair', 615, y + 153, 50, 50, 180, ''], ['chair', 740, y + 82, 50, 50, 270, ''], ['rect', 820, y + 40, 120, 60, 0, 'ベッド']]);
+    };
+    return layRoomBox(30, 30, 940, 690, '').concat(
+      [['text', 45, 38, '事務', 15], ['desk', 60, 210, 150, 70, 0, ''], ['desk', 210, 210, 150, 70, 0, ''], ['chair', 110, 152, 50, 50, 0, ''], ['chair', 260, 152, 50, 50, 0, '']],
+      [['counter', 50, 300, 330, 45, 0, '受付'], ['copier', 390, 60, 80, 68, 0, '複合機'], ['rack', 60, 70, 80, 75, 0, 'ラック'], ['icon', 190, 105, '📡', 'ルーター']],
+      [['text', 45, 470, '待合', 15]], waiting,
+      exam(30, '診察室1'), exam(250, '診察室2'),
+      layRoomBox(520, 470, 450, 250, '処置室'), [['rect', 560, 540, 140, 60, 0, 'ベッド'], ['desk', 780, 540, 150, 70, 0, ''], ['shelf', 560, 660, 200, 38, 0, '棚']],
+      [['icon', 440, 700, '🚪', '入口']]);
+  } },
+  { key: 'shop', name: '店舗（売場・レジ・バックヤード）', sub: '陳列棚・レジカウンター・事務スペース', items: function () {
+    var shelves = [];
+    for (var i = 0; i < 3; i++) shelves.push(['shelf', 90, 140 + i * 150, 420, 45, 0, '棚']);
+    return layRoomBox(30, 30, 940, 690, '売場').concat(shelves,
+      [['chair', 765, 505, 50, 50, 0, ''], ['counter', 640, 565, 300, 50, 0, 'レジ'], ['icon', 890, 520, '🖨️', 'レシート']],
+      layRoomBox(620, 30, 350, 320, 'バックヤード'),
+      [['desk', 660, 110, 160, 75, 0, ''], ['chair', 715, 193, 50, 50, 180, ''], ['rack', 870, 70, 80, 75, 0, 'ラック'], ['icon', 910, 190, '📡', 'ルーター'], ['copier', 870, 250, 80, 68, 0, '複合機']],
+      [['icon', 300, 700, '🚪', '入口']]);
+  } }
+];
+/**
+ * 幹線図のテンプレート（v0.71.0）。図の幅を1000・高さを750とした長さで書いてある（置くときに、いまの図に収まるように合わせる）。
+ *   rects: [x, y, 幅, 高さ, 名前] ＝ 階や部屋の枠 ／ nodes: [番号, 種類, 中心x, 中心y, 名前] ／ links: [番号a, 番号b, 回線の種類, 線の上の文字]
+ * 置いたあとは、ふつうの記号・回線として1つずつ直せる（番号は置くときに、いまの図に合わせて付け直す）。
+ */
+var LAY_NET_TEMPLATES = [
+  { key: 'simple', name: 'シンプル（ルーター1台）', sub: 'ONU → ルーター → Wi-Fi・複合機・NAS',
+    rects: [], nodes: [['a', 'onu', 500, 90, 'ONU'], ['b', 'router', 500, 260, 'ルーター'], ['c', 'ap', 200, 470, 'Wi-Fi'], ['d', 'mfp', 500, 470, '複合機'], ['e', 'nas', 800, 470, 'NAS']],
+    links: [['a', 'b', 'wan', '光回線'], ['b', 'c', 'lan', ''], ['b', 'd', 'lan', ''], ['b', 'e', 'lan', '']] },
+  { key: 'standard', name: '標準（ルーター＋スイッチ）', sub: 'ルーターの下にスイッチ。Wi-Fi・複合機・NAS・サーバー',
+    rects: [], nodes: [['a', 'onu', 500, 70, 'ONU'], ['b', 'router', 500, 205, 'ルーター'], ['c', 'hub', 500, 350, 'スイッチ'], ['d', 'ap', 150, 540, 'Wi-Fi'], ['e', 'mfp', 380, 540, '複合機'], ['f', 'nas', 620, 540, 'NAS'], ['g', 'server', 850, 540, 'サーバー']],
+    links: [['a', 'b', 'wan', '光回線'], ['b', 'c', 'trunk', '幹線'], ['c', 'd', 'lan', ''], ['c', 'e', 'lan', ''], ['c', 'f', 'lan', ''], ['c', 'g', 'lan', '']] },
+  { key: 'utm', name: 'UTM構成（サーバー室＋事務所）', sub: 'ONU → UTM → 親スイッチ。サーバー室と事務所に分ける',
+    rects: [[40, 410, 430, 310, 'サーバー室'], [530, 410, 430, 310, '事務所']],
+    nodes: [['a', 'onu', 500, 60, 'ONU'], ['b', 'fw', 500, 185, 'UTM'], ['c', 'hub', 500, 315, '親スイッチ'], ['d', 'server', 150, 580, 'サーバー'], ['e', 'nas', 350, 580, 'NAS'], ['f', 'hub', 750, 490, '事務所スイッチ'], ['g', 'ap', 650, 640, 'Wi-Fi'], ['h', 'mfp', 850, 640, '複合機']],
+    links: [['a', 'b', 'wan', '光回線'], ['b', 'c', 'trunk', ''], ['c', 'd', 'lan', ''], ['c', 'e', 'lan', ''], ['c', 'f', 'trunk', '幹線'], ['f', 'g', 'lan', ''], ['f', 'h', 'lan', '']] },
+  { key: 'floors', name: '2フロア（1F・2F）', sub: '1Fにルーター。幹線で2Fのスイッチへ',
+    rects: [[30, 30, 940, 330, '2F'], [30, 390, 940, 330, '1F']],
+    nodes: [['a', 'hub', 520, 150, '2Fスイッチ'], ['b', 'ap', 280, 270, '2F Wi-Fi'], ['c', 'mfp', 760, 270, '2F 複合機'], ['d', 'port', 900, 150, 'LANポート'],
+      ['e', 'onu', 120, 500, 'ONU'], ['f', 'router', 320, 500, 'ルーター'], ['g', 'hub', 520, 500, '1Fスイッチ'], ['h', 'nas', 760, 500, 'NAS'], ['i', 'ap', 520, 640, '1F Wi-Fi'], ['j', 'mfp', 760, 640, '1F 複合機']],
+    links: [['e', 'f', 'wan', '光回線'], ['f', 'g', 'lan', ''], ['g', 'a', 'trunk', '幹線（1F→2F）'], ['g', 'h', 'lan', ''], ['g', 'i', 'lan', ''], ['g', 'j', 'lan', ''], ['a', 'b', 'lan', ''], ['a', 'c', 'lan', ''], ['a', 'd', 'lan', '']] },
+  { key: 'branch', name: '本社＋支店（VPN）', sub: '2つの拠点を、VPNの回線でつなぐ',
+    rects: [[30, 40, 440, 670, '本社'], [530, 40, 440, 670, '支店']],
+    nodes: [['a', 'onu', 250, 130, 'ONU'], ['b', 'router', 250, 265, 'ルーター'], ['c', 'hub', 250, 415, 'スイッチ'], ['d', 'nas', 130, 590, 'NAS'], ['e', 'mfp', 370, 590, '複合機'],
+      ['f', 'onu', 750, 130, 'ONU'], ['g', 'router', 750, 265, 'ルーター'], ['h', 'ap', 650, 480, 'Wi-Fi'], ['i', 'mfp', 850, 480, '複合機']],
+    links: [['a', 'b', 'wan', '光回線'], ['b', 'c', 'lan', ''], ['c', 'd', 'lan', ''], ['c', 'e', 'lan', ''], ['f', 'g', 'wan', '光回線'], ['g', 'h', 'lan', ''], ['g', 'i', 'lan', ''], ['b', 'g', 'wan', '拠点間VPN']] }
+];
+/**
+ * 図形の並び（図の幅を1000とした長さ）を、いまの図に置く。図に収まらないときは、全体を同じ割合で小さくする。
+ * @param {Array} items 箱・文字・アイコン
+ * @param {boolean} stagger 置くたびに少しずらす（同じセットを続けて置いても重ならないように）
+ * @return {number} 置いた数（置けなかったら 0）
+ */
+function layoutPlace(items, stagger) {
+  if (!items.length || !layoutRoom(items.length)) return 0;
+  var H = 1000 / L.ratio, list = L.data.elements, x0 = Infinity, y0 = Infinity, x1 = 0, y1 = 0;
+  items.forEach(function (it) {
+    var box = it[0] !== 'text' && it[0] !== 'icon';
+    x0 = Math.min(x0, it[1]); y0 = Math.min(y0, it[2]);
+    x1 = Math.max(x1, it[1] + (box ? it[3] : 0)); y1 = Math.max(y1, it[2] + (box ? it[4] : 0));
+  });
+  var tw = x1 - x0, th = y1 - y0;
+  var k = Math.min(1, 980 / Math.max(tw, 1), (H - 16) / Math.max(th, 1));
+  var off = stagger ? (list.length % 4) * 20 : 0;
+  // ずらしても、図の外に出ないように（空いている幅・高さまで）
+  var ox = Math.min(Math.max(0, (1000 - tw * k) / 2 + off), Math.max(0, 1000 - tw * k)) - x0 * k;
+  var oy = Math.min(Math.max(0, (H - th * k) / 2 + off), Math.max(0, H - th * k)) - y0 * k;
+  var px = function (v) { return layR2((ox + v * k) / 10); }, py = function (v) { return layR2((oy + v * k) / H * 100); };
+  layoutPushUndo();
+  var made = [];
+  items.forEach(function (it) {
+    var x;
+    if (it[0] === 'text') x = { type: 'text', x: px(it[1]), y: py(it[2]), text: it[3], size: Math.min(48, Math.max(8, Math.round(it[4] * k))), color: '' };
+    else if (it[0] === 'icon') x = { type: 'icon', x: px(it[1]), y: py(it[2]), icon: it[3], size: Math.min(80, Math.max(12, Math.round(28 * k))), text: it[4] || '' };
+    else {
+      x = { type: it[0], x: px(it[1]), y: py(it[2]), w: layR2(it[3] * k / 10), h: layR2(it[4] * k / H * 100), color: '', text: it[6] || '' };
+      if (it[5]) x.r = it[5];
+    }
+    list.push(x); made.push(list.length - 1);
+  });
+  L.sels = made; L.pt = -1;
+  layoutChanged();
+  return made.length;
+}
+/**
+ * 幹線図のテンプレートを、いまの図に置く（記号の番号は付け直す。回線は、新しい番号でつなぎ直す）。
+ * @return {number} 置いた図形の数（置けなかったら 0）
+ */
+function layoutPlaceNet(tpl) {
+  var count = tpl.rects.length * 2 + tpl.nodes.length + tpl.links.length;
+  if (!layoutRoom(count)) return 0;
+  var H = 1000 / L.ratio, list = L.data.elements, b = [Infinity, Infinity, 0, 0];
+  var grow = function (x, y, w, h) { b[0] = Math.min(b[0], x); b[1] = Math.min(b[1], y); b[2] = Math.max(b[2], x + w); b[3] = Math.max(b[3], y + h); };
+  tpl.rects.forEach(function (r) { grow(r[0], r[1], r[2], r[3]); });
+  tpl.nodes.forEach(function (n) { grow(n[2] - 70, n[3] - 45, 140, 100); });
+  var tw = b[2] - b[0], th = b[3] - b[1];
+  var k = Math.min(1, 980 / Math.max(tw, 1), (H - 16) / Math.max(th, 1));
+  var ox = Math.max(0, (1000 - tw * k) / 2) - b[0] * k, oy = Math.max(0, (H - th * k) / 2) - b[1] * k;
+  var px = function (v) { return layR2((ox + v * k) / 10); }, py = function (v) { return layR2((oy + v * k) / H * 100); };
+  layoutPushUndo();
+  var made = [], ids = {}, n = Number(layNetNextId(list).slice(1));
+  tpl.rects.forEach(function (r) {
+    list.push({ type: 'rect', x: px(r[0]), y: py(r[1]), w: layR2(r[2] * k / 10), h: layR2(r[3] * k / H * 100), color: '', text: '' }); made.push(list.length - 1);
+    list.push({ type: 'text', x: px(r[0] + 14), y: py(r[1] + 8), text: r[4], size: Math.min(48, Math.max(8, Math.round(18 * k))), color: '' }); made.push(list.length - 1);
+  });
+  tpl.nodes.forEach(function (nd) {
+    ids[nd[0]] = 'n' + (n++);
+    list.push({ type: 'net', id: ids[nd[0]], kind: nd[1], x: px(nd[2]), y: py(nd[3]), size: Math.min(60, Math.max(16, Math.round(30 * k))), text: nd[4], ip: '', note: '', deviceId: '' }); made.push(list.length - 1);
+  });
+  tpl.links.forEach(function (l) { list.push({ type: 'link', a: ids[l[0]], b: ids[l[1]], kind: l[2], text: l[3] }); made.push(list.length - 1); });
+  L.sels = made; L.pt = -1;
+  layoutChanged();
+  return made.length;
+}
+/** 2つの記号を回線でつなぐ。もうつないであれば、種類を変える */
+function layoutConnectPair(a, b, kind) {
+  var list = L.data.elements;
+  var old = list.filter(function (x) { return x.type === 'link' && ((x.a === a && x.b === b) || (x.a === b && x.b === a)); })[0];
+  if (old) { if (old.kind === kind) return; layoutPushUndo(); old.kind = kind; layoutChanged(); return; }
+  if (!layoutRoom(1)) return;
+  layoutPushUndo();
+  list.push({ type: 'link', a: a, b: b, kind: kind, text: '' });
+  layoutChanged();
+}
+function resetLayoutState() {
+  L = { customerId: '', list: null, id: '', data: null, edit: false, sels: [], multi: false, band: null, pt: -1, undo: [], redo: [], dirty: false, snap: true, ratio: 4 / 3, drag: null, textUndo: -1, raf: 0,
+    conn: null, showIp: true, legend: true };       // conn＝回線をつなぐ途中の状態、showIp／legend＝図に IP／凡例を出すか（画面と印刷だけ。保存はしない。v0.71.0）
+  // L.sel は「1つだけ選んでいるときの番号」。まとめて選んでいるとき・選んでいないときは -1
+  Object.defineProperty(L, 'sel', {
+    get: function () { return this.sels.length === 1 ? this.sels[0] : -1; },
+    set: function (v) { this.sels = v >= 0 ? [v] : []; }
+  });
+}
+resetLayoutState();
+
+function loadLayouts() {
+  var id = S.customerId;
+  if (L.customerId === id && L.list) return;
+  resetLayoutState();
+  L.customerId = id;
+  call('listLayouts', { customerId: id }).then(function (r) {
+    if (L.customerId !== id) return;
+    L.list = r.layouts;
+    if (L.list.length) loadLayout(L.list[0]['レイアウトID']); else drawLayoutBox();
+  }).catch(failToast);
+}
+function loadLayout(layoutId) {
+  var customerId = L.customerId;
+  L.id = layoutId; L.data = null; L.edit = false; L.conn = null; L.sels = []; L.pt = -1; L.band = null; L.undo = []; L.redo = []; L.dirty = false; L.ratio = 4 / 3;
+  drawLayoutBox();
+  call('getLayout', { layoutId: layoutId }).then(function (r) {
+    if (L.customerId !== customerId || L.id !== layoutId) return;
+    L.data = r.layout;
+    drawLayoutBox();
+    measureLayoutImage();
+  }).catch(failToast);
+}
+/** 背景の画像があるときは、図の縦横比を画像に合わせる */
+function measureLayoutImage() {
+  if (!L.data || !L.data.imageBase64) { L.ratio = 4 / 3; return; }
+  var img = new Image(), layoutId = L.id;
+  img.onload = function () {
+    if (L.id !== layoutId || !img.naturalWidth || !img.naturalHeight) return;
+    L.ratio = Math.min(4, Math.max(0.4, img.naturalWidth / img.naturalHeight));
+    drawLayoutBox();
+  };
+  img.src = 'data:' + L.data.imageMimeType + ';base64,' + L.data.imageBase64;
+}
+function drawLayoutBox() {
+  layoutMenuClose();
+  var el = $('layoutBox');
+  if (el && S.view === 'customer' && S.sub === 'layout') {
+    el.innerHTML = layoutBoxHtml();
+    // 編集のボタンの段は、画面の上の見出しの下に貼りつく（v0.105.0）
+    var top = document.querySelector('.top');
+    if (top) document.documentElement.style.setProperty('--topH', top.offsetHeight + 'px');
+  }
+}
+function drawLayoutCanvas() {
+  var el = $('layCanvas');
+  if (el && L.data) el.innerHTML = layoutInnerHtml(L.data, layoutViewOpts({ band: L.band }));
+  var lg = $('layLegend');
+  if (lg && L.data) { var items = layoutLegendItems(L.data); lg.innerHTML = items; lg.hidden = !items; }
+}
+
+/** 画面の図を描くときの設定（編集の状態・IP と凡例を出すか・回線をつなぐ途中の1つ目） */
+function layoutViewOpts(extra) {
+  var o = { edit: L.edit, sels: L.sels, ratio: L.ratio, showIp: L.showIp, legend: L.legend, connId: L.conn ? L.conn.first : '' };
+  for (var k in extra) o[k] = extra[k];
+  return o;
+}
+function layoutPinInfo(deviceId) {
+  var d = IDX.dev[deviceId];
+  if (!d) return { label: '（消えた機器）', cls: ' gone' };
+  var label = d['利用者'] || d['機種名'] || d['種類'];
+  var cls = d['状況'] === '廃棄' ? ' gone' : d['種類'] === 'デスクトップ' ? ' k-desktop' : d['種類'] === 'ノート' ? '' :
+    d['種類'] === 'ネットワーク機器' ? ' k-net' : (d['種類'] === 'NAS' || d['種類'] === 'サーバー') ? ' k-srv' : d['種類'] === 'プリンター' ? ' k-prn' : ' k-other';
+  return { label: label, cls: cls };
+}
+// ---- 幹線図の小さい関数（v0.71.0）
+function layNetById(data, id) {
+  for (var i = 0; i < data.elements.length; i++) { var x = data.elements[i]; if (x.type === 'net' && x.id === id) return x; }
+  return null;
+}
+/** 記号の名前。名前が空なら、結びつけた機器の名前、それも無ければ種類の名前 */
+function layNetName(el) {
+  var nk = NET_KINDS[el.kind] || NET_KINDS.port;
+  return el.text || (el.deviceId && IDX.dev[el.deviceId] ? layoutPinInfo(el.deviceId).label : '') || nk[1];
+}
+/** 新しい記号の番号（n1, n2, …）。いまある番号と重ならない */
+function layNetNextId(list) {
+  var max = 0;
+  list.forEach(function (x) { var m = x.type === 'net' && /^n(\d+)$/.exec(x.id || ''); if (m) max = Math.max(max, Number(m[1])); });
+  return 'n' + (max + 1);
+}
+/** 記号を消したあとに、つなぎ先の無くなった回線を取り除く */
+function layPurgeLinks() {
+  var ids = {};
+  L.data.elements.forEach(function (x) { if (x.type === 'net') ids[x.id] = true; });
+  L.data.elements = L.data.elements.filter(function (x) { return x.type !== 'link' || (ids[x.a] && ids[x.b]); });
+}
+/** 凡例の中身：図に使っている記号の種類と回線の種類（図の外、すぐ下に出す。記号と重ならないように） */
+function layoutLegendItems(data) {
+  var nets = {}, links = {}, any = false;
+  data.elements.forEach(function (x) { if (x.type === 'net') { nets[x.kind] = true; any = true; } else if (x.type === 'link') { links[x.kind] = true; any = true; } });
+  if (!any) return '';
+  var html = '';
+  NET_ORDER.filter(function (k) { return nets[k]; }).forEach(function (k) { html += '<div class="lk"><span class="nbk" style="background:' + NET_KINDS[k][2] + '">' + esc(NET_KINDS[k][0]) + '</span>' + esc(NET_KINDS[k][1]) + '</div>'; });
+  LINK_ORDER.filter(function (k) { return links[k]; }).forEach(function (k) {
+    var s = LINK_KINDS[k];
+    html += '<div class="lk"><svg class="sw" viewBox="0 0 36 9" aria-hidden="true"><line x1="0" y1="4.5" x2="36" y2="4.5" stroke="' + s[1] + '" stroke-width="' + (s[2] * 1.2) + '"' + (s[3] ? ' stroke-dasharray="' + s[3] + '"' : '') + '></line></svg>' + esc(s[0]) + '</div>';
+  });
+  return html;
+}
+// ---- グループ・名前（v0.105.0）
+/** 選んだ番号に、同じグループの仲間を足す（ロックしてある図形は足さない） */
+function layExpand(sels) {
+  var list = L.data.elements, groups = {};
+  sels.forEach(function (i) { if (list[i] && list[i].grp) groups[list[i].grp] = true; });
+  var out = sels.slice();
+  list.forEach(function (x, k) { if (x.grp && groups[x.grp] && out.indexOf(k) === -1) out.push(k); });
+  return out.sort(function (a, b) { return a - b; });
+}
+var LAY_TYPE_NAME = { desk: '机', chair: '椅子', rect: '四角', circle: '丸', shelf: '本棚', rack: 'ラック', counter: 'カウンター', copier: '複合機', text: '文字', icon: 'アイコン', line: '線', arrow: '矢印', poly: '折れ線', pin: '機器', net: 'ネットワーク機器', link: '回線' };
+/** 一覧に出す、図形の名前 */
+function layLabel(el) {
+  var base = LAY_TYPE_NAME[el.type] || el.type, extra = '';
+  if (el.type === 'pin') extra = layoutPinInfo(el.deviceId).label;
+  else if (el.type === 'net') extra = layNetName(el);
+  else if (el.type === 'icon') { base = el.icon || base; extra = el.text || ''; }
+  else if (el.type === 'link') { var a = layNetById(L.data, el.a), b = layNetById(L.data, el.b); extra = (a ? layNetName(a) : '?') + '～' + (b ? layNetName(b) : '?'); }
+  else extra = el.text || '';
+  return base + (extra ? '：' + extra : '');
+}
+/** 重なり順の一覧（前にあるものが上）。押して選ぶ・目と鍵で、隠す・ロックする */
+function layoutListHtml(d) {
+  var rows = d.elements.map(function (x, i) { return { x: x, i: i }; }).reverse().map(function (r) {
+    var x = r.x, i = r.i, sel = L.sels.indexOf(i) !== -1;
+    return '<div class="lay-row' + (sel ? ' sel' : '') + (x.hide ? ' off' : '') + '" data-i="' + i + '">' +
+      '<button type="button" class="lay-rowname" data-act="layoutRowSel" data-i="' + i + '">' + (x.grp ? '<span class="lay-grp" title="グループ">🔗' + esc(x.grp) + '</span>' : '') + esc(layLabel(x)) + '</button>' +
+      (x.type === 'link' ? '' : '<button type="button" class="lay-rowbtn" data-act="layoutRowHide" data-i="' + i + '" aria-pressed="' + !!x.hide + '" title="' + (x.hide ? '隠している（押すと表示）' : '表示している（押すと隠す）') + '">' + (x.hide ? '🙈' : '👁') + '</button>' +
+        '<button type="button" class="lay-rowbtn" data-act="layoutRowLock" data-i="' + i + '" aria-pressed="' + !!x.lock + '" title="' + (x.lock ? 'ロック中（押すと外す）' : 'ロックしていない（押すとロック）') + '">' + (x.lock ? '🔒' : '🔓') + '</button>') + '</div>';
+  }).join('');
+  return '<div class="lay-list" id="layList"><div class="note" style="margin-bottom:6px">上ほど手前です。押すと選べます（Shift か「まとめて選ぶ」で足せます）。🔒は図の上で動かせず、🙈は編集の画面だけに薄く出ます。</div>' + (rows || '<span class="note">まだ図形がありません。</span>') + '</div>';
+}
+// ---- 図形の形を扱う小さい関数
+function layClone(x) { return JSON.parse(JSON.stringify(x)); }
+function layR2(v) { return Math.round(v * 100) / 100; }
+function layIsLine(el) { return el.type === 'line' || el.type === 'arrow'; }
+function layIsBox(el) { return !!LAY_NEW[el.type]; }
+function layRot(el) { return Number(el.r) || 0; }
+/** 動かすときに図の中へ収める点の範囲 [左, 上, 右, 下]（箱・文字・ピンは基準の1点、線は両端、折れ線は全部の点） */
+function layAnchorBounds(el) {
+  if (el.type === 'link') return [Infinity, Infinity, -Infinity, -Infinity];     // 回線は自分の位置を持たない（つなぎ先の記号に付いていく）
+  if (layIsLine(el)) return [Math.min(el.x1, el.x2), Math.min(el.y1, el.y2), Math.max(el.x1, el.x2), Math.max(el.y1, el.y2)];
+  if (el.type === 'poly') {
+    var b = [Infinity, Infinity, -Infinity, -Infinity];
+    el.points.forEach(function (p) { b[0] = Math.min(b[0], p[0]); b[1] = Math.min(b[1], p[1]); b[2] = Math.max(b[2], p[0]); b[3] = Math.max(b[3], p[1]); });
+    return b;
+  }
+  return [el.x, el.y, el.x, el.y];
+}
+/** 図形の中心（％）。囲んで選ぶときに使う */
+function layCenter(el) {
+  if (layIsBox(el)) return [el.x + el.w / 2, el.y + el.h / 2];
+  var b = layAnchorBounds(el);
+  return [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+}
+/** el を「元の形 o から (mx, my) だけ動かした形」にする */
+function layShift(el, o, mx, my) {
+  if (o.type === 'link') return;
+  if (layIsLine(o)) { el.x1 = layR2(o.x1 + mx); el.x2 = layR2(o.x2 + mx); el.y1 = layR2(o.y1 + my); el.y2 = layR2(o.y2 + my); }
+  else if (o.type === 'poly') el.points = o.points.map(function (p) { return [layR2(p[0] + mx), layR2(p[1] + my)]; });
+  else { el.x = layR2(o.x + mx); el.y = layR2(o.y + my); }
+}
+/** まとめて動かす量を決める。形と並びを保ったまま、図からはみ出すぶんだけ戻す */
+function layGroupDelta(origs, dx, dy) {
+  var b = [Infinity, Infinity, -Infinity, -Infinity];
+  origs.forEach(function (o) { var a = layAnchorBounds(o); b[0] = Math.min(b[0], a[0]); b[1] = Math.min(b[1], a[1]); b[2] = Math.max(b[2], a[2]); b[3] = Math.max(b[3], a[3]); });
+  var mx = layoutSnapNum(dx), my = layoutSnapNum(dy);
+  return [Math.max(-b[0], Math.min(100 - b[2], mx)), Math.max(-b[1], Math.min(100 - b[3], my))];
+}
+/** 回した箱のつまみの位置。大きさのつまみは右下の角、向きのつまみは上（図の外に出るときは下） */
+function layBoxHandles(el, H) {
+  var r = layRot(el) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  var cx = (el.x + el.w / 2) * 10, cy = (el.y + el.h / 2) * H / 100, hw = el.w * 5, hh = el.h * H / 200;
+  var pt = function (dx, dy) { return [cx + dx * c - dy * s, cy + dx * s + dy * c]; };
+  var corner = pt(hw, hh), turn = pt(0, -(hh + 30));
+  if (turn[0] < 12 || turn[0] > 988 || turn[1] < 12 || turn[1] > H - 12) turn = pt(0, hh + 30);
+  var pos = function (p) { return 'left:' + layR2(p[0] / 10) + '%;top:' + layR2(p[1] / H * 100) + '%'; };
+  return '<span class="lay-handle" data-h="resize" style="' + pos(corner) + '"></span><span class="lay-handle rot" data-h="rotate" title="引っぱると向きが変わります" style="' + pos(turn) + '"></span>';
+}
+/** 図の中身（背景の画像・線・図形・つまみ）。opts: {edit, sels, ratio, pinLabel(el), band} */
+function layoutInnerHtml(data, opts) {
+  var H = 1000 / opts.ratio;
+  var sels = opts.edit && opts.sels ? opts.sels : [];
+  var html = data.imageBase64 ? '<img class="lay-bg" alt="" src="data:' + esc(data.imageMimeType) + ';base64,' + esc(data.imageBase64) + '">' : '';
+  var lines = '', boxes = '', handles = '';
+  // 重なり順＝並びの順。線・折れ線も、1本ずつ自分の層（z-index）に置く（v0.104.0）。回線は、いつも記号の下（記号を押せなくなるため）。
+  // 以前は線が全部まとめて図形の下にあったので、「後ろへ」で隣が線だと見た目が変わらなかった
+  var svgZ = function (zi, inner, off) { return '<svg class="lay-svg' + (off ? ' ghost' : '') + '" style="z-index:' + zi + '" viewBox="0 0 1000 ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + inner + '</svg>'; };
+  var netAt = {};
+  data.elements.forEach(function (x) { if (x.type === 'net') netAt[x.id] = x; });
+  data.elements.forEach(function (el, i) {
+    if (el.hide && !opts.edit) return;                  // 隠した図形は、編集の画面にだけ薄く出す（見るとき・印刷・お客様ページには出さない。v0.105.0）
+    var off = !!(opts.edit && (el.lock || el.hide));    // ロック・隠してある図形は、図の上では押せない（一覧から選ぶ）
+    var sel = sels.indexOf(i) !== -1, one = sel && sels.length === 1 && !off;
+    var attr = ' data-li="' + i + '"';
+    var color, w;
+    if (el.type === 'link') {
+      // 回線：つなぎ先の記号の中心から中心へ。記号を動かすと、ついてくる
+      var na = netAt[el.a], nb = netAt[el.b];
+      if (!na || !nb) return;
+      if (!opts.edit && (na.hide || nb.hide)) return;
+      var ls = LINK_KINDS[el.kind] || LINK_KINDS.lan;
+      var lx1 = na.x * 10, ly1 = na.y * H / 100, lx2 = nb.x * 10, ly2 = nb.y * H / 100;
+      lines += svgZ(0, '<line x1="' + lx1 + '" y1="' + ly1 + '" x2="' + lx2 + '" y2="' + ly2 + '" stroke="' + ls[1] + '" stroke-width="' + (ls[2] * 1.6) + '" stroke-linecap="round"' +
+        (ls[3] ? ' stroke-dasharray="' + ls[3] + '"' : (sel ? ' stroke-dasharray="10 8"' : '')) + (sel ? ' opacity=".55"' : '') + '></line>' +
+        (opts.edit && !off ? '<line class="hit"' + attr + ' x1="' + lx1 + '" y1="' + ly1 + '" x2="' + lx2 + '" y2="' + ly2 + '" stroke-width="22"></line>' : ''), off);
+      if (el.text) boxes += '<div class="lay-linklabel" style="z-index:0;left:' + layR2((na.x + nb.x) / 2) + '%;top:' + layR2((na.y + nb.y) / 2) + '%">' + esc(el.text) + '</div>';
+      return;
+    }
+    if (el.type === 'line' || el.type === 'arrow') {
+      var x1 = el.x1 * 10, y1 = el.y1 * H / 100, x2 = el.x2 * 10, y2 = el.y2 * H / 100;
+      color = el.color || '#5b6876'; w = (el.width || 2) * 1.6;
+      var ln = '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + esc(color) + '" stroke-width="' + w + '" stroke-linecap="round"' + (sel ? ' stroke-dasharray="10 8"' : '') + '></line>';
+      if (el.type === 'arrow') {
+        var ang = Math.atan2(y2 - y1, x2 - x1), len = 10 + w * 3, spread = 0.45;
+        var ax = x2 - len * Math.cos(ang - spread), ay = y2 - len * Math.sin(ang - spread), bx = x2 - len * Math.cos(ang + spread), by = y2 - len * Math.sin(ang + spread);
+        ln += '<polygon points="' + x2 + ',' + y2 + ' ' + ax + ',' + ay + ' ' + bx + ',' + by + '" fill="' + esc(color) + '"></polygon>';
+      }
+      if (opts.edit && !off) ln += '<line class="hit"' + attr + ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke-width="' + Math.max(22, w + 16) + '"></line>';
+      lines += svgZ(i, ln, off);
+      if (one) handles += '<span class="lay-handle" data-h="p1" style="left:' + el.x1 + '%;top:' + el.y1 + '%"></span><span class="lay-handle" data-h="p2" style="left:' + el.x2 + '%;top:' + el.y2 + '%"></span>';
+      return;
+    }
+    if (el.type === 'poly') {
+      var pts = el.points.map(function (p) { return (p[0] * 10) + ',' + (p[1] * H / 100); }).join(' ');
+      color = el.color || '#5b6876'; w = (el.width || 2) * 1.6;
+      lines += svgZ(i, '<polyline points="' + pts + '" fill="none" stroke="' + esc(color) + '" stroke-width="' + w + '" stroke-linecap="round" stroke-linejoin="round"' + (sel ? ' stroke-dasharray="10 8"' : '') + '></polyline>' +
+        (opts.edit && !off ? '<polyline class="hit"' + attr + ' points="' + pts + '" stroke-width="' + Math.max(22, w + 16) + '"></polyline>' : ''), off);
+      if (one) {
+        // 白い丸＝点を動かす。小さい青い丸＝引っぱると、そこに点が増える
+        if (el.points.length < S.D.layoutPolyMaxPoints) {
+          for (var k = 0; k < el.points.length - 1; k++) {
+            handles += '<span class="lay-handle mid" data-h="mid" data-pi="' + k + '" title="引っぱると点が増えます" style="left:' + layR2((el.points[k][0] + el.points[k + 1][0]) / 2) + '%;top:' + layR2((el.points[k][1] + el.points[k + 1][1]) / 2) + '%"></span>';
+          }
+        }
+        el.points.forEach(function (p, pi) {
+          handles += '<span class="lay-handle' + (pi === L.pt ? ' cur' : '') + '" data-h="pt" data-pi="' + pi + '" style="left:' + p[0] + '%;top:' + p[1] + '%"></span>';
+        });
+      }
+      return;
+    }
+    var cls = 'lay-el t-' + (el.type === 'pin' ? 'pin' : el.type) + (sel ? ' sel' : '') + (off ? (el.hide ? ' ghost' : ' locked') : '');
+    var style = 'z-index:' + i + ';left:' + el.x + '%;top:' + el.y + '%;';
+    var r = layRot(el);
+    if (el.type === 'pin') {
+      var info = opts.pinLabel ? opts.pinLabel(el) : layoutPinInfo(el.deviceId);
+      boxes += '<div class="' + cls + info.cls + '"' + attr + (opts.edit || opts.pinLabel || opts.id ? '' : ' data-act="layoutPin" data-id="' + esc(el.deviceId) + '" title="押すと機器を開きます"') + ' style="' + style + '">' + esc(info.label) + '</div>';
+    } else if (el.type === 'text') {
+      boxes += '<div class="' + cls + '"' + attr + ' style="' + style + 'font-size:' + (el.size * 0.1) + 'cqw;' + (el.color ? 'color:' + esc(el.color) + ';' : '') + (r ? 'transform:rotate(' + r + 'deg);' : '') + '">' + esc(el.text) + '</div>';
+    } else if (el.type === 'icon') {
+      boxes += '<div class="' + cls + '"' + attr + ' style="' + style + 'font-size:' + (el.size * 0.1) + 'cqw;' + (r ? 'transform:translate(-50%,-50%) rotate(' + r + 'deg);' : '') + '"><span>' + esc(el.icon) + '</span>' + (el.text ? '<small>' + esc(el.text) + '</small>' : '') + '</div>';
+    } else if (el.type === 'net') {
+      var nk = NET_KINDS[el.kind] || NET_KINDS.port;
+      boxes += '<div class="' + cls + (opts.connId && opts.connId === el.id ? ' conn' : '') + '"' + attr + (opts.edit || opts.pinLabel || opts.id ? '' : ' data-act="layoutNetInfo" data-i="' + i + '" title="押すと詳しい情報が出ます"') +
+        ' style="' + style + 'font-size:' + (el.size * 0.06) + 'cqw;--nc:' + nk[2] + '"><span class="nb">' + esc(nk[0]) + '</span><span class="nn">' + esc(layNetName(el)) + '</span>' +
+        (el.ip && opts.showIp !== false ? '<span class="ni">' + esc(el.ip) + '</span>' : '') + '</div>';
+    } else if (layIsBox(el)) {
+      boxes += '<div class="' + cls + '"' + attr + ' style="' + style + 'width:' + el.w + '%;height:' + el.h + '%;' + (el.color ? 'background-color:' + esc(el.color) + ';' : '') + (r ? 'transform:rotate(' + r + 'deg);' : '') + '">' + esc(el.text) + '</div>';
+      if (one) handles += layBoxHandles(el, H);
+    }
+  });
+  var band = opts.edit && opts.band ? '<div class="lay-band" style="left:' + opts.band.x + '%;top:' + opts.band.y + '%;width:' + opts.band.w + '%;height:' + opts.band.h + '%"></div>' : '';
+  return html + lines + boxes + handles + band;
+}
+function layoutCanvasHtml(data, opts) {
+  // 画面では、図の全体が1画面に収まる幅までにする（縦に長くなって、編集のたびに上下に動かさなくて済むように）
+  var fit = opts.id ? '' : 'max-width:max(300px, calc((100vh - 264px) * ' + opts.ratio + '));margin:0 auto;';
+  var items = opts.legend === false ? null : layoutLegendItems(data);
+  return '<div class="lay-canvas' + (opts.edit ? ' editing' : '') + '" id="' + (opts.id || 'layCanvas') + '" style="aspect-ratio:' + opts.ratio + ';' + fit + 'background-color:' + esc(data.backgroundColor) + '">' + layoutInnerHtml(data, opts) + '</div>' +
+    (items === null ? '' : '<div class="lay-legend" id="' + (opts.id || 'lay') + 'Legend"' + (items ? '' : ' hidden') + ' style="' + fit + '">' + items + '</div>');
+}
+
+function layoutBoxHtml() {
+  if (L.customerId !== S.customerId || !L.list) return '<p class="empty">読み込んでいます…</p>';
+  var tabs = '<div class="lay-tabs chipset small">' + L.list.map(function (l) {
+    return '<button type="button" data-act="layoutOpen" data-id="' + esc(l['レイアウトID']) + '" aria-pressed="' + (l['レイアウトID'] === L.id) + '">' + esc(l['名前']) + '</button>';
+  }).join('') + '<button type="button" class="btn small" data-act="layoutNew" style="border-radius:999px">＋ 新しいレイアウト</button></div>';
+  if (!L.list.length) return tabs + '<p class="empty">レイアウト図はまだありません。「＋ 新しいレイアウト」で作ると、機器の置き場所を図にできます。</p>';
+  if (!L.data) return tabs + '<p class="empty">読み込んでいます…</p>';
+  var d = L.data, el = L.sel >= 0 ? d.elements[L.sel] : null;
+  var btn = function (act, label, extra) { return '<button type="button" class="btn small" data-act="' + act + '"' + (extra || '') + '>' + label + '</button>'; };
+  /** 幹線図の記号か回線があるときだけ出す：IP と凡例を、図に出すか（画面と印刷。保存はしない） */
+  var netViewToggles = function (data) {
+    if (!data.elements.some(function (x) { return x.type === 'net' || x.type === 'link'; })) return '';
+    return '<button type="button" class="btn small" data-act="layoutShowIp" aria-pressed="' + L.showIp + '">IPアドレスを図に出す：' + (L.showIp ? 'する' : 'しない') + '</button>' +
+      '<button type="button" class="btn small" data-act="layoutLegend" aria-pressed="' + L.legend + '">凡例：' + (L.legend ? '出す' : '出さない') + '</button>';
+  };
+  var tools;
+  if (!L.edit) {
+    tools = '<div class="lay-tools">' + '<button type="button" class="btn small primary" data-act="layoutEdit">編集する</button>' + btn('layoutPrint', '印刷・PDFにする') + btn('layoutRename', '名前を変える') + netViewToggles(d) +
+      (S.D.me.isAdmin ? '<button type="button" class="btn small danger" data-act="layoutDelete">このレイアウトを削除</button>' : '') +
+      '<span class="note">更新：' + esc(d['更新日時']) + '</span></div>' +
+      (d.imageMissing ? '<p class="msg" style="margin:10px 16px 0">背景の画像がドライブから見つかりません。入れ直してください。</p>' : '');
+  } else {
+    var add = function (type, label) { return '<button type="button" class="btn small" data-act="layoutAdd" data-type="' + type + '">' + label + '</button>'; };
+    var swatches = function (list, current, act) {
+      return list.map(function (c) {
+        return '<button type="button" class="swatch" data-act="' + act + '" data-color="' + c + '" aria-pressed="' + (current === c) + '" aria-label="' + (c || '色なし') + '" title="' + (c || '色なし') + '" style="background:' + (c || 'linear-gradient(135deg,#fff 45%,#b3261e 46%,#b3261e 54%,#fff 55%)') + '"></button>';
+      }).join('');
+    };
+    var picked0 = function () { var xs = L.sels.map(function (i) { return d.elements[i]; }).filter(function (x) { return x; }); return { lock: xs.length && xs.every(function (x) { return x.lock; }), hide: xs.length && xs.every(function (x) { return x.hide; }) }; };
+    var orderBtns = '<span class="lay-lbl">重なり</span>' + btn('layoutOrder', '最背面', ' data-d="bottom" title="一番うしろへ"') + btn('layoutOrder', '後ろへ', ' data-d="-1" title="1つうしろへ"') + btn('layoutOrder', '前へ', ' data-d="1" title="1つ前へ"') + btn('layoutOrder', '最前面', ' data-d="top" title="一番前へ"') +
+      '<span class="sep"></span>' + btn('layoutLock', (el || picked0()).lock ? '🔓 ロックを外す' : '🔒 ロック', ' title="図の上で動かないようにします"') + btn('layoutHide', (el || picked0()).hide ? '👁 表示する' : '🙈 隠す', ' title="見るとき・印刷・お客様ページに出さないようにします"');
+    var props = '';
+    var devOpts = function (cur) {
+      return '<option value="">機器台帳とは結びつけない</option>' + S.D.devices.filter(function (dev) { return dev['顧客ID'] === L.customerId && (dev['状況'] !== '廃棄' || dev['機器ID'] === cur); }).map(function (dev) {
+        return '<option value="' + esc(dev['機器ID']) + '"' + (dev['機器ID'] === cur ? ' selected' : '') + '>' + esc(layoutPinInfo(dev['機器ID']).label + '（' + dev['種類'] + '）') + '</option>';
+      }).join('');
+    };
+    if (L.conn) {
+      // 回線をつなぐ途中：種類を選んで、つなぐ機器を順に2つ押す
+      props = '<div class="lay-tools" id="layProps"><b>回線の種類</b><span class="chipset small">' + LINK_ORDER.map(function (k) {
+        return '<button type="button" data-act="layoutConnKind" data-k="' + k + '" aria-pressed="' + (L.conn.kind === k) + '" style="border-left:6px solid ' + LINK_KINDS[k][1] + '">' + esc(LINK_KINDS[k][0]) + '</button>';
+      }).join('') + '</span>' + '<span class="note">' + (L.conn.first ? '「' + esc(layNetName(layNetById(d, L.conn.first) || { kind: 'port' })) + '」から、つなぐ先の機器を押してください。' : 'つなぐ機器を、順に2つ押してください。記号を動かすと、回線はついてきます。') + '</span>' +
+        btn('layoutConnect', 'つなぎ終わる') + '</div>';
+    } else if (el && el.type === 'net') {
+      props = '<div class="lay-tools" id="layProps"><select data-layprop="kind" aria-label="種類">' + NET_ORDER.map(function (k) { return '<option value="' + k + '"' + (el.kind === k ? ' selected' : '') + '>' + esc(NET_KINDS[k][1]) + '</option>'; }).join('') + '</select>' +
+        '<input type="text" id="layText" data-layprop="text" maxlength="30" value="' + esc(el.text) + '" placeholder="名前（例：2Fルーター）" aria-label="名前" style="width:auto;flex:1 1 140px">' +
+        '<input type="text" data-layprop="ip" maxlength="45" value="' + esc(el.ip) + '" placeholder="IPアドレス" aria-label="IPアドレス" style="width:auto;flex:1 1 120px">' +
+        '<input type="text" data-layprop="note" maxlength="60" value="' + esc(el.note) + '" placeholder="メモ（型番・設置場所など）" aria-label="メモ" style="width:auto;flex:1 1 170px">' +
+        '<select data-layprop="deviceId" aria-label="機器台帳と結びつける" style="max-width:240px">' + devOpts(el.deviceId) + '</select>' +
+        btn('layoutSize', '小さく', ' data-d="-1"') + btn('layoutSize', '大きく', ' data-d="1"') +
+        '<span class="sep"></span>' + orderBtns + '<span class="sep"></span>' + btn('layoutDup', '複製') +
+        '<button type="button" class="btn small danger" data-act="layoutRemove">消す（つないだ回線も消えます）</button></div>';
+    } else if (el && el.type === 'link') {
+      props = '<div class="lay-tools" id="layProps"><b>回線</b><span class="chipset small">' + LINK_ORDER.map(function (k) {
+        return '<button type="button" data-act="layoutLinkKind" data-k="' + k + '" aria-pressed="' + (el.kind === k) + '" style="border-left:6px solid ' + LINK_KINDS[k][1] + '">' + esc(LINK_KINDS[k][0]) + '</button>';
+      }).join('') + '</span>' + '<input type="text" id="layText" data-layprop="text" maxlength="20" value="' + esc(el.text) + '" placeholder="線の上に出す文字（例：1Gbps）" aria-label="線の文字" style="width:auto;flex:1 1 200px">' +
+        '<button type="button" class="btn small danger" data-act="layoutRemove">この回線を消す</button></div>';
+    } else if (el) {
+      var isPath = layIsLine(el) || el.type === 'poly';
+      var hasText = el.type !== 'pin' && !isPath;
+      var hasColor = el.type !== 'pin' && el.type !== 'icon';
+      var hasSize = el.type === 'text' || el.type === 'icon' || isPath;
+      var canTurn = el.type !== 'pin' && !isPath;
+      props = '<div class="lay-tools" id="layProps">' +
+        (el.type === 'pin' ? '<b>' + esc(layoutPinInfo(el.deviceId).label) + '</b>' : '') +
+        (hasText ? '<input type="text" id="layText" data-layprop="text" maxlength="' + (el.type === 'text' ? 100 : el.type === 'icon' ? 30 : 40) + '" value="' + esc(el.text) + '" placeholder="' + (el.type === 'text' ? '文字' : 'ラベル（なくてもよい）') + '" aria-label="文字" style="width:auto;flex:1 1 160px">' : '') +
+        (hasColor ? swatches(LAY_COLORS, el.color || '', 'layoutColor') : '') +
+        (hasSize ? btn('layoutSize', isPath ? '細く' : '小さく', ' data-d="-1"') + btn('layoutSize', isPath ? '太く' : '大きく', ' data-d="1"') : '') +
+        (canTurn ? btn('layoutRotate', '左に回す', ' data-d="-15"') + btn('layoutRotate', '右に回す', ' data-d="15"') + (layRot(el) ? '<span class="note" id="layAngle">' + layRot(el) + '°</span>' : '') : '') +
+        (el.type === 'poly' ? btn('layoutPolyAdd', '点を足す', el.points.length < S.D.layoutPolyMaxPoints ? '' : ' disabled') + btn('layoutPolyDel', '点を減らす', el.points.length > 2 ? '' : ' disabled') : '') +
+        '<span class="sep"></span>' + orderBtns + '<span class="sep"></span>' +
+        (el.type === 'pin' ? '' : btn('layoutDup', '複製')) +
+        '<button type="button" class="btn small danger" data-act="layoutRemove">' + (el.type === 'pin' ? '図から外す' : '消す') + '</button></div>';
+    } else if (L.sels.length > 1) {
+      // まとめて選んでいるとき：色・そろえる・複製・消す
+      var picked = L.sels.map(function (i) { return d.elements[i]; }).filter(function (x) { return x; });
+      var colors = picked.filter(function (x) { return x.type !== 'pin' && x.type !== 'icon' && x.type !== 'net' && x.type !== 'link'; });
+      var same = colors.length && colors.every(function (x) { return (x.color || '') === (colors[0].color || ''); }) ? (colors[0].color || '') : null;
+      props = '<div class="lay-tools" id="layProps"><b id="layCount">' + picked.length + '個を選択中</b>' +
+        (colors.length ? swatches(LAY_COLORS, same, 'layoutColor') : '') +
+        '<span class="sep"></span>' + btn('layoutAlign', '左をそろえる', ' data-d="left"') + btn('layoutAlign', '上をそろえる', ' data-d="top"') + btn('layoutGroup', '🔗 グループにする', ' title="まとめて1つとして動かせます"') + (picked.some(function (x) { return x.grp; }) ? btn('layoutUngroup', 'グループを解く') : '') + '<span class="sep"></span>' + orderBtns + '<span class="sep"></span>' +
+        (picked.some(function (x) { return x.type !== 'pin'; }) ? btn('layoutDup', '複製') : '') +
+        '<button type="button" class="btn small danger" data-act="layoutRemove">まとめて消す</button>' + btn('layoutSelectNone', '選択をやめる') + '</div>';
+    }
+    tools = '<div class="lay-sticky"><div class="lay-tools lay-main"><button type="button" class="btn small primary" data-act="layoutSave"' + (L.dirty ? '' : ' disabled') + '>保存</button>' +
+      btn('layoutUndo', '元に戻す', L.undo.length ? '' : ' disabled') + btn('layoutRedo', 'やり直す', L.redo.length ? '' : ' disabled') + btn('layoutStop', '編集をやめる') +
+      '<span class="sep"></span>' +
+      '<button type="button" class="btn small" data-act="layoutSnap" aria-pressed="' + L.snap + '">マス目に合わせる：' + (L.snap ? 'する' : 'しない') + '</button>' +
+      '<button type="button" class="btn small" data-act="layoutMulti" aria-pressed="' + L.multi + '">まとめて選ぶ：' + (L.multi ? 'する' : 'しない') + '</button>' + (L.dirty ? '<span class="note lay-dirty">未保存の変更があります</span>' : '') + '</div>' +
+      '@@PROPS@@</div>' +
+      '<div class="lay-tools"><span class="lay-lbl">置く</span>' + add('desk', '机') + add('chair', '椅子') + add('rect', '四角') + add('circle', '丸') + add('text', '文字') + btn('layoutIconPick', 'アイコン') + add('line', '線') + add('arrow', '矢印') + add('poly', '折れ線') +
+      '<span class="sep"></span>' + btn('layoutTemplatePick', 'テンプレート・セット') + '</div>' +
+      '<div class="lay-tools"><span class="lay-lbl">ネットワーク</span>' + btn('layoutNetPick', 'ネットワーク機器') + '<button type="button" class="btn small" data-act="layoutConnect" aria-pressed="' + !!L.conn + '">回線をつなぐ' + (L.conn ? '：中' : '') + '</button>' + btn('layoutNetTplPick', '幹線図テンプレート') + netViewToggles(d) + '</div>' +
+      '<div class="lay-tools"><span class="note">背景</span>' + swatches(LAY_BG_COLORS, d.backgroundColor, 'layoutBg') +
+      '<input type="file" id="layImage" accept="image/png,image/jpeg,image/gif,image/webp" hidden>' + btn('layoutImagePick', d.imageBase64 ? '画像を入れ替える' : '画像を入れる（間取り図など）') +
+      (d.imageBase64 || d.imageMissing ? btn('layoutImageRemove', '画像を外す') : '') + '</div>';
+    tools = tools.replace('@@PROPS@@', function () { return (props || '<div class="lay-tools" id="layProps"><span class="note">' + (!d.elements.length
+        ? 'まだ何もありません。「テンプレート・セット」から、部屋まるごとの下書きや、席数を入れた机の並びを置けます。ネットワークの図は「幹線図テンプレート」から。そこから直すと早く作れます。'
+        : L.multi
+        ? '図形を順に押すと、まとめて選べます。何もない所を引っぱって囲んでも選べます。選んだら、どれか1つを引っぱると全部が動きます。'
+        : '図形を押すと選べます。引っぱって動かし、赤い丸で大きさ、青い丸で向きを変えます。何もない所を引っぱって囲むか、Shift を押しながら押すと、まとめて選べます。') + '</span></div>'); });
+  }
+  var side = '';
+  if (L.edit) {
+    var placed = {};
+    d.elements.forEach(function (x) { if (x.type === 'pin') placed[x.deviceId] = true; });
+    var free = S.D.devices.filter(function (dev) { return dev['顧客ID'] === L.customerId && dev['状況'] !== '廃棄' && !placed[dev['機器ID']]; });
+    side = '<div class="lay-side"><button type="button" class="btn small" data-act="layoutListToggle" aria-pressed="' + !!L.listOpen + '">重なり順の一覧：' + (L.listOpen ? '閉じる' : '開く') + '</button><span class="note">まだ置いていない機器（押すと図に置きます）</span>' +
+      (free.length ? free.map(function (dev) { return '<button type="button" class="chip" data-act="layoutPinAdd" data-id="' + esc(dev['機器ID']) + '">' + esc(layoutPinInfo(dev['機器ID']).label) + '</button>'; }).join('') +
+        (free.length > 1 ? '<button type="button" class="btn small" data-act="layoutPinAll">' + free.length + '台まとめて置く</button>' : '') : '<span class="note">　すべて置いてあります。</span>') + '</div>';
+  }
+  return tabs + tools + '<div class="lay-wrap">' + layoutCanvasHtml(d, layoutViewOpts({})) + '</div>' + side + (L.edit && L.listOpen ? layoutListHtml(d) : '');
+}
+
+/** いまの図（図形・背景色・選んでいる図形）の写し。元に戻す・やり直すで使う */
+function layoutSnapshot() { return JSON.stringify({ e: L.data.elements, b: L.data.backgroundColor, s: L.sels }); }
+function layoutPushUndo() {
+  L.undo.push(layoutSnapshot());
+  if (L.undo.length > 50) L.undo.shift();
+  L.redo = [];
+}
+function layoutRestore(json) {
+  var snap = JSON.parse(json);
+  L.data.elements = snap.e; L.data.backgroundColor = snap.b; L.pt = -1; L.dirty = true;
+  // 選択も、そのときの状態に戻す（続けて操作できるように）
+  L.sels = (snap.s || []).filter(function (i) { return i >= 0 && i < snap.e.length; });
+}
+function layoutChanged() { L.dirty = true; drawLayoutBox(); }
+function layoutSnapNum(v) { return L.snap ? Math.round(v) : Math.round(v * 10) / 10; }
+function layoutClamp(v) { return Math.min(100, Math.max(0, v)); }
+/** 図形を足せるか（上限を超えるなら知らせる） */
+function layoutRoom(n) {
+  if (L.data.elements.length + n <= S.D.layoutMaxElements) return true;
+  toast('図形が多すぎます（' + S.D.layoutMaxElements + '個まで）。', true);
+  return false;
+}
+/** 保存していない変更があるときは、移動の前に確かめる */
+function guardLayout(next) {
+  if (L && L.edit && L.dirty) {
+    confirmDialog('保存していない変更', 'レイアウト図に、保存していない変更があります。保存せずに移動しますか？', '保存せずに移動', true).then(function (yes) {
+      if (!yes) return;
+      L.list = null; L.customerId = ''; L.edit = false; L.dirty = false;
+      next();
+    });
+    return;
+  }
+  if (L && L.edit) { L.edit = false; L.sels = []; }
+  next();
+}
+/** 名前などを1つ入れてもらう小さい窓 */
+function askText(title, label, value, max) {
+  return new Promise(function (resolve) {
+    var wrap = openModal('<header><h2>' + esc(title) + '</h2><button type="button" class="x" data-answer="no" aria-label="閉じる">×</button></header>' +
+      '<form novalidate><div class="body"><div class="field"><label for="askInput">' + esc(label) + '</label><input type="text" id="askInput" maxlength="' + max + '" value="' + esc(value || '') + '"></div></div>' +
+      '<footer><span class="grow"></span><button type="button" class="btn" data-answer="no">やめる</button><button type="submit" class="btn primary">決定</button></footer></form>', true, true);
+    var finish = function (v) { wrap.remove(); resolve(v); };
+    wrap.addEventListener('click', function (e) { if (e.target.closest('[data-answer]')) finish(null); });
+    wrap.querySelector('form').addEventListener('submit', function (e) { e.preventDefault(); e.stopPropagation(); finish(wrap.querySelector('#askInput').value); });
+  });
+}
+
+// ---- リンクを入れる（Ctrl+K。v0.99.0） ----
+//   文字を入れる欄で Ctrl+K（Mac は ⌘K）を押すと、表示名とアドレスを聞いて、[表示名](https://…) の形で入れる。
+//   一覧や詳細では、押せるリンクとして出る。選んでいた文字があれば、それを表示名にする
+var LINK_SKIP_NAMES = { 'スタッフID': 1, 'ログインID': 1, 'ID': 1, 'パスワード': 1, 'シリアルキー': 1, 'シリアル': 1, '現在のパスワード': 1, '新しいパスワード': 1 };
+function normalizeLinkUrl(raw) {
+  var u = String(raw || '').trim();
+  if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) { if (/^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}(\/|$|\?|#)/.test(u)) u = 'https://' + u; else return ''; }
+  if (/\s/.test(u)) return '';
+  return u.replace(/\)/g, '%29');
+}
+function askLink(label) {
+  return new Promise(function (resolve) {
+    var wrap = openModal('<header><h2>リンクを入れる</h2><button type="button" class="x" data-answer="no" aria-label="閉じる">×</button></header>' +
+      '<form novalidate><div class="body"><p class="msg" hidden></p>' +
+      '<div class="field"><label for="linkLabel">表示する名前</label><input type="text" id="linkLabel" maxlength="80" value="' + esc(label || '') + '" placeholder="例：見積書（空なら、アドレスをそのまま出す）"></div>' +
+      '<div class="field"><label for="linkUrl">リンク先のアドレス</label><input type="text" id="linkUrl" maxlength="500" inputmode="url" autocapitalize="off" placeholder="https://…"></div></div>' +
+      '<footer><span class="grow"></span><button type="button" class="btn" data-answer="no">やめる</button><button type="submit" class="btn primary">入れる</button></footer></form>', true, true);
+    var finish = function (v) { wrap.remove(); resolve(v); };
+    var focusEl = wrap.querySelector(label ? '#linkUrl' : '#linkLabel'); if (focusEl) focusEl.focus();
+    wrap.addEventListener('click', function (e) { if (e.target.closest('[data-answer]')) finish(null); });
+    wrap.querySelector('form').addEventListener('submit', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var url = normalizeLinkUrl(wrap.querySelector('#linkUrl').value);
+      var msg = wrap.querySelector('.msg');
+      if (!url) { msg.textContent = 'アドレスは、https:// か http:// で始まる形で入れてください。'; msg.hidden = false; return; }
+      finish({ label: wrap.querySelector('#linkLabel').value.replace(/[\[\]\r\n]/g, ' ').trim(), url: url });
+    });
+  });
+}
+function insertLinkInto(el) {
+  var start = el.selectionStart, end = el.selectionEnd;
+  var picked = el.value.slice(start, end);
+  askLink(picked.length <= 80 ? picked : '').then(function (r) {
+    if (!r) { el.focus(); return; }
+    var text = r.label ? '[' + r.label + '](' + r.url + ')' : r.url;
+    var next = el.value.slice(0, start) + text + el.value.slice(end);
+    if (el.maxLength > 0 && next.length > el.maxLength) { toast('文字数の上限（' + el.maxLength + '文字）を超えるので、リンクを入れられません。', true); el.focus(); return; }
+    el.value = next;
+    el.focus();
+    el.setSelectionRange(start + text.length, start + text.length);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+// ---- ドラッグ（動かす・大きさを変える・回す・線の端や折れ線の点を動かす・囲んで選ぶ）
+//   どれも「つかんだときの形（orig）＋ポインターが動いた量」で決める。途中の形から足していくと、ずれが積もるため。
+document.addEventListener('pointerdown', function (e) {
+  if (!L || !L.edit || !L.data) return;
+  var canvas = e.target.closest ? e.target.closest('#layCanvas') : null;
+  if (!canvas) return;
+  if (e.button > 0) return;        // 右ボタンは、メニューだけ（つかんで動かさない。v0.105.0）
+  var list = L.data.elements;
+  var handle = e.target.closest('.lay-handle');
+  var hit = e.target.closest('[data-li]');
+  var additive = e.shiftKey || e.ctrlKey || e.metaKey || L.multi;
+  var start = function (g) {
+    var live = $('layCanvas');
+    g.sx = e.clientX; g.sy = e.clientY; g.rect = live.getBoundingClientRect(); g.moved = false;
+    L.drag = g;
+    try { live.setPointerCapture(e.pointerId); } catch (err) { /* つかめなくても、document で受けるので動く */ }
+  };
+  e.preventDefault();
+  if (L.conn) {
+    // 回線をつなぐ途中：記号を2つ順に押す（動かさない）。記号以外を押したら、1つ目をやめる
+    var ci = hit ? Number(hit.dataset.li) : -1, tgt = ci >= 0 && list[ci] && list[ci].type === 'net' ? list[ci] : null;
+    if (!tgt) { if (L.conn.first) { L.conn.first = ''; drawLayoutBox(); } return; }
+    if (!L.conn.first) { L.conn.first = tgt.id; drawLayoutBox(); return; }
+    if (L.conn.first === tgt.id) { L.conn.first = ''; drawLayoutBox(); return; }
+    layoutConnectPair(L.conn.first, tgt.id, L.conn.kind);
+    L.conn.first = '';
+    drawLayoutBox();
+    return;
+  }
+  if (handle && L.sel >= 0 && list[L.sel]) {
+    L.textUndo = -1;
+    var mode = handle.dataset.h;
+    if (mode === 'pt') { var was = L.pt; L.pt = Number(handle.dataset.pi); if (was !== L.pt) drawLayoutCanvas(); }
+    start({ mode: mode, i: L.sel, pi: Number(handle.dataset.pi), orig: layClone(list[L.sel]) });
+    return;
+  }
+  var i = hit ? Number(hit.dataset.li) : -1;
+  if (i < 0 || !list[i]) {
+    // 何もない所：引っぱれば囲んで選ぶ。押しただけなら選択をやめる
+    start({ mode: 'band', additive: additive, base: additive ? L.sels.slice() : [] });
+    return;
+  }
+  var before = L.sels.join(','), toggleOff = -1;
+  if (additive) { if (L.sels.indexOf(i) === -1) L.sels.push(i); else toggleOff = i; }
+  else if (L.sels.indexOf(i) === -1) L.sels = [i];     // まとめて選んだ中の1つを押したときは、選択を保ったまま全部を動かす
+  if (toggleOff < 0) L.sels = layExpand(L.sels);      // グループは、1つ押すと全部が選ばれる
+  L.textUndo = -1; L.pt = -1;
+  if (L.sels.join(',') !== before) drawLayoutBox();
+  if (list[i].type === 'link') return;       // 回線は、選ぶだけ（位置は、つなぎ先の記号で決まる）
+  var mv = L.sels.filter(function (k) { return list[k] && !list[k].lock; });      // ロックした図形は動かさない
+  start({ mode: 'move', ids: mv, origs: mv.map(function (k) { return layClone(list[k]); }), toggleOff: toggleOff, pick: i, additive: additive });
+  layoutLongPress(e);
+});
+document.addEventListener('pointermove', function (e) {
+  var g = L && L.drag;
+  if (!g) return;
+  var first = !g.moved;
+  if (first) {
+    if (Math.abs(e.clientX - g.sx) + Math.abs(e.clientY - g.sy) < 4) return;
+    g.moved = true; layoutLongPressStop();
+    if (g.mode !== 'band') layoutPushUndo();
+  }
+  var dx = (e.clientX - g.sx) / g.rect.width * 100, dy = (e.clientY - g.sy) / g.rect.height * 100;
+  var list = L.data.elements, P = function (v) { return layoutClamp(layoutSnapNum(v)); };
+  if (g.mode === 'band') {
+    var bx = (g.sx - g.rect.left) / g.rect.width * 100, by = (g.sy - g.rect.top) / g.rect.height * 100;
+    var x0 = Math.min(bx, bx + dx), x1 = Math.max(bx, bx + dx), y0 = Math.min(by, by + dy), y1 = Math.max(by, by + dy);
+    L.band = { x: layR2(x0), y: layR2(y0), w: layR2(x1 - x0), h: layR2(y1 - y0) };
+    var sels = g.base.slice();
+    list.forEach(function (x, k) { if (x.lock || x.hide) return; var c = layCenter(x); if (c[0] >= x0 && c[0] <= x1 && c[1] >= y0 && c[1] <= y1 && sels.indexOf(k) === -1) sels.push(k); });
+    L.sels = layExpand(sels);
+  } else if (g.mode === 'move') {
+    var o0 = g.origs[0];
+    if (g.ids.length === 1 && !layIsLine(o0) && o0.type !== 'poly' && o0.type !== 'link') { list[g.ids[0]].x = P(o0.x + dx); list[g.ids[0]].y = P(o0.y + dy); }
+    else { var m = layGroupDelta(g.origs, dx, dy); g.ids.forEach(function (k, n) { layShift(list[k], g.origs[n], m[0], m[1]); }); }
+  } else {
+    var el = list[g.i], o = g.orig;
+    if (g.mode === 'resize') {
+      // 回してある箱は、箱の向きに合わせて幅・高さを変え、左上の角が動かないようにする
+      var H = 1000 / L.ratio, rr = layRot(o) * Math.PI / 180, c = Math.cos(rr), s = Math.sin(rr);
+      var du = dx * 10, dv = dy * H / 100;
+      el.w = Math.min(100, Math.max(2, layoutSnapNum(o.w + (du * c + dv * s) / 10)));
+      el.h = Math.min(100, Math.max(2, layoutSnapNum(o.h + (-du * s + dv * c) / H * 100)));
+      if (rr) {
+        var ohw = o.w * 5, ohh = o.h * H / 200, nhw = el.w * 5, nhh = el.h * H / 200;
+        var tlx = (o.x + o.w / 2) * 10 - ohw * c + ohh * s, tly = (o.y + o.h / 2) * H / 100 - ohw * s - ohh * c;
+        el.x = layR2((tlx + nhw * c - nhh * s - nhw) / 10); el.y = layR2((tly + nhw * s + nhh * c - nhh) / H * 100);
+      }
+    } else if (g.mode === 'rotate') {
+      // つかんだ位置からの角度の差で回す（つまみが上にあっても下にあっても、つかんだ瞬間に跳ねない）
+      var cx = g.rect.left + (o.x + o.w / 2) / 100 * g.rect.width, cy = g.rect.top + (o.y + o.h / 2) / 100 * g.rect.height;
+      var deg = layRot(o) + (Math.atan2(e.clientY - cy, e.clientX - cx) - Math.atan2(g.sy - cy, g.sx - cx)) * 180 / Math.PI;
+      var step = L.snap ? 15 : 1, r = ((Math.round(deg / step) * step) % 360 + 360) % 360;
+      if (r) el.r = r; else delete el.r;
+    }
+    else if (g.mode === 'p1') { el.x1 = P(o.x1 + dx); el.y1 = P(o.y1 + dy); }
+    else if (g.mode === 'p2') { el.x2 = P(o.x2 + dx); el.y2 = P(o.y2 + dy); }
+    else if (g.mode === 'mid') {
+      // 線の途中の丸を引っぱった：そこに点を足して、その点を動かす
+      var a = o.points[g.pi], b = o.points[g.pi + 1];
+      el.points.splice(g.pi + 1, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+      g.orig = layClone(el); g.pi += 1; g.mode = 'pt'; L.pt = g.pi;
+      el.points[g.pi] = [P(g.orig.points[g.pi][0] + dx), P(g.orig.points[g.pi][1] + dy)];
+    }
+    else if (g.mode === 'pt') { el.points[g.pi] = [P(o.points[g.pi][0] + dx), P(o.points[g.pi][1] + dy)]; }
+  }
+  if (!L.raf) L.raf = requestAnimationFrame(function () { L.raf = 0; drawLayoutCanvas(); });
+});
+function layoutEndDrag() {
+  layoutLongPressStop();
+  var g = L && L.drag;
+  if (!g) return;
+  L.drag = null;
+  if (g.mode === 'band') {
+    L.band = null;
+    if (!g.moved) { if (g.additive || !L.sels.length) return; L.sels = []; }
+    L.pt = -1;
+    drawLayoutBox();
+    return;
+  }
+  if (!g.moved) {
+    // まとめて選ぶ途中で、選んである図形を押しただけ：その図形を選択から外す
+    if (g.mode === 'move' && g.toggleOff >= 0) { var gone = layExpand([g.toggleOff]); L.sels = L.sels.filter(function (k) { return gone.indexOf(k) === -1; }); drawLayoutBox(); }
+    // まとめて選んだ中の1つを（Shift なしで）押しただけ：その1つだけを選ぶ
+    else if (g.mode === 'move' && !g.additive && L.sels.length > 1) { L.sels = layExpand([g.pick]); drawLayoutBox(); }
+    return;
+  }
+  layoutChanged();
+}
+// ---- 右クリック／長押しのメニュー（v0.105.0）：図形の操作を、その場に出す
+function layoutMenuClose() { var m = document.getElementById('layMenu'); if (m) m.remove(); }
+function layoutMenuOpen(x, y) {
+  layoutMenuClose();
+  if (!L || !L.edit || !L.data || !L.sels.length) return;
+  var list = L.data.elements, xs = L.sels.map(function (i) { return list[i]; }).filter(function (v) { return v; });
+  var nolink = xs.filter(function (v) { return v.type !== 'link'; });
+  var item = function (act, label, extra, cls) { return '<button type="button" class="' + (cls || '') + '" data-act="' + act + '"' + (extra || '') + '>' + label + '</button>'; };
+  var html = item('layoutOrder', '⏫ 最前面へ', ' data-d="top"') + item('layoutOrder', '↑ 1つ前へ', ' data-d="1"') + item('layoutOrder', '↓ 1つ後ろへ', ' data-d="-1"') + item('layoutOrder', '⏬ 最背面へ', ' data-d="bottom"') + '<hr>' +
+    (nolink.some(function (v) { return v.type !== 'pin'; }) ? item('layoutDup', '複製') : '') +
+    (nolink.length ? item('layoutLock', nolink.every(function (v) { return v.lock; }) ? '🔓 ロックを外す' : '🔒 ロック') + item('layoutHide', nolink.every(function (v) { return v.hide; }) ? '👁 表示する' : '🙈 隠す') : '') +
+    (nolink.length > 1 ? item('layoutGroup', '🔗 グループにする') : '') + (xs.some(function (v) { return v.grp; }) ? item('layoutUngroup', 'グループを解く') : '') + '<hr>' +
+    item('layoutRemove', xs.some(function (v) { return v.type === 'pin'; }) && xs.length === 1 ? '図から外す' : '消す', '', 'danger');
+  var m = document.createElement('div');
+  m.id = 'layMenu'; m.setAttribute('role', 'menu'); m.innerHTML = html;
+  document.body.appendChild(m);
+  var w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(4, Math.min(x, window.innerWidth - w - 4)) + 'px';
+  m.style.top = Math.max(4, Math.min(y, window.innerHeight - h - 4)) + 'px';
+}
+document.addEventListener('contextmenu', function (e) {
+  if (!L || !L.edit || !L.data || !e.target.closest || !e.target.closest('#layCanvas')) return;
+  e.preventDefault();
+  var hit = e.target.closest('[data-li]');
+  if (!hit) { layoutMenuClose(); return; }
+  var i = Number(hit.dataset.li);
+  if (L.sels.indexOf(i) === -1) { L.sels = layExpand([i]); L.pt = -1; drawLayoutBox(); }
+  layoutMenuOpen(e.clientX, e.clientY);
+});
+// スマホ：図形を押したまま動かさずにいると、同じメニューが出る
+function layoutLongPressStop() { if (L && L.lp) { clearTimeout(L.lp); L.lp = 0; } }
+function layoutLongPress(e) {
+  layoutLongPressStop();
+  if (e.pointerType === 'mouse') return;
+  var x = e.clientX, y = e.clientY;
+  L.lp = setTimeout(function () {
+    L.lp = 0;
+    if (!L.drag || L.drag.moved) return;
+    L.drag = null;
+    layoutMenuOpen(x, y);
+  }, 550);
+}
+document.addEventListener('pointerdown', function (e) { if (!e.target.closest || !e.target.closest('#layMenu')) layoutMenuClose(); }, true);
+document.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('#layMenu')) setTimeout(layoutMenuClose, 0); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') layoutMenuClose(); });
+window.addEventListener('wheel', layoutMenuClose, { passive: true, capture: true });
+document.addEventListener('pointerup', layoutEndDrag);
+document.addEventListener('pointercancel', layoutEndDrag);
+
+// ---- 登録・編集のフォーム ----
+var COLLECTION = { customer: 'customers', device: 'devices', license: 'licenses', activity: 'activities', repair: 'repairs',
+  maintenance: 'maintenances', memo: 'memos', notice: 'notices', wininfo: 'wininfo', rental: 'rentals', loan: 'loans', project: 'projects', saleslog: 'saleslogs' };
+var SAVE_FN = { customer: 'saveCustomer', device: 'saveDevice', license: 'saveLicense', activity: 'saveActivity', repair: 'saveRepair', credential: 'saveCredential',
+  maintenance: 'saveMaintenance', memo: 'saveMemo', notice: 'saveNotice', wininfo: 'saveWinInfo', rental: 'saveRental', loan: 'saveLoan', project: 'saveProject', saleslog: 'saveSalesLog' };
+var DELETE_FN = { activity: 'deleteActivity', repair: 'deleteRepair', license: 'deleteLicense', credential: 'deleteCredential',
+  maintenance: 'deleteMaintenance', memo: 'deleteMemo', notice: 'deleteNotice', wininfo: 'deleteWinInfo', rental: 'deleteRental', loan: 'deleteLoan', device: 'deleteDevice', project: 'deleteProject', saleslog: 'deleteSalesLog' };
+var FIELD_LABEL = { '貸出先': '現場名', '顧客ID': '顧客', '機器ID': '機器', '元の対応ID': '元になった対応', '対象ID': '対象', 'レンタルID': 'レンタル機器', '修理ID': '修理案件のID', '案件ID': '案件' };
+// 顧客を選ばなくてもよい種類で、顧客の欄に添える説明
+var CUSTOMER_HINT = { memo: '選ばなければ、全体のメモになります。', notice: '選ばなければ、すべての顧客のお客様ページに出ます。', loan: '顧客でない相手に貸すときは、下の「現場名」に書きます。', project: '見込みの段階（問い合わせ・提案中・見積）は、空でも構いません。一覧の「顧客にする」「受注」で自動で入ります。', saleslog: '顧客でない相手のときは、「相手先」か「案件」を入れます。' };
+var WIDE = { longtext: 1, multi: 1 };
+var formSeq = 0;
+
+function findRecord(key, id) {
+  var list = key === 'credential' ? ((S.creds && S.creds.list) || []) : S.D[COLLECTION[key]];
+  var idField = S.D.schema[key].idField;
+  var extra = key === 'activity' ? (S.custActs[S.customerId] || []) : [];
+  if (key === 'activity') Object.keys(S.actRange).forEach(function (k) { if (Array.isArray(S.actRange[k])) extra = extra.concat(S.actRange[k]); });
+  return list.concat(extra).filter(function (r) { return r[idField] === id; })[0] || null;
+}
+
+function fieldDefault(f) {
+  if (f.def === 'today') return S.D.today;
+  if (f.def === 'me') return S.D.me.name;
+  return f.def || '';
+}
+
+/** 顧客を選ぶ欄の候補。何も入れていないときは、最近対応した顧客を出す */
+function pickListHtml(words) {
+  var live = S.D.customers.filter(function (c) { return c['状態'] === '有効'; });
+  var item = function (c) {
+    return '<button type="button" data-pick="' + esc(c['顧客ID']) + '">' + esc(c['顧客名']) + (c['ふりがな'] ? '<span class="minor">' + esc(c['ふりがな']) + '</span>' : '') + '</button>';
+  };
+  var byKana = function (a, b) { return cmp(a['ふりがな'] || a['顧客名'], b['ふりがな'] || b['顧客名']); };
+  if (!String(words || '').trim()) {
+    var seen = {}, recent = [];
+    // この端末で最近選んだ顧客を先に（スマホでは対応履歴をまだ読んでいないことがある）
+    recentCustIds().forEach(function (cid) {
+      var c = IDX.cust[cid];
+      if (c && c['状態'] === '有効' && !seen[cid] && recent.length < 6) { seen[cid] = true; recent.push(c); }
+    });
+    S.D.activities.concat(S.D.repairs.slice().sort(function (a, b) { return cmp(b['受付日'], a['受付日']); })).forEach(function (r) {
+      var c = IDX.cust[r['顧客ID']];
+      if (c && c['状態'] === '有効' && !seen[c['顧客ID']] && recent.length < 6) { seen[c['顧客ID']] = true; recent.push(c); }
+    });
+    if (recent.length) return '<div class="cap">最近の顧客（名前を入れると全体から探します）</div>' + recent.map(item).join('');
+    var first = live.slice().sort(byKana).slice(0, 8);
+    return first.length ? '<div class="cap">顧客（' + live.length + '件）</div>' + first.map(item).join('') : '<div class="cap">顧客がまだ登録されていません。</div>';
+  }
+  var hits = live.filter(function (c) { return textMatch(words, [c['顧客名'], c['ふりがな']]); }).sort(byKana);
+  if (!hits.length) return '<div class="cap">見つかりません。</div>';
+  return '<div class="cap">' + hits.length + '件' + (hits.length > 8 ? '（先頭の8件。もう少し入れると絞れます）' : '') + '</div>' + hits.slice(0, 8).map(item).join('');
+}
+
+/** 対応の定型文（設定の「選択肢」→「対応の定型文」で足せる。まだ1つも無ければ、最初の10個を出す） */
+function phraseList() {
+  var have = S.D.options['対応の定型文'] || [];
+  return have.length ? have.filter(function (o) { return o.active; }).map(function (o) { return o.value; }) : (S.D.phraseDefaults || []);
+}
+function phrasesHtml() {
+  var list = phraseList();
+  if (!list.length) return '';
+  return '<details class="phrases"><summary>定型文から入れる（' + list.length + '）</summary><div class="chipset small">' +
+    list.map(function (t) { return '<button type="button" data-act="phrase" data-text="' + esc(t) + '" aria-pressed="false">' + esc(t) + '</button>'; }).join('') + '</div></details>';
+}
+function chipChoices(f, value) {
+  if (!f.chips) return null;
+  var list = f.type === 'select' ? f.choices.slice() : f.type === 'option' ? activeOptions(f.category, value) : null;
+  return list && list.length && list.length <= 8 ? list : null;
+}
+
+function fieldHtml(key, f, value, ctx) {
+  var id = 'f' + ctx.seq + '_' + ctx.i;
+  var name = esc(f.name);
+  var label = f.label || FIELD_LABEL[f.name] || f.name;
+  var req = f.required ? ' required' : '';
+  var common = ' id="' + id + '" name="' + name + '"' + req;
+  var input, group = false, wide = WIDE[f.type];
+  var isDepSelect = f.type === 'device' || f.name === '元の対応ID' || f.name === '対象ID';
+  var chips = chipChoices(f, value);
+  if (isDepSelect) {
+    input = '<select' + common + ' data-dep="' + name + '" data-initial="' + esc(value) + '"></select>';
+  } else if (f.type === 'customer') {
+    wide = true;
+    if (ctx.lockCustomer) {
+      input = '<input type="hidden" name="' + name + '" value="' + esc(value) + '"><input type="text" id="' + id + '" value="' + esc(custName(value)) + '" disabled>';
+    } else {
+      input = '<div class="picker"><input type="hidden" name="' + name + '" value="' + esc(value) + '">' +
+        '<div class="picked"' + (value ? '' : ' hidden') + '><b>' + esc(custName(value)) + '</b><button type="button" class="btn small" data-act="pickerClear">変える</button></div>' +
+        '<div class="pick-search"' + (value ? ' hidden' : '') + '><input type="search" id="' + id + '" placeholder="顧客名・ふりがなで探す" data-picksearch="1" autocomplete="off">' +
+        '<div class="pick-list">' + pickListHtml('') + '</div></div></div>';
+    }
+  } else if (f.type === 'rental') {
+    if (ctx.lockRental) {
+      input = '<input type="hidden" name="' + name + '" value="' + esc(value) + '"><input type="text" id="' + id + '" value="' + esc((IDX.rental[value] || {})['名称'] || value) + '" disabled>';
+    } else {
+      var free = S.D.rentals.filter(function (r) { return r['状態'] === S.D.rentalAvailable && !IDX.openLoan[r['レンタルID']]; })
+        .map(function (r) { return [r['レンタルID'], r['名称']]; });
+      input = '<select' + common + '>' + optionsHtml(free, value, free.length ? '選んでください' : '（貸せる機器がありません）') + '</select>';
+    }
+  } else if (f.type === 'project') {
+    var refList = (S.D.projects || []).map(function (r) { return [r['案件ID'], (r['顧客ID'] ? custName(r['顧客ID']) : (r['先方名'] || '')) + ' / ' + r['案件名']]; });
+    if (value && !refList.some(function (x) { return x[0] === value; })) refList.unshift([value, value]);
+    input = '<select' + common + '>' + optionsHtml(refList, value, '（なし）') + '</select>';
+  } else if (chips) {
+    group = true; wide = true;
+    input = '<input type="hidden" name="' + name + '" value="' + esc(value) + '">' +
+      '<div class="chipset" id="' + id + '" role="group" aria-label="' + esc(label) + '" data-chips="' + name + '" data-required="' + (f.required ? '1' : '') + '">' +
+      chips.map(function (c) { return '<button type="button" data-chip="' + esc(c) + '" aria-pressed="' + (c === value) + '">' + esc(c) + '</button>'; }).join('') + '</div>';
+  } else if (f.type === 'longtext') {
+    input = '<textarea' + common + (f.max ? ' maxlength="' + f.max + '"' : '') + ' rows="' + (f.name === '内容' ? 5 : 3) + '">' + esc(value) + '</textarea>' +
+      (key === 'activity' && f.name === '内容' ? phrasesHtml() : '');
+  } else if (f.type === 'date') {
+    input = '<input type="date"' + common + ' value="' + esc(value) + '">';
+  } else if (f.type === 'datetime') {
+    input = '<input type="datetime-local"' + common + ' value="' + esc(String(value).replace(' ', 'T')) + '">';
+  } else if (f.type === 'number') {
+    input = '<input type="number" min="0" step="1" inputmode="numeric"' + common + ' value="' + esc(value) + '">';
+  } else if (f.type === 'select') {
+    input = '<select' + common + '>' + optionsHtml(f.choices, value, f.required ? undefined : '') + '</select>';
+  } else if (f.type === 'yesno') {
+    input = '<select' + common + '>' + optionsHtml(['はい', 'いいえ'], value || 'いいえ') + '</select>';
+  } else if (f.type === 'option') {
+    input = '<select' + common + '>' + optionsHtml(activeOptions(f.category, value), value, f.required ? '選んでください' : '') + '</select>';
+  } else if (f.type === 'staff') {
+    var names = S.D.staffNames.slice();
+    if (value && names.indexOf(value) === -1) names.push(value);
+    input = '<select' + common + '>' + optionsHtml(names, value, '') + '</select>';
+  } else if (f.type === 'multi') {
+    group = true;
+    var picked = String(value || '').split(',');
+    input = '<div class="checks" id="' + id + '">' + f.choices.map(function (c) {
+      return '<label><input type="checkbox" data-multi="' + name + '" value="' + esc(c) + '"' + (picked.indexOf(c) !== -1 ? ' checked' : '') + '>' + esc(c) + '</label>';
+    }).join('') + '</div>';
+  } else {
+    var mode = f.name === '電話' || f.name === '郵便番号' ? ' inputmode="tel"' : f.name === 'メール' ? ' inputmode="email"' : '';
+    input = '<input type="text" autocomplete="off"' + mode + common + (f.max ? ' maxlength="' + f.max + '"' : '') + ' value="' + esc(value) + '"' + (f.type === 'secret' ? ' class="secret"' : '') + (f.master ? ' list="' + id + '_dl"' : '') + '>';
+    if (f.master) input += masterListHtml(id + '_dl', f);
+    if (f.suggest) {
+      var tokens = splitTokens(value);
+      input += '<div class="suggest" data-suggest="' + name + '">' + f.suggest.map(function (t) {
+        return '<button type="button" data-token="' + esc(t) + '" aria-pressed="' + (tokens.indexOf(t) !== -1) + '">' + esc(t) + '</button>';
+      }).join('') + '</div>';
+      wide = true;
+    }
+  }
+  var hint = f.name === 'ポータル表示' ? '<span class="note">お客様ページに見せる内容。「対応」と「レポート」は対応履歴の内容がそのまま見えるので、注意して選んでください。</span>'
+    : f.type === 'customer' && !f.required && CUSTOMER_HINT[key] && !ctx.lockCustomer ? '<span class="note">' + CUSTOMER_HINT[key] + '</span>' : '';
+  var mark = f.required ? '<span class="req">必須</span>' : '';
+  var fhint = f.hint ? '<small class="fhint">' + esc(f.hint) + '</small>' : '';   // v0.122.0：項目名の下の小さな説明
+  var tag = group ? '<span class="lab">' + esc(label) + mark + fhint + '</span>' : '<label for="' + id + '">' + esc(label) + mark + fhint + '</label>';
+  return '<div class="field' + (wide ? ' wide' : '') + '" data-field="' + name + '">' + tag + input + hint + '</div>';
+}
+/** 製品マスターの候補（設定の「選択肢」の値と、いま入っている製品名）。入力欄に添える。候補にないものも、そのまま入れられる（v0.103.0） */
+function masterListHtml(listId, f) {
+  var names = activeOptions(f.master, '');
+  var key = f.name;
+  var seen = {};
+  names.forEach(function (n) { seen[n] = 1; });
+  ((S.D && S.D.licenses) || []).forEach(function (l) { var n = String(l[key] || '').trim(); if (n && !seen[n]) { seen[n] = 1; names.push(n); } });
+  return '<datalist id="' + esc(listId) + '">' + names.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join('') + '</datalist>';
+}
+function splitTokens(v) {
+  return String(v || '').split(/\s*[,、，]\s*/).map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+}
+
+/** 顧客や対象区分に合わせて、機器・元の対応・対象の選択肢を作り直す */
+function refreshDependents(form) {
+  var custEl = form.elements['顧客ID'];
+  var cid = custEl ? custEl.value : '';
+  Array.prototype.forEach.call(form.querySelectorAll('select[data-dep]'), function (sel) {
+    var dep = sel.dataset.dep;
+    var keep = sel.dataset.touched ? sel.value : sel.dataset.initial;
+    var list = [], disabled = false;
+    var devs = function () {
+      return S.D.devices.filter(function (d) { return d['顧客ID'] === cid && (d['状況'] !== '廃棄' || d['機器ID'] === keep); })
+        .map(function (d) { return [d['機器ID'], devLabel(d['機器ID']) + '（' + d['種類'] + '）']; });
+    };
+    if (dep === '機器ID') list = devs();
+    else if (dep === '元の対応ID') {
+      list = S.D.activities.filter(function (a) { return a['顧客ID'] === cid; }).slice(0, 60)
+        .map(function (a) { return [a['対応ID'], a['受付日'] + ' ' + String(a['内容']).replace(/\s+/g, ' ').slice(0, 30)]; });
+    } else if (dep === '対象ID') {
+      var kind = form.elements['対象区分'] ? form.elements['対象区分'].value : '';
+      if (kind === '機器') list = devs();
+      else if (kind === 'ライセンス') list = S.D.licenses.filter(function (l) { return l['顧客ID'] === cid; }).map(function (l) { return [l['ライセンスID'], l['製品名']]; });
+      else disabled = true;
+    }
+    if (keep && !disabled && !list.some(function (o) { return o[0] === keep; }) && !sel.dataset.touched && cid === sel.dataset.cid) list.push([keep, keep]);
+    var still = list.some(function (o) { return o[0] === keep; }) ? keep : '';
+    sel.innerHTML = optionsHtml(list, still, cid ? (list.length ? '（なし）' : '（選べるものがありません）') : '（先に顧客を選んでください）');
+    sel.disabled = disabled;
+  });
+}
+
+/** 機器の窓の「収集ツールの情報」の欄 */
+/** 収集ツールのレポート（v0.25.0）を開くボタン。届いていなければ空 */
+function reportBtnHtml(g) {
+  if (!g || !g['レポート添付ID']) return '';
+  return '<button type="button" class="btn small primary" data-act="openDiagReport" data-id="' + esc(g['レポート添付ID']) + '">レポートを見る' +
+    (g['レポート受信日時'] ? '<small>（' + esc(String(g['レポート受信日時']).slice(5, 16)) + '）</small>' : '') + '</button>';
+}
+/** レポートを、スクリプトを動かさない枠の中に出す。印刷もできる */
+function openDiagReport(id) {
+  return call('getDiagReport', { id: id }).then(function (r) {
+    var wrap = openModal('<header><h2>' + esc('収集ツールのレポート') + ' <span class="sub">' + esc(devLabel(r.deviceId) || r.deviceId) + '　' + esc(r.at) + '</span></h2>' +
+      '<button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<div class="body rptbody"><iframe class="rptframe" title="収集ツールのレポート" sandbox="allow-same-origin allow-modals"></iframe></div>' +
+      '<footer><button type="button" class="btn" data-act="printDiagReport">印刷・PDFにする</button><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>');
+    wrap.querySelector('.dialog').classList.add('wide');
+    // 枠の設定でスクリプトは動かないが、念のため取り除いておく（ブラウザの警告も出なくなる）
+    wrap.querySelector('iframe').srcdoc = String(r.html || '').replace(/<script[\s\S]*?<\/script\s*>/gi, '').replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  });
+}
+function diagBoxInner(id) {
+  var g = IDX.diag[id];
+  if (g) {
+    return '<div class="row diagrow"><div class="grow"><b>収集ツールの情報</b>　最後に届いたのは ' + esc(g['受信日時']) +
+      '<div class="note">' + esc([g['コンピューター名'], g['OS']].filter(function (x) { return x; }).join(' / ')) +
+      '　重大 ' + esc(g['イベント重大'] === '' ? '—' : g['イベント重大']) + '件・エラー ' + esc(g['イベントエラー'] === '' ? '—' : g['イベントエラー']) + '件' +
+      (g['Cドライブ空き'] !== '' && g['Cドライブ空き'] !== undefined ? '・Cドライブ空き ' + esc(g['Cドライブ空き']) + 'GB' : '') + '</div></div>' +
+      reportBtnHtml(g) +
+      '<button type="button" class="btn small" data-act="showDiag" data-id="' + esc(id) + '">くわしく見る</button></div>';
+  }
+  return '<span class="note">' + (S.have.diag ? '収集ツールからの情報は、まだ届いていません。' : S.restFailed ? '収集ツールの情報を読み込めませんでした。' : '収集ツールの情報を読み込んでいます…') + '</span>';
+}
+/** 記録をクリックしたときに出す、読むだけの画面（v0.48.0）。直すときは「編集」を押す */
+function previewRecord(key, rec) {
+  var schema = S.D.schema[key];
+  if (!schema || !rec) return null;
+  if (!S.all) ensureGroups(groupsForKey(key));
+  var id = rec[schema.idField] || '';
+  var fields = schema.fields.filter(function (f) { return !f.adminOnly || S.D.me.isAdmin; });      // 見るだけの窓は、前に入れた「ひとこと」も出す（値があるときだけ）
+  var show = function (f) {
+    var v = rec[f.name];
+    if (v === undefined || v === null || v === '') return '';
+    var text;
+    if (f.type === 'customer') text = custName(v);
+    else if (f.type === 'device') text = devLabel(v);
+    else if (f.type === 'rental') text = (IDX.rental[v] || {})['名称'] || v;
+    else if (f.type === 'project') text = (IDX.project[v] || {})['案件名'] || v;
+    else text = String(v);
+    var wide = f.type === 'longtext' || WIDE[f.type];
+    return '<div class="pv-row' + (wide ? ' wide' : '') + '"><dt>' + esc(f.label || FIELD_LABEL[f.name] || f.name) + '</dt><dd>' + (LINK_SKIP_NAMES[f.name] ? esc(text) : linkify(text)) + '</dd></div>';
+  };
+  var rows = fields.map(show).join('');
+  var extra = '';
+  if (key === 'device') extra = '<div class="box" id="diagBox">' + diagBoxInner(id) + '</div>';
+  var hasPhoto = PHOTO_LABEL[key] && S.D.photoKinds.indexOf(key) !== -1;
+  var canEdit = !rec._pending;
+  var wrap = openModal(
+    '<header><h2>' + esc(schema.label) + (id ? ' <span class="sub">' + esc(id) + '</span>' : '') + '</h2>' +
+    '<button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+    '<form data-preview="' + key + '" data-id="' + esc(id) + '" novalidate>' +
+    '<div class="body"><dl class="pv">' + (rows || '<p class="empty">入力されている項目はありません。</p>') + '</dl>' + extra +
+    (hasPhoto ? '<div class="photos"><div class="photos-head"><b>添付ファイル</b></div><div class="photo-grid"></div></div>' : '') +
+    (rec['更新日時'] ? '<p class="note">最後の更新：' + esc(rec['更新日時']) + '</p>' : '') + '</div>' +
+    '<footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">閉じる</button>' +
+    (canEdit ? '<button type="button" class="btn primary" data-act="editNow" data-key="' + key + '" data-id="' + esc(id) + '">✏️ 編集</button>' : '') +
+    '</footer></form>');
+  var form = wrap.querySelector('form');
+  form.addEventListener('submit', function (e) { e.preventDefault(); });
+  if (hasPhoto && id) {
+    form._photos = []; form._sending = 0; form._preparing = 0; form._loadFailed = true; form._saved = null;
+    drawPhotos(form);
+    call('listPhotos', { target: key, targetId: id }, true).then(function (r) { form._saved = r.photos; drawPhotos(form); })
+      .catch(function () { form._saved = []; drawPhotos(form); });
+  }
+  return wrap;
+}
+function openForm(key, rec, preset) {
+  var schema = S.D.schema[key];
+  S.openRec = rec && schema && rec[schema.idField] ? key + ':' + rec[schema.idField] : '';
+  saveLocSoon();
+  var isNew = !rec;
+  // いまある記録を開くとき・ほかの一覧から選ぶ欄がある種類は、残りのデータが要る（スマホでは、ここで読み始める）
+  if (!S.all && (rec || key === 'repair' || key === 'credential' || key === 'loan')) ensureGroups(groupsForKey(key));
+  var seq = ++formSeq;
+  // v0.127.0：「ひとこと」はやめた（吹き出しは「備考」を出す）。シートの列と、入っている値はそのまま残す
+  var fields = schema.fields.filter(function (f) { return (!f.adminOnly || S.D.me.isAdmin) && f.name !== 'ひとこと'; });
+  // 機器の顧客は、管理者なら編集の窓でも変えられる（保存すると、対応・修理・保守なども一緒に移る。v0.55.0）
+  var lockCustomer = (!isNew && ((key === 'device' && !S.D.me.isAdmin) || key === 'license' || key === 'credential')) || !!(preset && preset.lockCustomer);
+  var one = function (f) {
+    var value = rec ? rec[f.name] : (preset && preset[f.name] !== undefined ? preset[f.name] : fieldDefault(f));
+    return fieldHtml(key, f, value === undefined ? '' : value, { seq: seq, i: fields.indexOf(f), lockCustomer: lockCustomer, lockRental: key === 'loan' && (!isNew || !!(preset && preset.lockRental)) });
+  };
+  // よく使う項目だけ先に出し、残りは「詳しい項目」にたたむ（編集のときは最初から開く）
+  var hasQuick = fields.some(function (f) { return f.quick; });
+  var quick = fields.filter(function (f) { return !hasQuick || f.quick; });
+  var rest = fields.filter(function (f) { return hasQuick && !f.quick; });
+  var html = '<div class="grid2">' + quick.map(one).join('') + '</div>' +
+    (rest.length ? '<details class="rest"' + (isNew ? '' : ' open') + '><summary>詳しい項目（' + rest.map(function (f) { return f.label || FIELD_LABEL[f.name] || f.name; }).slice(0, 3).join('・') + ' など）</summary><div class="grid2">' + rest.map(one).join('') + '</div></details>' : '');
+  var id = rec ? rec[schema.idField] : '';
+  var canDelete = !isNew && S.D.me.isAdmin && DELETE_FN[key] && (key !== 'device' || isPendingCust(rec && rec['顧客ID']));   // 機器は、仮受付のものだけ消せる（v0.64.0）
+  var extra = '';
+  if (key === 'device' && !isNew) {
+    extra = '<div class="row"><button type="button" class="btn small" data-act="recordFor" data-key="activity" data-device="' + esc(id) + '">この機器の対応を記録</button>' +
+      '<button type="button" class="btn small" data-act="recordFor" data-key="repair" data-device="' + esc(id) + '">修理を受け付け</button>' +
+      '</div>' +
+      '<div class="box" id="diagBox">' + diagBoxInner(id) + '</div>';
+  }
+  if (key === 'license' && S.D.canReveal && !(preset && preset.bulk)) extra = licCredBoxHtml(isNew);
+  // v0.117.0：ライセンスのまとめて登録（キーを1行に1つ）
+  if (key === 'license' && isNew && preset && preset.bulk) {
+    extra = '<div class="box" id="licBulk"><b>まとめて登録</b><span class="note">上の内容で、何件も作ります。' + (S.D.canReveal ? 'キー（シリアルキー）を1行に1つ貼ると、1キーにつき1件（数量1）で作り、キーは認証情報に入れます。' : '') + 'キーが無いときは件数を入れてください（50件まで）。</span>' +
+      (S.D.canReveal ? '<label class="fl">キー（1行に1つ）<textarea id="lbKeys" rows="6" data-nolink="1" data-novoice="1" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"></textarea></label>' : '') +
+      '<label class="fl">件数（キーが無いとき）<input type="number" id="lbCount" min="1" max="50" value=""></label><p class="note" id="lbInfo"></p></div>';
+  }
+  // v0.117.0：案件から営業を記録／営業の記録から案件を作る
+  if (key === 'project' && !isNew) extra = '<div class="row"><button type="button" class="btn small" data-act="salesFromProject" data-id="' + esc(id) + '">この案件の営業を記録</button></div>';
+  if (key === 'saleslog' && !isNew && !rec['案件ID']) extra = '<div class="row"><button type="button" class="btn small" data-act="projectFromSales" data-id="' + esc(id) + '">この内容で案件にする</button></div>';
+  if (key === 'rental' && !isNew) extra = '<div class="box" id="rtHist">' + rentalHistoryHtml(id) + '</div>';
+  if (key === 'loan' && !isNew) extra = '<div class="row"><button type="button" class="btn small" data-act="printLoan" data-id="' + esc(id) + '">' + (rec['返却日'] ? '返却確認書を印刷' : '貸出書を印刷') + '</button></div>';
+  // 同じ種類（同じ記録）の入力しかけが残っていたら、窓の上で知らせる
+  var offer = draftOpening ? null : draftsAll().filter(function (d) { return d.key === key && d.id === (id || ''); })[0];
+  var offerHtml = offer ? '<div class="draft-offer"><span class="t">入力しかけの内容があります（' + esc(draftWhen(offer)) + '）</span>' +
+    '<button type="button" class="btn small primary" data-act="draftOpen" data-draft="' + esc(offer.did) + '">続きから</button>' +
+    '<button type="button" class="btn small" data-act="draftDrop" data-draft="' + esc(offer.did) + '">捨てる</button></div>' : '';
+  var wrap = openModal(
+    '<header><h2>' + esc(schema.label) + (preset && preset.bulk ? 'をまとめて登録' : isNew ? 'を追加' : 'を編集') + (id ? ' <span class="sub">' + esc(id) + '</span>' : '') + '</h2>' +
+    '<button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+    '<form data-form="' + key + '" data-id="' + esc(id) + '" data-lock="' + (preset && preset.lockCustomer ? '1' : '') + '" data-lockr="' + (preset && preset.lockRental ? '1' : '') +
+    '" data-base="' + esc(rec && rec['更新日時'] ? rec['更新日時'] : '') + '" data-bulk="' + (preset && preset.bulk ? '1' : '') + '" data-linksales="' + esc(preset && preset.linkSales ? preset.linkSales : '') + '" novalidate>' +
+    '<div class="body"><p class="msg" hidden></p>' + offerHtml + html + extra + (PHOTO_LABEL[key] && S.D.photoKinds.indexOf(key) !== -1 ? photoBoxHtml(key, id) : '') +
+    (rec && rec['更新日時'] ? '<p class="note">最後の更新：' + esc(rec['更新日時']) + '</p>' : '') + '</div>' +
+    '<footer>' + (canDelete ? '<button type="button" class="btn danger" data-act="deleteRecord" data-key="' + key + '" data-id="' + esc(id) + '">削除</button>' : '') +
+    '<span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button>' +
+    (key === 'device' && isNew ? '<button type="button" class="btn" data-act="saveNext">保存して次の機器</button>' : '') +
+    '<button type="submit" class="btn primary">保存</button></footer></form>');
+  var form = wrap.querySelector('form');
+  var custEl = form.elements['顧客ID'];
+  Array.prototype.forEach.call(form.querySelectorAll('select[data-dep]'), function (sel) { sel.dataset.cid = custEl ? custEl.value : ''; });
+  refreshDependents(form);
+  initPhotos(form, key, id);
+  form._initial = formSnapshot(form);     // 開いたときの中身（ここから変わっていたら「入力の途中」）
+  if (key === 'license' && S.D.canReveal && !isNew) loadLicCred(form, id, rec['顧客ID']);
+  if (key === 'rental' && !isNew && !S.all && !S.have.lic) ensureGroups(['lic']).then(function () { var b = $('rtHist'); if (b && b.isConnected) b.innerHTML = rentalHistoryHtml(id); });
+  return wrap;
+}
+
+// ---- ライセンスの ID・パスワード・シリアルキー（v0.15.0）。入れ先は「認証情報」（対象区分＝ライセンス）
+//   パスワードとシリアルキーは、画面に読み込まない（空のままなら今のまま）。下書きにも残さない。
+var LIC_CRED = [['loginId', 'ログインID', 'text'], ['password', 'パスワード', 'password'], ['serialKey', 'シリアルキー', 'password']];
+function licCredBoxHtml(isNew) {
+  return '<div class="box credbox" id="licCredBox"><b>ID・パスワード</b> <span class="note">「認証情報」に入ります。パスワードは保存のあと「認証情報」のタブで表示できます。</span>' +
+    '<div class="grid2">' + LIC_CRED.map(function (c) {
+      return '<div class="field"><label for="lc_' + c[0] + '">' + c[1] + '</label><input type="text" id="lc_' + c[0] + '" data-cred="' + c[0] + '" data-orig="" autocomplete="off"' + (c[2] === 'password' ? ' class="secret"' : '') + ' maxlength="' + (c[0] === 'serialKey' ? 300 : 200) + '"' +
+        (isNew ? '' : ' disabled') + '></div>';
+    }).join('') + '</div><p class="note" id="licCredNote">' + (isNew ? '' : '読み込んでいます…') + '</p></div>';
+}
+function loadLicCred(form, licenseId, customerId) {
+  call('listCredentials', { customerId: customerId, audit: false }, true).then(function (r) {
+    if (!form.isConnected) return;
+    var all = r.credentials.filter(function (c) { return c['対象区分'] === 'ライセンス' && c['対象ID'] === licenseId; });
+    var c = all[0] || null;
+    var inputs = form.querySelectorAll('[data-cred]');
+    Array.prototype.forEach.call(inputs, function (i) { i.disabled = false; });
+    var idEl = form.querySelector('[data-cred="loginId"]');
+    if (c && !idEl.value) { idEl.value = c['ログインID'] || ''; idEl.dataset.orig = idEl.value; }
+    ['password', 'serialKey'].forEach(function (k) {
+      var el = form.querySelector('[data-cred="' + k + '"]'), field = k === 'password' ? 'パスワード' : 'シリアルキー';
+      if (!c) return;
+      if (r.withSecrets && c[field] !== undefined) { if (!el.value) { el.value = c[field]; el.dataset.orig = el.value; } }     // 管理者は、そのまま見える（v0.20.0）
+      else if (c[field + 'あり']) el.placeholder = '登録済み（変えるときだけ入れる）';
+    });
+    form._credId = c ? c['認証ID'] : '';
+    $('licCredNote').textContent = c ? (all.length > 1 ? 'ほかにも' + (all.length - 1) + '件、このライセンスの認証情報があります（「認証情報」のタブで見られます）。' : '') : 'まだ登録されていません。';
+  }).catch(function () {
+    if (!form.isConnected) return;
+    var n = $('licCredNote'); if (n) n.textContent = 'IDとパスワードを読み込めませんでした。ここでは変えられません（「認証情報」のタブから直せます）。';
+  });
+}
+/** 打ったIDとパスワード。何も変えていなければ null（送らない） */
+function licCredOf(form) {
+  var inputs = form.querySelectorAll('[data-cred]');
+  if (!inputs.length) return null;
+  var out = {}, changed = false;
+  Array.prototype.forEach.call(inputs, function (i) {
+    out[i.dataset.cred] = i.value;
+    if (!i.disabled && i.value !== (i.dataset.orig || '')) changed = true;
+    if (i.dataset.cred !== 'loginId' && i.dataset.orig && !i.value) out.clear = true;     // 見えていたパスワードを消したら、消す
+  });
+  return changed ? out : null;
+}
+function licCredRestore(form, cred) {
+  if (!form || !cred) return;
+  Object.keys(cred).forEach(function (k) { var i = form.querySelector('[data-cred="' + k + '"]'); if (i) i.value = cred[k]; });
+}
+
+// 保存の前に、変えたところを見せる種類（v0.30.0）
+var DIFF_KEYS = { device: 1, license: 1, customer: 1, repair: 1, rental: 1, loan: 1, maintenance: 1, staff: 0 };
+/** 項目の値を、画面で見る形にする（顧客・機器はIDでなく名前） */
+function diffText(f, v) {
+  if (Array.isArray(v)) v = v.join('・');
+  v = v === null || v === undefined ? '' : String(v);
+  if (v === '') return '（空）';
+  if (f.type === 'customer') return custName(v) || v;
+  if (f.type === 'device') return devLabel(v) || v;
+  if (f.type === 'rental') return ((IDX.rental || {})[v] || {})['名称'] || v;
+  if (f.type === 'project') return ((IDX.project || {})[v] || {})['案件名'] || v;
+  if (f.type === 'datetime') v = v.replace('T', ' ');
+  v = v.replace(/\s+/g, ' ');
+  return v.length > 60 ? v.slice(0, 60) + '…' : v;
+}
+function sameValue(a, b) {
+  var n = function (v) { return Array.isArray(v) ? v.slice().sort().join(',') : v === null || v === undefined ? '' : String(v).replace('T', ' ').replace(/\r\n/g, '\n').trim(); };
+  return n(a) === n(b);
+}
+/** 前の記録と、窓に入っている値の違い → [{label, before, after}] */
+/** スマホの下のメニュー：自分で選んだ4つ（選んでいなければ、PC管理・対応・修理・ライセンス） */
+var BNAV_CHOICES = [['customers', 'PC管理'], ['activities', '対応'], ['repairs', '修理'], ['licenses', 'ライセンス'], ['meeting', 'ミーティング'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ']];
+function bnavOptions() { return BNAV_CHOICES.filter(function (c) { return navVisible(c[0]); }); }
+function bnavList() {
+  var opts = bnavOptions(), byId = {}, out = [];
+  opts.forEach(function (c) { byId[c[0]] = c; });
+  String(q('pref.bnav', '')).split(',').forEach(function (id) { if (byId[id] && out.indexOf(byId[id]) === -1 && out.length < 4) out.push(byId[id]); });
+  ['customers', 'activities', 'repairs', 'licenses'].forEach(function (id) { if (byId[id] && out.indexOf(byId[id]) === -1 && out.length < 4) out.push(byId[id]); });
+  opts.forEach(function (c) { if (out.indexOf(c) === -1 && out.length < 4) out.push(c); });
+  return out;
+}
+/** 直して保存するときに「この内容で保存しますか」を出すか（自分の設定。おすすめ＝項目が3つ以上・認証情報・機器の顧客の移動のときだけ） */
+function confirmNeeded(key, changes, moveNote, extra) {
+  var mode = q('pref.confirm', window.__forceConfirm ? 'always' : 'auto');
+  if (mode === 'always' || moveNote) return true;
+  if (mode === 'never') return false;
+  return key === 'credential' || !!extra || changes.length > 2;
+}
+function recordChanges(key, orig, data) {
+  var out = [];
+  S.D.schema[key].fields.forEach(function (f) {
+    if (f.type === 'secret' || !Object.prototype.hasOwnProperty.call(data, f.name)) return;
+    var b = orig[f.name], a = data[f.name];
+    if (f.type === 'multi' && !Array.isArray(b)) b = String(b || '').split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+    // 空の古い値は、窓に出していた形（はい／いいえ の「いいえ」、必須の選択の最初の値）として比べる
+    if ((b === '' || b === undefined || b === null) && f.type === 'yesno') b = 'いいえ';
+    if ((b === '' || b === undefined || b === null) && f.type === 'select' && f.required && f.choices && a === f.choices[0]) return;
+    if (sameValue(b, a)) return;
+    out.push({ label: f.label || FIELD_LABEL[f.name] || f.name, before: diffText(f, b), after: diffText(f, a) });
+  });
+  return out;
+}
+function collectForm(form, key) {
+  var data = {};
+  var schema = S.D.schema[key];
+  schema.fields.forEach(function (f) {
+    if (f.adminOnly && !S.D.me.isAdmin) return;
+    if (f.type === 'multi') {
+      data[f.name] = Array.prototype.filter.call(form.querySelectorAll('input[data-multi]'), function (x) { return x.dataset.multi === f.name && x.checked; })
+        .map(function (x) { return x.value; });
+      return;
+    }
+    var el = form.elements[f.name];
+    if (!el) return;
+    data[f.name] = f.type === 'datetime' ? el.value.replace('T', ' ') : el.value;
+  });
+  if (form.dataset.id) data[schema.idField] = form.dataset.id;
+  return data;
+}
+
+/** 新着（getChanges の返事）を、いまの画面のデータに混ぜる。変わった件数を返す（v0.67.0） */
+/** 一覧に、新しい・直したぶんを入れ、ids にないものを消す（ids が null なら消さない）。保存の返事を待っているものはそのまま。入れ替えた数を返す */
+function mergeList(name, idField, recs, ids) {
+  var D = S.D, changed = 0, list = D[name];
+  if (!Array.isArray(list)) return 0;
+  (recs || []).forEach(function (rec) {
+    var old = null;
+    for (var i = 0; i < list.length; i++) if (list[i][idField] === rec[idField]) { old = list[i]; break; }
+    if (old && old._pending) return;
+    if (!old || JSON.stringify(old) !== JSON.stringify(rec)) { upsert(list, idField, rec); changed++; }
+  });
+  if (Array.isArray(ids)) {
+    var keep = {};
+    ids.forEach(function (id) { keep[id] = true; });
+    var kept = list.filter(function (x) { return x._pending || keep[x[idField]]; });
+    if (kept.length !== list.length) { changed += list.length - kept.length; D[name] = kept; }
+  }
+  return changed;
+}
+/** getViewChanges の返事を入れる（いま見ている画面のグループだけ。v0.95.0）。入れ替えた数を返す */
+function applyViewChanges(r) {
+  var D = S.D, changed = 0, byName = {};
+  Object.keys(COLLECTION).forEach(function (key) { byName[COLLECTION[key]] = key; });
+  Object.keys(r.delta || {}).forEach(function (name) {
+    var sc = D.schema[byName[name]];
+    if (!sc) return;
+    changed += mergeList(name, sc.idField, r.delta[name].recs, r.delta[name].ids);
+  });
+  Object.keys(r.full || {}).forEach(function (k) {
+    if (k === 'allocations' && JSON.stringify(D[k]) !== JSON.stringify(r.full[k])) changed++;
+    D[k] = r.full[k];
+  });
+  if (r.alerts) { S.alerts = r.alerts; S.alertsStale = false; }
+  S.gStamp = S.gStamp || {};
+  (r.groups || []).forEach(function (g) { S.have[g] = true; S.gStamp[g] = r.stamp; });
+  syncReady();
+  if (typeof snapSaveSoon === 'function') snapSaveSoon();
+  reindex();
+  return changed;
+}
+function applyChanges(r, noRender) {
+  var D = S.D, changed = 0;
+  var merge = function (name, idField, recs, ids) { changed += mergeList(name, idField, recs, ids); };
+  merge('customers', '顧客ID', r.customers, r.customerIds);
+  merge('devices', '機器ID', r.devices, r.deviceIds);
+  if (S.have.diag) merge('diagnostics', '機器ID', r.diagnostics, r.diagnosticIds);
+  reindex();
+  if (S.view === 'customer' && !IDX.cust[S.customerId]) { S.view = 'customers'; S.customerId = ''; S.sub = 'devices'; }
+  if (changed) S.alertsStale = true;                       // 要対応の一覧も、このあと読み直す
+  if (noRender) return changed;                            // 「更新」では、最後に1回だけ描く（2回描かない。v0.106.0）
+  if ($('modals').children.length) S.renderPending = true; else render();
+  return changed;
+}
+/** 差分で届いた対応を、顧客ごと（custActs）・期間ごと（actRange）の一覧にも入れる（v0.106.0） */
+function mergeActExtras(recs) {
+  (recs || []).forEach(function (rec) {
+    var id = rec['対応ID'];
+    Object.keys(S.custActs || {}).forEach(function (c) {
+      var l = S.custActs[c]; if (!Array.isArray(l)) return;
+      var at = -1;
+      for (var i = 0; i < l.length; i++) if (l[i]['対応ID'] === id) { at = i; break; }
+      if (at !== -1 && l[at]._pending) return;
+      if (c === rec['顧客ID']) { if (at === -1) l.unshift(rec); else l[at] = rec; }
+      else if (at !== -1) l.splice(at, 1);
+    });
+    Object.keys(S.actRange || {}).forEach(function (k) {
+      var l = S.actRange[k]; if (!Array.isArray(l)) return;
+      var p = k.split('~'), inside = inRange(rec['受付日'], p[0], p[1]), at = -1;
+      for (var i = 0; i < l.length; i++) if (l[i]['対応ID'] === id) { at = i; break; }
+      if (at !== -1 && l[at]._pending) return;
+      if (inside) { if (at === -1) l.unshift(rec); else l[at] = rec; }
+      else if (at !== -1) l.splice(at, 1);
+    });
+  });
+}
+
+function upsert(list, idField, rec) {
+  for (var i = 0; i < list.length; i++) if (list[i][idField] === rec[idField]) { list[i] = rec; return; }
+  list.unshift(rec);
+}
+
+function submitRecordForm(form, next) {
+  var key = form.dataset.form;
+  var schema = S.D.schema[key];
+  var msg = form.querySelector('.msg');
+  // 必須の空欄は、サーバーに送る前に知らせる
+  var missing = schema.fields.filter(function (f) {
+    var el = form.elements[f.name];
+    return f.required && el && !el.disabled && !String(el.value).trim();
+  })[0];
+  var showMsg = function (text) {
+    msg.textContent = text; msg.hidden = false;
+    if (msg.scrollIntoView) msg.scrollIntoView({ block: 'nearest' });
+  };
+  if (missing) {
+    showMsg('「' + (missing.label || FIELD_LABEL[missing.name] || missing.name) + '」を' + (missing.type === 'text' || missing.type === 'longtext' ? '入れて' : '選んで') + 'ください。');
+    var box = form.querySelector('[data-field="' + missing.name + '"]');
+    if (box && box.closest('details')) box.closest('details').open = true;
+    var target = box && box.querySelector('input:not([type="hidden"]):not([disabled]), select, textarea, button');
+    if (target) target.focus();
+    return;
+  }
+  var data = collectForm(form, key);
+  var buttons = form.querySelectorAll('footer button');
+  msg.hidden = true;
+  if (key === 'license' && form.dataset.bulk === '1') { submitLicenseBulk(form, data, buttons, showMsg); return; }
+  var linkSales = form.dataset.linksales || '';
+  // 直したときは、保存の前に「何をどう変えたか」を見せる（v0.30.0）
+  var diffOk = form._diffOk; form._diffOk = false;      // 「保存する」を押した1回だけ有効（失敗して直したときは、また見せる）
+  if (DIFF_KEYS[key] && form.dataset.id && !diffOk) {
+    var orig = findRecord(key, form.dataset.id);
+    if (orig && !orig._pending) {
+      var changes = recordChanges(key, orig, data);
+      var extra = (form._photos && form._photos.length) || (key === 'license' && !!licCredOf(form));
+      if (!changes.length && !extra) {
+        // 空白だけ変えた・前の下書きから開いた、などで「入力の途中」に見えても、下書きには残さない
+        var ov = form.closest('.overlay'); if (ov) ov._noDraft = true;
+        if (form._draftId) draftDropId(form._draftId);
+        toast('変更はありません'); closeModal(form); return;
+      }
+      var moveNote = key === 'device' && changes.some(function (c) { return c.label === (FIELD_LABEL['顧客ID'] || '顧客ID') || c.label === '顧客'; }) ? '\n\n※この機器の対応・修理・保守の記録、認証情報、写真も一緒に新しい顧客へ移ります。ライセンスの割当は外れます。\n収集ツールのAPIトークンも、新しい顧客のものに入れ替えてください。' : '';
+      if (changes.length && confirmNeeded(key, changes, moveNote, extra)) {
+        confirmDialog('この内容で保存しますか', changes.map(function (c) { return '■ ' + c.label + '\n　' + c.before + '\n　→ ' + c.after; }).join('\n') + moveNote, '保存する', false, '戻って直す').then(function (yes) {
+          if (!yes || !form.isConnected) return;
+          form._diffOk = true;
+          submitRecordForm(form, next);
+        });
+        var dw = $('modals').lastElementChild; if (dw) dw.classList.add('diffconfirm');
+        return;
+      }
+    }
+  }
+  var draftId = form._draftId || '';
+  // 写真を小さくしている途中なら、終わるのを待ってから保存する（待たずに保存すると、その写真が付かない）
+  if (form._preparing > 0) {
+    if (form._waitingPhotos) return;
+    form._waitingPhotos = true;
+    Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
+    showMsg('添付ファイルを準備しています。終わったら、そのまま保存します…');
+    form._chain.then(function () {
+      form._waitingPhotos = false;
+      form._diffOk = diffOk;      // 確かめ済みなら、写真を待ったあとにもう一度は聞かない
+      Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+      if (form.isConnected) submitRecordForm(form, next);
+    });
+    return;
+  }
+  // 機器の顧客を変えたとき：先に「移す」（対応・修理・保守・認証情報・写真も一緒に）、そのあとほかの変更を保存する（v0.55.0）
+  if (key === 'device' && form.dataset.id && S.D.me.isAdmin && !form.elements['顧客ID'].disabled) {
+    var origDev = findRecord('device', form.dataset.id);
+    if (origDev && !origDev._pending && data['顧客ID'] && data['顧客ID'] !== origDev['顧客ID']) {
+      Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
+      var toCust = data['顧客ID'];
+      // v0.126.0：ほかの項目の変更も一緒に送って、1回で済ませる。済んだら、手元のデータを直すだけ（全部を読み直さない）
+      var restChanged = recordChanges('device', Object.assign({}, origDev, { '顧客ID': toCust }), data).length > 0;
+      call('moveDevice', { deviceId: form.dataset.id, customerId: toCust, data: restChanged ? data : null }).then(function (r) {
+        noteRecentCust(toCust);
+        var ov = form.closest('.overlay'); if (ov) ov._noDraft = true;
+        if (form._draftId) draftDropId(form._draftId);
+        closeModal(form);
+        applyMovedDevice(origDev['顧客ID'], toCust, r);
+        var m = r.moved;
+        toast(custName(toCust) + 'へ移しました' + (m.activities.length + m.repairs.length + m.maintenances.length ? '（対応' + m.activities.length + '・修理' + m.repairs.length + '・保守' + m.maintenances.length + '件も一緒に）' : ''));
+      }).catch(function (e) {
+        Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+        if (e && e.error === 'unauthorized') return;
+        showMsg((e && e.message) || '保存できませんでした。');
+        ACT.refreshFull();          // 移すだけ済んでいたときのために、最新を読み込み直す
+      });
+      return;
+    }
+  }
+  var carryNext = function () {
+    // 同じ場所で何台も続けて登録するとき用。人ごとに違う項目（利用者・シリアルなど）だけ空にして開き直す
+    var carry = { lockCustomer: form.dataset.lock === '1' };
+    ['顧客ID', '種類', 'メーカー', '機種名', '設置場所', '部署', '購入日', '購入元', '保証期限', '状況'].forEach(function (k) { carry[k] = data[k]; });
+    openForm(key, null, carry);
+  };
+  if (key === 'credential') {
+    // 認証情報は、返事を待ってから閉じる（パスワードを画面に持たないため）
+    Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
+    call(SAVE_FN[key], { data: data }).then(function (r) {
+      if (S.creds) { upsert(S.creds.list, schema.idField, r.record); delete S.creds.shown[r.record[schema.idField]]; }
+      if (S.D.me.isAdmin) S.creds = null;      // 管理者は、読み直してパスワードも見えるようにする
+      closeModal(form);
+      toast(r.created ? schema.label + 'を追加しました' : '保存しました');
+      S.alertsStale = true;
+      render();
+    }).catch(function (e) {
+      Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+      if (e && e.error === 'unauthorized') return;
+      if (form.querySelector('details.rest')) form.querySelector('details.rest').open = true;
+      showMsg((e && e.message) || '保存できませんでした。');
+    });
+    return;
+  }
+
+  // ---- 先に画面へ出す：窓を閉じて一覧に入れ、サーバーの返事は裏で待つ。だめだったら、元に戻して窓を開き直す
+  var idField = schema.idField;
+  // 一覧は、使うたびに取り直す（返事を待つ間に、残りのデータが届いて一覧が入れ替わることがある）
+  var listNow = function () { return S.D[COLLECTION[key]]; };
+  var id = data[idField] || '';
+  var before = id ? findRecord(key, id) : null;
+  var prov = provisionalRecord(key, before, data);
+  var lock = form.dataset.lock === '1';
+  var photos = takePendingPhotos(form);
+  var cred = key === 'license' ? licCredOf(form) : null;
+  // 手元に全部は持っていない一覧（対応履歴は新しい1000件まで）に、古い記録を足すと、「どこまで読んだか」が狂う。
+  // 新しい記録か、すでに一覧にある記録のときだけ、一覧に入れる
+  var inList = !before || listNow().some(function (r) { return r[idField] === id; });
+  var putIn = function (rec) {
+    if (inList) upsert(listNow(), idField, rec);
+    if (key === 'activity') {
+      Object.keys(S.custActs).forEach(function (c) {
+        var l = S.custActs[c], at = -1;
+        for (var i = 0; i < l.length; i++) if (l[i][idField] === rec[idField]) { at = i; break; }
+        if (c === rec['顧客ID']) { if (at === -1) l.unshift(rec); else l[at] = rec; }
+        else if (at !== -1) l.splice(at, 1);      // 顧客を変えたときは、前の顧客の一覧から外す
+      });
+      Object.keys(S.actRange).forEach(function (k) {
+        var l = S.actRange[k];
+        if (Array.isArray(l)) for (var i = 0; i < l.length; i++) if (l[i][idField] === rec[idField]) l[i] = rec;
+      });
+    }
+  };
+  var takeOut = function (recId) {
+    var drop = function (l) { for (var i = l.length - 1; i >= 0; i--) if (l[i][idField] === recId) l.splice(i, 1); };
+    drop(listNow());
+    if (key === 'activity') Object.keys(S.custActs).forEach(function (c) { drop(S.custActs[c]); });
+  };
+  putIn(prov);
+  if (key === 'activity' && !before) S.D.activityTotal += 1;
+  reindex();
+  // 下書きは、サーバーの返事が「保存できた」で返ってから消す。
+  // それまでは「保存の途中」として残しておく（返事の前にページが閉じた・時間切れだった、のときに、打ったものが消えないように）
+  if (draftable(form)) { draftPut(form, true); draftId = form._draftId || ''; if (draftId) S.sending[draftId] = true; }
+  form.closest('.overlay')._noDraft = true;
+  if (data['顧客ID']) noteRecentCust(data['顧客ID']);
+  closeModal(form);
+  render();
+  if (next) carryNext();
+  var saveT0 = Date.now();
+  var saveTok = S.token;
+  // v0.126.0：窓はもう閉じて一覧にも出しているので、返事を待つ間も画面は止めない（「保存中…」で操作できなくなっていた）
+  call(SAVE_FN[key], cred ? { data: data, cred: cred } : { data: data }, 'nolock').then(function (r) {
+    if (draftId) { draftDropId(draftId); delete S.sending[draftId]; }     // 保存できたので、下書き（保存の途中）は先に消す
+    if (!S.D || S.token !== saveTok) return;     // ログアウト・入り直しのあとに届いた返事は、新しいログインには入れない
+    S.timing.save = Date.now() - saveT0; S.timing.saveSrv = r.srvMs;     // いちばん下の「読み込み：…」の行に、最後の保存にかかった時間を出す（v0.18.0）
+    if (r.cred && S.creds && S.creds.customerId === r.cred['顧客ID']) { upsert(S.creds.list, '認証ID', r.cred); delete S.creds.shown[r.cred['認証ID']]; }
+    if (!before) takeOut(prov[idField]);
+    putIn(r.record);
+    if (key === 'activity') S.actRange = {};
+    reindex();
+    S.alertsStale = true;
+    toast(r.created ? schema.label + 'を追加しました' : '保存しました');
+    if (draftId) { draftDropId(draftId); delete S.sending[draftId]; setTimeout(function () { draftDropId(draftId); if (S.D && $('draftBar')) softRender(); }, 1200); }
+    S.savedAt[key + ':' + r.record[idField]] = Date.now();
+    noteSaved(key, r.record);
+    softRender();
+    if (photos.length) uploadPhotos(key, r.record, photos);
+    if (linkSales && key === 'project' && r.created) linkSalesToProject(linkSales, r.record['案件ID']);
+  }).catch(function (e) {
+    if (!S.D || S.token !== saveTok) return;          // 時間切れなどでログイン画面に戻った。下書き（保存の途中）は残してあるので、入り直すと上の帯に出る
+    if (draftId) delete S.sending[draftId];
+    // 元に戻す
+    if (before) putIn(before); else { takeOut(prov[idField]); if (key === 'activity') S.D.activityTotal -= 1; }
+    reindex();
+    softRender();
+    if (e && e.error === 'unauthorized') return;
+    // 入れた内容のまま、窓を開き直して理由を出す
+    var draft = {};
+    Object.keys(prov).forEach(function (k) { if (k !== '_pending') draft[k] = prov[k]; });
+    if (!before) delete draft[idField];
+    draft.lockCustomer = lock;
+    var wrap = openForm(key, before ? draft : null, before ? null : draft);
+    var again = wrap && wrap.querySelector('form');
+    if (again) {
+      // 保存できなかった内容は「入力の途中」として扱う（閉じても下書きに残る）。下書きも、すぐ書き直す
+      again._forceDirty = true;
+      if (draftId) again._draftId = draftId;
+      if (before) {
+        again._draftFields = {};
+        Object.keys(draft).forEach(function (k) { if (k !== idField && k !== 'lockCustomer' && String(draft[k]) !== String(before[k] === undefined ? '' : before[k])) again._draftFields[k] = true; });
+        again.dataset.base = before['更新日時'] || '';
+      }
+      draftPut(again);
+      restorePendingPhotos(again, photos);
+      licCredRestore(again, cred);
+      if (again.querySelector('details.rest')) again.querySelector('details.rest').open = true;
+      var m = again.querySelector('.msg');
+      m.textContent = (e && e.message) || '保存できませんでした。'; m.hidden = false;
+      if (m.scrollIntoView) m.scrollIntoView({ block: 'nearest' });
+    }
+  });
+}
+// ===========================================================================
+// 記録に付ける写真（対応・修理・機器）
+//   送る前に、画面の側で小さくする（長辺 1600px の JPEG。目安 500KB）。一覧用の小さい絵（サムネイル）も一緒に作る。
+//   いまある記録 … 選んだらすぐ送る。　新しい記録 … 保存の返事（IDが決まる）を待ってから送る。
+// ===========================================================================
+var PHOTO_LABEL = { activity: '対応', repair: '修理', device: '機器', license: 'ライセンス', maintenance: '保守', memo: '社内メモ', project: '案件', saleslog: '営業' };
+var PHOTO_SIDE = 1600, PHOTO_TARGET_BYTES = 500 * 1024, THUMB_SIDE = 160;
+function photoCountKey(key, id) { return PHOTO_LABEL[key] + ':' + id; }
+function photoCount(key, id) { return (S.D.photoCounts && S.D.photoCounts[photoCountKey(key, id)]) || 0; }
+function bumpPhotoCount(key, id, by) {
+  if (!S.D) return;
+  var k = photoCountKey(key, id), n = Math.max(0, photoCount(key, id) + by);
+  if (n) S.D.photoCounts[k] = n; else delete S.D.photoCounts[k];
+}
+/** 一覧に出す「写真あり」の印 */
+function photoMark(key, id) {
+  var n = photoCount(key, id);
+  return n ? '<span class="pmark" title="添付ファイルが' + n + '件付いています">添付' + n + '</span>' : '';
+}
+function photoBoxHtml(key, id) {
+  return '<div class="photos" data-photokey="' + key + '" data-photoid="' + esc(id) + '">' +
+    '<div class="photos-head"><b>添付ファイル</b><span class="note">' + Math.floor(S.D.attachMaxBytes / 1024 / 1024) + 'MBまでの PDF・Excel・Word など、写真もOK（写真は自動で小さくします）。' + (id ? '選ぶと、すぐに保存されます。' : '保存すると、一緒に付きます。') + S.D.photoMax + '件まで。</span></div>' +
+    '<div class="photo-grid"></div>' +
+    '<div class="photo-btns"><button type="button" class="btn small" data-act="pickCamera">カメラで撮る</button>' +
+      '<button type="button" class="btn small' + (key === 'maintenance' ? ' primary' : '') + '" data-act="scanOpen">書類をスキャン</button>' +
+      '<button type="button" class="btn small primary" data-act="pickAttachFile">ファイルを付ける</button></div>' +
+    '<input type="file" multiple hidden data-attachfile="1" aria-label="付けるファイル">' +
+    '<input type="file" accept="image/*" multiple hidden data-photofile="1" aria-label="付ける写真">' +
+    '<input type="file" accept="image/*" capture="environment" hidden data-photofile="1" data-camera="1" aria-label="カメラで撮る"></div>';
+}
+function initPhotos(form, key, id) {
+  if (!form.querySelector('.photos')) return;
+  form._photos = [];        // まだ送っていない写真（新しい記録）
+  form._saved = id ? null : [];   // 付いている写真（null は読み込み中）
+  form._sending = 0;
+  form._preparing = 0;      // 小さくしている途中の枚数
+  form._chain = Promise.resolve();
+  drawPhotos(form);
+  if (!id) return;
+  call('listPhotos', { target: key, targetId: id }, true).then(function (r) {
+    form._saved = r.photos; drawPhotos(form);
+  }).catch(function (e) { form._saved = []; form._loadFailed = true; drawPhotos(form); failToast(e); });
+}
+/** 写真・スキャンのPDF以外のファイル（Excel・Word・ふつうのPDFなど。スキャンのPDFは、サムネイルがある） */
+function isOtherFile(mime) { return !!mime && mime !== 'image/jpeg' && mime !== 'application/pdf'; }
+function shortFileName(n) { n = String(n || ''); return n.length > 22 ? n.slice(0, 10) + '…' + n.slice(-10) : n; }
+function drawPhotos(form) {
+  var grid = form && form.querySelector('.photo-grid');
+  if (!grid || !S.D) return;
+  if (form._saved === null) { grid.innerHTML = '<span class="note">読み込んでいます…</span>'; return; }
+  var saved = form._saved.map(function (p) {
+    var t = safeImage(p.thumb);
+    var isPdf = p['種類'] === 'application/pdf';
+    if (isOtherFile(p['種類'])) return '<button type="button" class="ptile pfile" data-act="viewPhoto" data-id="' + esc(p['添付ID']) + '" title="開く・ダウンロード"><span class="ficon">📎</span><span class="fname">' + esc(shortFileName(p['ファイル名'])) + '</span></button>';
+    return '<button type="button" class="ptile' + (isPdf ? ' ppdf' : '') + '" data-act="viewPhoto" data-id="' + esc(p['添付ID']) + '" title="' + (isPdf ? 'PDFを開く' : '大きく見る') + '">' + (t ? '<img src="' + esc(t) + '" alt="' + (isPdf ? 'PDF ' : '写真 ') + esc(p['添付ID']) + '">' : (isPdf ? 'PDF' : '写真') + '<br>' + esc(p['添付ID'])) + (isPdf ? '<span class="pdfmark">PDF</span>' : '') + '</button>';
+  });
+  var pending = form._photos.map(function (p, i) {
+    if (p.kind === 'file') return '<span class="ptile pfile"><span class="ficon">📎</span><span class="fname">' + esc(shortFileName(p.name)) + '</span><button type="button" class="px" data-act="dropPhoto" data-i="' + i + '" aria-label="これをやめる">×</button></span>';
+    return '<span class="ptile' + (p.kind === 'pdf' ? ' ppdf' : '') + '"><img src="' + esc(p.thumb) + '" alt="これから付ける' + (p.kind === 'pdf' ? 'PDF' : '写真') + '">' + (p.kind === 'pdf' ? '<span class="pdfmark">PDF ' + p.pages + '枚</span>' : '') + '<button type="button" class="px" data-act="dropPhoto" data-i="' + i + '" aria-label="これをやめる">×</button></span>';
+  });
+  var waits = [];
+  for (var i = 0; i < form._sending; i++) waits.push('<span class="ptile wait">送って<br>います…</span>');
+  for (var j = 0; j < (form._preparing || 0); j++) waits.push('<span class="ptile wait">準備して<br>います…</span>');
+  var total = saved.length + pending.length + waits.length;
+  grid.innerHTML = saved.concat(pending, waits).join('') +
+    (total < S.D.photoMax && !form._loadFailed ? '<button type="button" class="ptile add" data-act="pickAttachFile">＋ 添付</button>' : '');
+}
+/** 画像ファイルを読み込む（読めない形式なら失敗する） */
+function loadImageFile(file) {
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = function () { URL.revokeObjectURL(url); reject({ message: '「' + file.name + '」は画像として読めませんでした。' }); };
+    img.src = url;
+  });
+}
+/** 長辺が side 以下になるように描いて、data URL にする（もとより大きくはしない）。bg を渡すと、その色で下を塗る */
+function drawImage(img, side, mime, quality, bg) {
+  var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+  if (!w || !h) throw { message: '画像の大きさが分かりませんでした。' };
+  var k = Math.min(1, side / Math.max(w, h));
+  var cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(w * k)); cv.height = Math.max(1, Math.round(h * k));
+  var cx = cv.getContext('2d');
+  if (bg) { cx.fillStyle = bg; cx.fillRect(0, 0, cv.width, cv.height); }
+  cx.drawImage(img, 0, 0, cv.width, cv.height);
+  return cv.toDataURL(mime, quality);
+}
+function dataUrlBytes(url) { var b = url.slice(url.indexOf(',') + 1); return Math.floor(b.length * 3 / 4); }
+/** 写真を小さくする。→ {base64, thumb, bytes} */
+function shrinkPhoto(file) {
+  return loadImageFile(file).then(function (img) {
+    // 大きさと画質を、目安の容量に収まるまで順に下げる
+    var steps = [[PHOTO_SIDE, 0.82], [PHOTO_SIDE, 0.7], [1280, 0.7], [1280, 0.55], [1024, 0.55], [800, 0.5]];
+    var url = '';
+    for (var i = 0; i < steps.length; i++) {
+      url = drawImage(img, steps[i][0], 'image/jpeg', steps[i][1], '#ffffff');
+      if (dataUrlBytes(url) <= PHOTO_TARGET_BYTES) break;
+    }
+    if (url.indexOf('data:image/jpeg;base64,') !== 0 || dataUrlBytes(url) > S.D.photoMaxBytes) throw { message: '「' + file.name + '」を小さくできませんでした。' };
+    var thumb = drawImage(img, THUMB_SIDE, 'image/jpeg', 0.6, '#ffffff');
+    if (thumb.length > S.D.photoThumbMaxChars) thumb = drawImage(img, 96, 'image/jpeg', 0.5, '#ffffff');
+    return { base64: url.slice(url.indexOf(',') + 1), thumb: safeImage(thumb), bytes: dataUrlBytes(url) };
+  });
+}
+/** 写真を選んだとき */
+function onPhotoFiles(input) {
+  var form = input.form, box = input.closest('.photos');
+  var files = Array.prototype.slice.call(input.files || []);
+  input.value = '';
+  addPhotoFiles(form, box, files);
+}
+/** ファイルを選んだとき（社内メモ。PDF・Excel・Word など） */
+function onAttachFiles(input) {
+  var form = input.form, box = input.closest('.photos');
+  var files = Array.prototype.slice.call(input.files || []);
+  input.value = '';
+  files.forEach(function (file) {
+    var dot = file.name.lastIndexOf('.'), ext = dot > 0 ? file.name.slice(dot + 1).toLowerCase() : '';
+    if (S.D.attachExtensions.indexOf(ext) === -1) { toast('「' + file.name + '」は添付できない種類です。使えるのは ' + S.D.attachExtensions.join('・') + ' です。', true); return; }
+    if (file.size > S.D.attachMaxBytes) { toast('「' + file.name + '」が大きすぎます。' + Math.floor(S.D.attachMaxBytes / 1024 / 1024) + 'MBまでにしてください。', true); return; }
+    readFileBase64(file).then(function (b64) {
+      addPreparedItem(form, box, { kind: 'file', name: file.name, mimeType: file.type, base64: b64, bytes: file.size });
+    }).catch(failToast);
+  });
+}
+/** 写真を足す（選んだ写真・スキャンしたページ）。足した枚数を返す */
+function addPhotoFiles(form, box, files) {
+  if (!form || !box || !files.length || form._saved === null) return 0;
+  var key = box.dataset.photokey, id = box.dataset.photoid;
+  var room = S.D.photoMax - form._saved.length - form._photos.length - form._sending - (form._preparing || 0);
+  if (files.length > room) { toast('添付ファイルは1つの記録に' + S.D.photoMax + '件までです。' + (room > 0 ? '最初の' + room + '件だけ付けます。' : ''), true); files = files.slice(0, Math.max(0, room)); }
+  // 1枚ずつ順に（まとめて処理すると、スマホではメモリが足りなくなる）
+  var chain = form._chain || Promise.resolve();
+  form._preparing = (form._preparing || 0) + files.length;
+  drawPhotos(form);
+  files.forEach(function (file) {
+    chain = chain.then(function () { return shrinkPhoto(file); }).then(function (p) {
+      form._preparing--;
+      if (!id) { form._photos.push(p); drawPhotos(form); return null; }
+      form._sending++; drawPhotos(form);
+      return call('uploadPhoto', { target: key, targetId: id, base64: p.base64, thumb: p.thumb }, true).then(function (r) {
+        form._sending--; form._saved.push(r.photo); bumpPhotoCount(key, id, 1); S.files = null;
+        drawPhotos(form); softRender();      // 窓を閉じたあとに送り終わっても、一覧の「写真N」が変わるように
+      }, function (e) { form._sending--; drawPhotos(form); throw e; });
+    }, function (e) { form._preparing--; drawPhotos(form); throw e; }).catch(failToast);
+  });
+  form._chain = chain;
+  return files.length;
+}
+/** 新しい記録の写真：保存の返事でIDが決まってから、順に送る */
+function takePendingPhotos(form) { return ((form && form._photos) || []).slice(); }
+function restorePendingPhotos(form, photos) { if (form && form.querySelector('.photos')) { form._photos = photos.slice(); drawPhotos(form); } }
+function uploadPhotos(key, rec, photos) {
+  var id = rec[S.D.schema[key].idField], done = 0, failed = 0, why = '';
+  var chain = Promise.resolve();
+  photos.forEach(function (p) {
+    chain = chain.then(function () {
+      return call('uploadPhoto', { target: key, targetId: id, base64: p.base64, thumb: p.thumb, kind: p.kind || '', pages: p.pages || 0, name: p.name || '', mimeType: p.mimeType || '' }, true).then(function () { done++; bumpPhotoCount(key, id, 1); },
+        function (e) { failed++; why = (e && e.message) || ''; });
+    });
+  });
+  return chain.then(function () {
+    if (!S.D) return;
+    S.files = null;
+    if (failed) toast('添付 ' + failed + '件を付けられませんでした。記録を開いて、もう一度付けてください。' + (why ? '（' + why + '）' : ''), true);
+    else toast('添付ファイルを' + done + '件付けました');
+    softRender();
+  });
+}
+
+// ===========================================================================
+// 定期保守の日程を自動で作る（v0.114.0）
+// ===========================================================================
+var MPLAN = null;
+function openMaintPlan(month) {
+  var t = S.D.today, y = Number(t.slice(0, 4)), m = Number(t.slice(5, 7));
+  var next = m === 12 ? (y + 1) + '-01' : y + '-' + ('0' + (m + 1)).slice(-2);
+  month = month || (Number(t.slice(8, 10)) >= 20 ? next : t.slice(0, 7));
+  call('planMaintenance', { month: month }).then(function (r) {
+    MPLAN = r;
+    var old = document.getElementById('mplanWrap'); if (old) closeModal(old);
+    var w = openModal(maintPlanHtml(r, t.slice(0, 7), next));
+    w.id = 'mplanWrap';
+  }).catch(failToast);
+}
+function maintPlanHtml(r, cur, next) {
+  var calOpt = function (sel) { return r.calendars.map(function (c) { return '<option value="' + esc(c.id) + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join(''); };
+  var rows = r.plan.map(function (x, i) {
+    return '<tr data-i="' + i + '"><td><input type="checkbox" class="mpOn" checked aria-label="入れる"></td>' +
+      '<td><input type="date" class="mpDate" value="' + esc(x.date) + '"></td>' +
+      '<td class="nowrap"><input type="time" class="mpStart" value="' + esc(('0' + x.start).slice(-5)) + '">〜<input type="time" class="mpEnd" value="' + esc(('0' + x.end).slice(-5)) + '"></td>' +
+      '<td><b>' + esc(x.name) + '</b><span class="minor">' + esc(x.area) + (x.prev ? '・先月 ' + esc(x.prev) : '') + '</span></td>' +
+      '<td class="nowrap">' + x.devices + '台・' + x.minutes + '分</td>' +
+      '<td>' + (r.calendars.length > 1 ? '<select class="mpCal">' + calOpt(x.calendarId) + '</select>' : esc(r.calendars[0] ? r.calendars[0].name : '')) + '</td></tr>';
+  }).join('');
+  var mon = Number(r.month.slice(5, 7));
+  return '<header><h2>🗓 ' + mon + '月の定期保守の日程（案）</h2></header><div class="body">' +
+    '<p class="minor">土日・祝日を除き、先月と同じ「第○曜日」を先に、同じ市区町村の顧客を同じ日にまとめました。日付・時刻・カレンダーは直せます。外す顧客はチェックを外してください。</p>' +
+    '<p><button type="button" class="btn small' + (r.month === cur ? ' primary' : '') + '" data-act="maintPlanMonth" data-month="' + cur + '">今月</button> <button type="button" class="btn small' + (r.month === next ? ' primary' : '') + '" data-act="maintPlanMonth" data-month="' + next + '">来月</button></p>' +
+    (r.holidaysOk ? '' : '<p class="note bad">祝日のカレンダーを読めませんでした。祝日を除けていないので、日付を確かめてください。</p>') +
+    (r.holidays && r.holidays.length ? '<p class="minor">除いた祝日：' + esc(r.holidays.join('、')) + '</p>' : '') +
+    (r.plan.length ? '<p class="row" id="mplanSel"><button type="button" class="btn small" data-act="maintPlanAll" data-on="1">すべて選択</button> <button type="button" class="btn small" data-act="maintPlanAll" data-on="">すべて解除</button> <span class="minor" id="mplanCount">' + r.plan.length + ' / ' + r.plan.length + '社を登録</span></p>' : '') +
+    (r.plan.length ? '<div class="tblwrap"><table class="mtbl" id="mplanTbl"><thead><tr><th></th><th>日付</th><th>時刻</th><th>顧客</th><th>台数</th><th>カレンダー</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p class="mempty">入れる顧客はありません。</p>') +
+    (r.skipped.length ? '<details><summary>入れなかった顧客（' + r.skipped.length + '社）</summary><ul>' + r.skipped.map(function (x) { return '<li>' + esc(x.name) + '：' + esc(x.reason) + '</li>'; }).join('') + '</ul></details>' : '') +
+    '</div><footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">閉じる</button>' +
+    (r.plan.length ? '<button type="button" class="btn primary" id="mplanReg" data-act="maintPlanRegister">カレンダーに登録</button>' : '') + '</footer>';
+}
+function maintPlanCount() {
+  var tb = document.getElementById('mplanTbl'), c = document.getElementById('mplanCount');
+  if (!tb || !c) return;
+  var all = tb.querySelectorAll('.mpOn'), on = tb.querySelectorAll('.mpOn:checked');
+  c.textContent = on.length + ' / ' + all.length + '社を登録';
+}
+document.addEventListener('change', function (e) { if (e.target && e.target.classList && e.target.classList.contains('mpOn')) maintPlanCount(); });
+function maintPlanRegister(el) {
+  var tb = document.getElementById('mplanTbl'); if (!tb || !MPLAN) return;
+  var items = [];
+  tb.querySelectorAll('tbody tr').forEach(function (tr) {
+    if (!tr.querySelector('.mpOn').checked) return;
+    var x = MPLAN.plan[Number(tr.dataset.i)], sel = tr.querySelector('.mpCal');
+    items.push({ customerId: x.customerId, date: tr.querySelector('.mpDate').value, start: tr.querySelector('.mpStart').value.replace(/^0(\d)/, '$1'), end: tr.querySelector('.mpEnd').value.replace(/^0(\d)/, '$1'), calendarId: sel ? sel.value : x.calendarId });
+  });
+  if (!items.length) { toast('入れる顧客を選んでください', true); return; }
+  el.disabled = true;
+  call('registerMaintenancePlan', { items: items }).then(function (r) {
+    closeModal(el);
+    if (r.ranMonth) { S.D.maintPlanRan = r.ranMonth; render(); }
+    toast(r.created + '件をカレンダーに入れました（予定名は「仮【定期保守】」。確定したら「仮」を消してください）' + (r.skipped && r.skipped.length ? '（' + r.skipped.length + '件は入れませんでした）' : ''));
+  }).catch(function (e) { el.disabled = false; failToast(e); });
+}
+
+// ===========================================================================
+// v0.117.0：ライセンスのまとめて登録・案件⇔営業・音声入力
+// ===========================================================================
+function submitLicenseBulk(form, data, buttons, showMsg) {
+  var ta = $('lbKeys'), cnt = $('lbCount');
+  var keys = ta ? ta.value.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(function (x) { return x; }) : [];
+  var count = cnt ? parseInt(cnt.value, 10) || 0 : 0;
+  if (!keys.length && !count) { showMsg('キーを貼るか、件数を入れてください。'); return; }
+  if (keys.length > 50 || count > 50) { showMsg('まとめて登録できるのは50件までです。'); return; }
+  Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
+  call('saveLicenseBulk', { data: data, keys: keys, count: count }).then(function (r) {
+    (r.records || []).forEach(function (rec) { upsert(S.D.licenses, 'ライセンスID', rec); });
+    if (S.creds && r.creds) r.creds.forEach(function (c) { if (S.creds.customerId === c['顧客ID']) upsert(S.creds.list, '認証ID', c); });
+    reindex(); S.alertsStale = true;
+    var ov = form.closest('.overlay'); if (ov) ov._noDraft = true;
+    closeModal(form);
+    toast('ライセンスを' + r.created + '件登録しました');
+    render();
+  }).catch(function (e) {
+    Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+    if (e && e.error === 'unauthorized') return;
+    showMsg((e && e.message) || '登録できませんでした。');
+  });
+}
+document.addEventListener('input', function (e) {
+  if (e.target && e.target.id === 'lbKeys') {
+    var n = e.target.value.split(/\r?\n/).filter(function (x) { return x.trim(); }).length, info = $('lbInfo');
+    if (info) info.textContent = n ? n + '件作ります' : '';
+  }
+});
+function linkSalesToProject(salesId, projectId) {
+  call('saveSalesLog', { data: { '営業ID': salesId, '案件ID': projectId } }, true).then(function (r) {
+    upsert(S.D.saleslogs, '営業ID', r.record); reindex(); softRender();
+  }).catch(function () { toast('営業の記録を案件につなげられませんでした。営業の記録を開いて、案件を選んでください。', true); });
+}
+
+// ---- 音声入力（v0.117.0）：入力窓の長い文の欄に🎤。話した言葉を、いまの文の後ろに足す
+var VOICE = { rec: null, el: null };
+function voiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function addVoiceButtons(root) {
+  if (!voiceSupported() || !root) return;
+  root.querySelectorAll('form textarea').forEach(function (ta) {
+    if (ta.dataset.novoice || ta.dataset.voice) return;
+    ta.dataset.voice = '1';
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn small voicebtn'; b.dataset.act = 'voiceInput'; b.title = '話して入力'; b.setAttribute('aria-label', '話して入力');
+    b.textContent = '🎤 話して入力';
+    ta.parentNode.insertBefore(b, ta.nextSibling);
+  });
+}
+function voiceStop() {
+  if (VOICE.rec) { try { VOICE.rec.stop(); } catch (e) { /* そのまま */ } }
+}
+function voiceStart(btn) {
+  var ta = btn.previousElementSibling;
+  while (ta && ta.tagName !== 'TEXTAREA') ta = ta.previousElementSibling;
+  if (!ta) return;
+  if (VOICE.rec) { var same = VOICE.btn === btn; voiceStop(); if (same) return; }
+  var R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var rec = new R();
+  rec.lang = 'ja-JP'; rec.interimResults = true; rec.continuous = true;
+  var base = ta.value, finalText = '';
+  rec.onresult = function (ev) {
+    var interim = '';
+    for (var i = ev.resultIndex; i < ev.results.length; i++) {
+      if (ev.results[i].isFinal) finalText += ev.results[i][0].transcript; else interim += ev.results[i][0].transcript;
+    }
+    ta.value = base + (base && !/\n$/.test(base) ? '\n' : '') + finalText + interim;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  rec.onerror = function (ev) {
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') toast('マイクを使う許可がありません。ブラウザの設定でマイクを許可してください。', true);
+    else if (ev.error !== 'no-speech' && ev.error !== 'aborted') toast('音声を文字にできませんでした（' + ev.error + '）', true);
+  };
+  rec.onend = function () { btn.classList.remove('on'); btn.textContent = '🎤 話して入力'; if (VOICE.rec === rec) { VOICE.rec = null; VOICE.btn = null; } };
+  try { rec.start(); } catch (e) { toast('音声入力を始められませんでした。', true); return; }
+  VOICE.rec = rec; VOICE.btn = btn;
+  btn.classList.add('on'); btn.textContent = '⏹ 止める';
+}
+
+// v0.122.0：購入元が自社（EN・GROW）で保証期限が空なら、キッティング日から1年（1年後の前日）を入れる
+function isOwnSource(v) {
+  v = String(v || '').trim();
+  if (!v) return false;
+  var own = String((S.D && S.D.settings && S.D.settings['自社名']) || '').replace(/[\s・･.]/g, '').toLowerCase();
+  var x = v.replace(/[\s・･.]/g, '').toLowerCase();
+  return v === '自社' || /engrow/.test(x) || (own && x.indexOf(own) !== -1);
+}
+function warrantyFromKitting(ymd) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd || '')) return '';
+  var d = new Date(+ymd.slice(0, 4) + 1, +ymd.slice(5, 7) - 1, +ymd.slice(8, 10) - 1);
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+function autoWarranty(form) {
+  if (!form || !form.elements['保証期限'] || !form.elements['購入日']) return;
+  var w = form.elements['保証期限'], src = form.elements['購入元'];
+  var srcVal = src && src.value !== undefined ? src.value : '';
+  if (!isOwnSource(srcVal) || (w.value && !w.dataset.auto)) return;
+  var v = warrantyFromKitting(form.elements['購入日'].value);
+  if (!v) return;
+  w.value = v; w.dataset.auto = '1';
+}
+document.addEventListener('change', function (e) {
+  var f = e.target && e.target.form;
+  if (!f || !f.elements['保証期限']) return;
+  if (e.target.name === '保証期限') { delete e.target.dataset.auto; return; }
+  if (e.target.name === '購入日' || e.target.name === '購入元') autoWarranty(f);
+});
+
+// v0.126.0：機器を別の顧客へ移したあと、手元のデータだけ直す（前は全部を読み直していて、移すたびに待たされた）
+function applyMovedDevice(fromCust, toCust, r) {
+  if (!S.D || !r) return;
+  upsert(S.D.devices, '機器ID', r.record);
+  var setCust = function (list, idf, ids) {
+    if (!list || !ids || !ids.length) return;
+    var want = {}; ids.forEach(function (x) { want[x] = true; });
+    list.forEach(function (x) { if (want[x[idf]]) x['顧客ID'] = toCust; });
+  };
+  var m = r.moved || {};
+  setCust(S.D.activities, '対応ID', m.activities);
+  setCust(S.D.repairs, '修理ID', m.repairs);
+  setCust(S.D.maintenances, '実施ID', m.maintenances);
+  if (S.custActs) { delete S.custActs[fromCust]; delete S.custActs[toCust]; }
+  if (r.allocIds && r.allocIds.length && S.D.allocations) {
+    var gone = {}; r.allocIds.forEach(function (x) { gone[x] = true; });
+    S.D.allocations = S.D.allocations.filter(function (a) { return !gone[a['割当ID']]; });
+  }
+  (r.clearedRepairIds || []).forEach(function (id) { var x = findRecord('repair', id); if (x) x['元の対応ID'] = ''; });
+  (r.clearedLoanIds || []).forEach(function (id) { var x = (S.D.loans || []).filter(function (l) { return l['貸出ID'] === id; })[0]; if (x) x['修理ID'] = ''; });
+  S.creds = null; S.files = null; S.alertsStale = true;
+  reindex();
+  render();
+}
+</script>

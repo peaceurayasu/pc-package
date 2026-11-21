@@ -10,18 +10,24 @@ import { readdirSync, readFileSync } from 'node:fs';
 // GAS が用意しているもの
 const GAS_GLOBALS = [
   'SpreadsheetApp', 'CacheService', 'PropertiesService', 'LockService', 'Utilities', 'Session',
-  'HtmlService', 'ContentService', 'DriveApp', 'MailApp', 'ScriptApp', 'console',
-  'migrationMenu_' // Migrate.gs を入れたときだけある（Setup.gs は typeof で確かめてから使う）
+  'HtmlService', 'ContentService', 'DriveApp', 'MailApp', 'ScriptApp', 'UrlFetchApp', 'CalendarApp',
+  'GmailApp', 'DocumentApp', 'Logger', 'console'
 ];
 
 const files = readdirSync('.').filter((f) => f.endsWith('.gs')).sort();
 
-// 行の頭にある function / const / let / var を、そのファイルで定義した名前として拾う
+// 行の頭にある function / const / let / var を、そのファイルで定義した名前として拾う。
+// var は、何度書いても同じものを指す（FILE_VERSIONS_ のように、わざと各ファイルで書いているもの）ので、別に覚えておく
 const declared = {};
+const varsOf = {};
 for (const f of files) {
-  const names = new Set();
-  for (const m of readFileSync(f, 'utf8').matchAll(/^(?:function\s+|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)/gm)) names.add(m[1]);
+  const names = new Set(), vars = new Set();
+  for (const m of readFileSync(f, 'utf8').matchAll(/^(function\s+|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)/gm)) {
+    names.add(m[2]);
+    if (m[1].startsWith('var')) vars.add(m[2]);
+  }
   declared[f] = names;
+  varsOf[f] = vars;
 }
 
 const rules = {
@@ -49,7 +55,7 @@ export default [
     for (const g of GAS_GLOBALS) globals[g] = 'readonly';
     for (const other of files) {
       if (other === f) continue;
-      for (const n of declared[other]) globals[n] = 'readonly';
+      for (const n of declared[other]) if (!varsOf[f].has(n) || !varsOf[other].has(n)) globals[n] = 'readonly';
     }
     return { files: [f], languageOptions: { ecmaVersion: 2020, sourceType: 'script', globals }, rules };
   })
