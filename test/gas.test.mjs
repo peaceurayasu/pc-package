@@ -270,7 +270,7 @@ test('仮パスワード：出したパスワードのままなら「仮」、�
   assert.equal(G.isTempPassword_(staff), true);
   assert.equal(G.isTempPassword_({ 'スタッフID': 'yamada', 'パスワードハッシュ': G.makePasswordHash_('MyOwnPass99') }), false);   // 本人が変えた
   assert.equal(G.isTempPassword_({ 'スタッフID': 'suzuki', 'パスワードハッシュ': hash }), false);   // ほかの人
-  G.clearTempPassword_('yamada');
+  G.clearTempPassword_('yamada', G.makePasswordHash_('MyOwnPass99'));
   assert.equal(G.isTempPassword_(staff), false);
   assert.equal(G.isTempPassword_(null), false);
   assert.equal(G.isTempPassword_({ 'スタッフID': 'x' }), false);
@@ -291,13 +291,37 @@ test('仮パスワード：印が無い人は、変更履歴のいちばん新�
     assert.equal(G.isTempPassword_(tanaka), true);
     assert.equal(reads, before);                       // 2回めは変更履歴を読まない（印から）
     // 本人が変えたあと → 出ない
-    G.clearTempPassword_('tanaka');
-    assert.equal(G.isTempPassword_({ 'スタッフID': 'Tanaka', 'パスワードハッシュ': G.makePasswordHash_('MyOwnPass99') }), false);
+    const tanakaOwn = G.makePasswordHash_('MyOwnPass99');
+    G.clearTempPassword_('tanaka', tanakaOwn);
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'Tanaka', 'パスワードハッシュ': tanakaOwn }), false);
     // 最後が本人の変更 → 仮パスワードではない
     audit.push(row(4, '2026-10-05 09:00', 'パスワード再設定', 'sato'), row(5, '2026-10-06 09:00', 'パスワード変更', 'sato'));
     assert.equal(G.isTempPassword_({ 'スタッフID': 'sato', 'パスワードハッシュ': G.makePasswordHash_('SatoPass123') }), false);
     // 変更履歴に何も無い → 仮パスワードとは見なさない
     assert.equal(G.isTempPassword_({ 'スタッフID': 'nobody', 'パスワードハッシュ': G.makePasswordHash_('Whatever12') }), false);
+  } finally {
+    g.rowsWhere_ = real;
+  }
+});
+
+test('仮パスワード：「仮ではない」と覚えたあとに、印を付けない方法で再設定されても、変更履歴で見直して出す（admin の例）', () => {
+  const g = G.$global, real = g.rowsWhere_;
+  const audit = [];
+  g.rowsWhere_ = (sheet, col, value) => audit.filter((r) => r['対象'] === value);
+  try {
+    // 1. admin が自分のパスワードでログイン → 仮ではない、と覚える
+    audit.push({ _row: 2, '日時': '2026-11-01 09:00', '種別': 'パスワード変更', '対象': 'admin' });
+    const own = { 'スタッフID': 'admin', 'パスワードハッシュ': G.makePasswordHash_('AdminOwn123') };
+    assert.equal(G.isTempPassword_(own), false);
+    // 2. 古い Setup.gs のメニューで再設定（印は付かない）。変更履歴には残る
+    audit.push({ _row: 3, '日時': '2026-11-21 10:00', '種別': 'パスワード再設定', '対象': 'admin' });
+    const temp = { 'スタッフID': 'admin', 'パスワードハッシュ': G.makePasswordHash_('Temp7777zz') };
+    assert.equal(G.isTempPassword_(temp), true);        // パスワードが変わったので、見直して「仮」
+    // 3. 本人が変えたら出ない。同じパスワードのままなら、見直さずに「仮ではない」
+    const mine = G.makePasswordHash_('AdminNew456');
+    G.clearTempPassword_('admin', mine);
+    audit.push({ _row: 4, '日時': '2026-11-21 10:05', '種別': 'パスワード変更', '対象': 'admin' });
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'admin', 'パスワードハッシュ': mine }), false);
   } finally {
     g.rowsWhere_ = real;
   }

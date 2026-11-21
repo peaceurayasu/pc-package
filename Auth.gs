@@ -9,7 +9,7 @@
  *   ログアウト・パスワードの変更・スタッフの無効化・期限（REMEMBER_DAYS 日）で、使えなくなる
  * - 公開関数：login / loginWithRemember / logout / changeMyPassword / saveMyStartView / saveMyView / listStaff / saveStaff / resetStaffPassword
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.128.1';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.128.2';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // ハッシュ・乱数
@@ -191,11 +191,14 @@ function markTempPassword_(staffId, hash) {
   try { PropertiesService.getScriptProperties().setProperty(tempPwKey_(staffId), passwordStamp_(hash)); }
   catch (e) { console.warn('仮パスワードの印を残せませんでした: ' + e); }
 }
-/** 本人がパスワードを変えたときに呼ぶ（印を「変えた」にしておく。仮パスワードの印とは合わないので、出なくなる） */
-function clearTempPassword_(staffId) {
-  try { PropertiesService.getScriptProperties().setProperty(tempPwKey_(staffId), TEMP_PW_CHANGED); } catch (e) { /* 印が合わないので、残っても出ない */ }
+/**
+ * 本人がパスワードを変えたときに呼ぶ。「このパスワードは仮ではない」と、新しいパスワードの印と一緒に覚える。
+ * （v0.128.2：パスワードの印と一緒に覚えるので、そのあと別の方法でパスワードが変わったら、覚えた結果は使わずに確かめ直す）
+ */
+function clearTempPassword_(staffId, newHash) {
+  try { PropertiesService.getScriptProperties().setProperty(tempPwKey_(staffId), TEMP_PW_NOT + passwordStamp_(newHash)); } catch (e) { /* 印が合わないので、残っても出ない */ }
 }
-const TEMP_PW_CHANGED = 'changed';
+const TEMP_PW_NOT = 'no:';
 
 /**
  * そのスタッフ（シートの行）が、仮パスワードのままか。
@@ -210,9 +213,11 @@ function isTempPassword_(staff) {
     const props = PropertiesService.getScriptProperties();
     const key = tempPwKey_(staff['スタッフID']);
     const mark = props.getProperty(key);
-    if (mark !== null) return mark === stamp;
+    if (mark === stamp) return true;                       // 仮パスワードを出したときの印と同じ
+    if (mark === TEMP_PW_NOT + stamp) return false;        // このパスワードは、仮ではないと確かめ済み
+    // 印が無い・パスワードが印のあとで変わった（印を付けない方法で再設定された など）：変更履歴で確かめ直す
     const temp = auditSaysTempPassword_(staff['スタッフID']);
-    props.setProperty(key, temp ? stamp : TEMP_PW_CHANGED);
+    props.setProperty(key, temp ? stamp : TEMP_PW_NOT + stamp);
     return temp;
   } catch (e) {
     console.warn('仮パスワードかどうか確かめられませんでした: ' + e);
@@ -746,7 +751,7 @@ function changeMyPassword(params) {
       const hash = makePasswordHash_(p.next);
       updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': hash, '更新日時': nowStamp_() });
       logAudit_('パスワード変更', me.id, '', 'パスワード', '', '（本人が変更）', me.name);
-      clearTempPassword_(me.id);
+      clearTempPassword_(me.id, hash);
       // このセッションだけは続けて使えるようにする（ほかの端末のセッションは切れる）
       staff['パスワードハッシュ'] = hash;
       putSession_(p.token, staff, Date.now());
