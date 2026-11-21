@@ -1,0 +1,1525 @@
+<script>
+'use strict';
+// AdminJsMobile.html … 管理画面の動き（スマホの一覧・保守・下書き・戻る・設定・変更履歴など）
+// Admin.html から読み込む。順番に意味がある（Admin.html の並び順で読み込むこと）
+// ===========================================================================
+// スマホの一覧（v0.16.0）
+//   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
+//   探す欄と、押しやすいカードの一覧だけ。押すと、これまでと同じ編集の窓（顧客は顧客の画面）が開く。
+// ===========================================================================
+var P_STEP = 50;
+var P_DEF = { cust: '', act: 'open', rep: 'open', lic: 'soon' };
+function pState(key) {
+  S.p = S.p || {};
+  if (!S.p[key]) S.p[key] = { f: P_DEF[key], q: '', n: P_STEP };
+  return S.p[key];
+}
+function pHead(title, addKey, addLabel) {
+  return '<div class="head"><h1>' + esc(title) + '</h1>' + (addKey ? '<button type="button" class="btn primary small" data-act="quickNew" data-key="' + addKey + '">＋ ' + esc(addLabel) + '</button>' : '') + '</div>';
+}
+function pSearch(key, placeholder) {
+  return '<input type="search" id="pq_' + key + '" data-pq="' + key + '" autocomplete="off" placeholder="' + esc(placeholder) + '" value="' + esc(pState(key).q) + '">';
+}
+function pChips(key, list) {
+  var st = pState(key);
+  return '<div class="chipset small" id="pf_' + key + '">' + list.map(function (c) {
+    return '<button type="button" data-act="pFilter" data-key="' + key + '" data-f="' + c[0] + '" aria-pressed="' + (st.f === c[0]) + '">' + esc(c[1]) + '</button>';
+  }).join('') + '</div>';
+}
+function pCard(act, id, row1, title, body2) {
+  return '<button type="button" data-act="' + act + '" data-id="' + esc(id) + '"><span class="row1">' + row1 + '</span><b>' + esc(title) + '</b>' +
+    (body2 ? '<span class="body2">' + esc(body2) + '</span>' : '') + '</button>';
+}
+function pListHtml(key) {
+  var st = pState(key), rows = P_ROWS[key](st), shown = rows.slice(0, st.n);
+  var cards = shown.map(P_CARD[key]).join('');
+  var html = rows.length ? '<div class="hits"><div class="cap">' + rows.length + '件' + (rows.length > shown.length ? '（先頭の' + shown.length + '件）' : '') + '</div>' + cards + '</div>'
+    : '<p class="empty">' + (st.q ? '見つかりません。' : '当てはまるものがありません。') + '</p>';
+  if (rows.length > shown.length) html += '<button type="button" class="btn" data-act="pMore" data-key="' + key + '">もっと見る（あと' + (rows.length - shown.length) + '件）</button>';
+  return html;
+}
+function pDraw(key) { var box = $('plist_' + key); if (box) box.innerHTML = pListHtml(key); }
+function pBody(key, placeholder, chips) {
+  return '<section class="panel plist"><div class="hpad">' + pSearch(key, placeholder) + (chips ? pChips(key, chips) : '') +
+    '<div id="plist_' + key + '">' + pListHtml(key) + '</div></div></section>';
+}
+var P_ROWS = {
+  cust: function (st) {
+    var t = st.q.trim();
+    return S.D.customers.filter(function (c) { return c['状態'] !== '無効' || t; })
+      .filter(function (c) { return !t || textMatch(t, [c['顧客名'], c['ふりがな'], c['顧客ID'], c['先方担当者'], c['電話']]); })
+      .sort(function (a, b) { return cmp(a['ふりがな'] || a['顧客名'], b['ふりがな'] || b['顧客名']); });
+  },
+  act: function (st) {
+    var t = st.q.trim(), from = st.f === 'month' ? addDaysYmd(S.D.today, -30) : '';
+    return S.D.activities.filter(function (a) {
+      if (a._pending) return true;
+      if (st.f === 'open' && !isOpenActivity(a)) return false;
+      if (from && a['受付日'] < from) return false;
+      return !t || textMatch(t, [a['内容'], custWords(a['顧客ID']), a['先方担当者'], a['受付スタッフ'], a['対応種別'], devLabel(a['機器ID'])]);
+    }).sort(function (a, b) { return cmp(b['受付日'] + b['対応ID'], a['受付日'] + a['対応ID']); });
+  },
+  rep: function (st) {
+    var t = st.q.trim();
+    return S.D.repairs.filter(function (r) {
+      if (st.f === 'open' && !isOpenRepair(r)) return false;
+      return !t || textMatch(t, [r['件名'], r['内容'], custWords(r['顧客ID']), r['型番'], r['シリアル'], r['預かり品'], devLabel(r['機器ID'])]);
+    }).sort(function (a, b) { return cmp(b['受付日'] + b['修理ID'], a['受付日'] + a['修理ID']); });
+  },
+  lic: function (st) {
+    var t = st.q.trim(), warn = S.D.licenseWarnDays;
+    return S.D.licenses.filter(function (l) {
+      if (st.f === 'soon') { var d = daysUntil(l['有効期限']); if (d === null || d > warn) return false; }
+      return !t || textMatch(t, [l['製品名'], l['契約期間'], custWords(l['顧客ID']), l['備考']]);
+    }).sort(function (a, b) {
+      if (st.f === 'soon') return cmp(a['有効期限'], b['有効期限']);
+      return cmp(custName(a['顧客ID']) + a['製品名'], custName(b['顧客ID']) + b['製品名']);
+    });
+  }
+};
+var P_CARD = {
+  cust: function (c) {
+    var id = c['顧客ID'], al = IDX.alertCount[id] || 0;
+    return pCard('openCustomer', id,
+      (c['保守契約'] && c['保守契約'] !== 'なし' ? pill(c['保守契約'], 'brand') : '') + (al ? pill('要対応 ' + al, 'danger') : '') + (c['状態'] === '無効' ? pill('無効') : ''),
+      c['顧客名'], ['機器 ' + (IDX.devCount[id] || 0) + '台', IDX.lastMaint[id] ? '前回の保守 ' + IDX.lastMaint[id] : '', c['電話']].filter(function (x) { return x; }).join('・'));
+  },
+  act: function (a) {
+    return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + photoMark('activity', a['対応ID']),
+      custName(a['顧客ID']) + (a['機器ID'] ? '　' + devLabel(a['機器ID']) : ''), a['内容']);
+  },
+  rep: function (r) {
+    return pCard('editRecord:repair', r['修理ID'], esc(r['受付日']) + ' ' + statusPill(r['ステータス']) + (r['種別'] ? ' ' + esc(r['種別']) : '') + photoMark('repair', r['修理ID']),
+      r['件名'], [custName(r['顧客ID']), r['預かり品'], r['型番']].filter(function (x) { return x; }).join('・'));
+  },
+  lic: function (l) {
+    return pCard('editRecord:license', l['ライセンスID'], (l['有効期限'] ? '期限 ' + expiryHtml(l['有効期限'], S.D.licenseWarnDays) : '期限なし') + photoMark('license', l['ライセンスID']),
+      l['製品名'], [custName(l['顧客ID']), l['数量'] !== '' ? '数量 ' + l['数量'] : '', l['契約期間']].filter(function (x) { return x; }).join('・'));
+  }
+};
+function addDaysYmd(ymd, n) {
+  var p = String(ymd).split('-'), d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n));
+  return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
+}
+var PHONE_VIEWS = {
+  customers: function () {
+    var alerts = '';
+    if (S.ready) {
+      var n = pcAlerts().length;
+      alerts = '<section class="panel" id="pAlertBox"><div class="hpad"><button type="button" class="btn palerts" data-act="pAlerts" aria-expanded="' + !!S.pAlertsOpen + '">' +
+        (n ? pill('要対応 ' + n + '件', 'danger') : pill('要対応なし', 'ok')) + '<span class="grow"></span>' + (n ? (S.pAlertsOpen ? '閉じる' : '見る') : '') + '</button>' +
+        (S.pAlertsOpen && n ? alertsHtml() : '') + '</div></section>';
+    } else if (S.restFailed) {
+      alerts = '<p class="note">要対応を読み込めませんでした。<button type="button" class="btn small" data-act="retryRest">もう一度読み込む</button></p>';
+    } else alerts = '<p class="note" id="pAlertWait">要対応を読み込んでいます…</p>';
+    var nDev = S.D.devices.filter(function (d) { return d['状況'] !== '廃棄' && !d._pending; }).length;
+    var allDev = '<section class="panel" id="pAllDev"><div class="hpad"><button type="button" class="btn palerts" data-act="nav" data-view="devices">' +
+      pill('すべての機器 ' + nDev + '台', 'brand') + '<span class="grow"></span>見る</button></div></section>';
+    return pHead('PC管理') + allDev + alerts + pBody('cust', '顧客名・ふりがな・電話で探す', null);
+  },
+  activities: function () {
+    return pHead('対応履歴', 'activity', '対応を記録') + pBody('act', '内容・顧客名・担当で探す（ひらがな可）', [['open', '未完了'], ['month', '直近30日'], ['all', 'すべて']]) +
+      '<p class="note">' + (S.D.activityTotal > S.D.activities.length ? '古い対応は、パソコンの「対応履歴」か、顧客の画面で見られます。' : '') + '</p>';
+  },
+  repairs: function () {
+    return pHead('修理履歴', 'repair', '修理を受け付け') + pBody('rep', '件名・顧客名・型番・預かり品で探す', [['open', '進行中'], ['all', 'すべて']]);
+  },
+  licenses: function () {
+    return pHead('ライセンス', 'license', 'ライセンスを追加') + pBody('lic', '製品名・顧客名で探す（ひらがな可）', [['soon', '期限が近い・切れた'], ['all', 'すべて']]);
+  }
+};
+
+// ===========================================================================
+// 保守（スマホ向け・v0.15.0）
+//   ① 顧客を選ぶ → ② 収集ツールの受信日時が新しい順にPCを並べる → ③ 1台ずつ確認して、備考を書いて「この台は完了」
+//   （その機器の保守の記録を1件作る）→ ④ 最後に、紙の報告書を写真で撮って、顧客の保守の記録に付ける。
+// ===========================================================================
+var MM_SECURITY = /eset|イーセット|ウイルス|ウィルス|セキュリティ|security|antivirus|anti-virus|norton|ノートン|trend ?micro|トレンドマイクロ|mcafee|マカフィー|kaspersky|カスペルスキー|avast|bitdefender|sophos|defender/i;
+function mmDevices(customerId) {
+  return S.D.devices.filter(function (d) { return d['顧客ID'] === customerId && d['状況'] !== '廃棄' && !d._pending; })
+    .sort(byDevStamp);      // 更新（機器を直した日時・収集ツールの受信日時の新しいほう）が新しい順（v0.36.0）
+}
+/** その機器の、今日の保守の記録（あれば） */
+function mmDoneRec(deviceId) {
+  var today = S.D.today;
+  return S.D.maintenances.filter(function (m) { return m['機器ID'] === deviceId && m['実施日'] === today; })[0] || null;
+}
+function mmAgo(stamp) {
+  if (!stamp) return '';
+  var d = daysUntil(String(stamp).slice(0, 10));
+  if (d === null || isNaN(d)) return '';
+  return d === 0 ? '今日' : d === -1 ? '昨日' : d < 0 ? (-d) + '日前' : '';
+}
+VIEWS.mmaint = function () {
+  var head = function (title, right) { return '<div class="head mmhead"><h1>' + title + '</h1>' + (right || '') + '</div>'; };
+  if (!S.ready) return head('保守') + notReadyHtml();
+  if (S.mm.cust && !IDX.cust[S.mm.cust]) { S.mm.cust = ''; S.mm.dev = ''; }
+  if (!S.mm.cust) {
+    return head('保守', '<span class="sub">顧客を選ぶ</span>') +
+      '<section class="panel"><div class="hpad">' +
+      '<input type="search" id="mmQ" data-mmq="1" autocomplete="off" placeholder="顧客名・ふりがなで探す" value="' + esc(S.mm.q) + '">' +
+      '<div id="mmCustList">' + mmCustListHtml() + '</div></div></section>';
+  }
+  var cname = custName(S.mm.cust);
+  if (S.mm.dev && IDX.dev[S.mm.dev]) return mmDeviceHtml(S.mm.dev, cname, head);
+  S.mm.dev = '';
+  var devs = mmDevices(S.mm.cust);
+  var todayCount = devs.filter(function (d) { return mmAgo((IDX.diag[d['機器ID']] || {})['受信日時']) === '今日'; }).length;
+  var doneCount = devs.filter(function (d) { return mmDoneRec(d['機器ID']); }).length;
+  var list = devs.length ? '<div class="hits" id="mmDevList">' + devs.map(function (d) {
+    var id = d['機器ID'], g = IDX.diag[id] || null, done = mmDoneRec(id);
+    var when = g ? mmAgo(g['受信日時']) : '';
+    var st = devStamp(d), fromTool = g && String(g['受信日時'] || '') >= String(d['更新日時'] || '');
+    var sub = [g ? g['コンピューター名'] : '', st ? '更新 ' + st.slice(0, 16) + (fromTool ? '（収集ツール）' : '') : '', g ? '' : '収集ツールの情報なし',
+      g && g['イベント重大'] !== '' ? '重大 ' + g['イベント重大'] : '', g && g['イベントエラー'] !== '' ? 'エラー ' + g['イベントエラー'] : ''].filter(function (x) { return x; }).join('・');
+    var ago = st ? daysUntil(st.slice(0, 10)) : null; when = st ? mmAgo(st) : '';      // 色・印も、並びと同じ「更新」で
+    var cls = [done ? 'mmdone' : '', ago === 0 ? 'fresh0' : ago !== null && ago < 0 && ago >= -7 ? 'fresh7' : ''].filter(function (x) { return x; }).join(' ');
+    return '<button type="button" data-act="mmDev" data-id="' + esc(id) + '"' + (cls ? ' class="' + cls + '"' : '') + '><b>' + (done ? '✓ ' : '') + esc(devLabel(id) || id) +
+      (when === '今日' ? ' ' + pill('今日', 'ok') : ago !== null && ago < 0 && ago >= -7 ? ' ' + pill(when, 'brand') : '') + (g && Number(g['イベント重大']) > 0 ? ' ' + pill('重大あり', 'danger') : '') + '</b><span>' + esc(sub) + '</span></button>';
+  }).join('') + '</div>' : '<p class="empty">この顧客には、使っている機器がありません。</p>';
+  return head('保守', '<button type="button" class="btn small" data-act="mmCust" data-id="">顧客を変える</button>') +
+    '<section class="panel"><h2>' + esc(cname) + '</h2><div class="hpad">' +
+      '<div class="mmsum" id="mmSum">PC ' + devs.length + '台・今日の受信 ' + todayCount + '台・完了 ' + doneCount + '台</div>' + list + '</div></section>' +
+    '<section class="panel"><h2>終わったら</h2><div class="hpad"><p class="note">紙の報告書を写真で撮って、この顧客の保守の記録に付けます。</p>' +
+      '<button type="button" class="btn primary" id="mmReport" data-act="mmReport">報告書を撮って終わる</button></div></section>';
+};
+function mmCustListHtml() {
+  var text = String(S.mm.q || '').trim();
+  var recent = recentCustIds();
+  var all = S.D.customers.filter(function (c) { return c['状態'] !== '無効' || recent.indexOf(c['顧客ID']) !== -1; });
+  var rows, month = String(S.D.today).slice(0, 7);
+  // 今月もう保守をした顧客は、ふだんの一覧には出さない（名前で探せば出る。v0.35.0）
+  var doneThisMonth = function (c) { return String(IDX.lastMaint[c['顧客ID']] || '').slice(0, 7) === month; };
+  var hiddenN = 0;
+  if (text) rows = all.filter(function (c) { return textMatch(text, [c['顧客名'], c['ふりがな'], c['顧客ID']]); });
+  else {
+    // 「最近選んだ顧客」は出さない（v0.36.0）。保守契約のある顧客を、ふりがな順に
+    var rest = all.filter(function (c) { return c['保守契約'] && c['保守契約'] !== 'なし'; })
+      .sort(function (a, b) { return cmp(a['ふりがな'] || a['顧客名'], b['ふりがな'] || b['顧客名']); });
+    rows = rest.filter(function (c) { if (doneThisMonth(c)) { hiddenN++; return false; } return true; });
+  }
+  var hiddenNote = hiddenN ? '<p class="note" id="mmHidden">今月の保守が済んだ ' + hiddenN + '社は出していません（名前で探すと出ます）。</p>' : '';
+  if (!rows.length) return hiddenNote + '<p class="note">' + (text ? '見つかりません。' : hiddenN ? '今月の保守は、全部済んでいます。' : '保守契約のある顧客がありません。名前で探してください。') + '</p>';
+  return hiddenNote + '<div class="hits"><div class="cap">' + (text ? '見つかった顧客 ' + rows.length + '件' : '保守契約のある顧客（今月まだのところ）') + '</div>' +
+    rows.slice(0, 40).map(function (c) {
+      var n = mmDevices(c['顧客ID']).length;
+      return '<button type="button" data-act="mmCust" data-id="' + esc(c['顧客ID']) + '"><b>' + esc(c['顧客名']) + '</b><span>' +
+        (doneThisMonth(c) ? pill('今月済み', 'ok') + ' ' : '') + esc(['PC ' + n + '台', c['保守契約'] && c['保守契約'] !== 'なし' ? c['保守契約'] : '', IDX.lastMaint[c['顧客ID']] ? '前回の保守 ' + IDX.lastMaint[c['顧客ID']] : ''].filter(function (x) { return x; }).join('・')) + '</span></button>';
+    }).join('') + '</div>';
+}
+/** 1台の確認の画面 */
+function mmDeviceHtml(id, cname, head) {
+  var d = IDX.dev[id], done = mmDoneRec(id);
+  var g = S.mm.diagFor === id ? S.mm.diag : undefined;      // undefined … 読み込み中、null … 届いていない
+  var row = function (label, value, warn) { return value === '' || value === undefined || value === null ? '' : '<dt>' + esc(label) + '</dt><dd>' + (warn ? pill(warn, 'warn') + ' ' : '') + esc(value) + '</dd>'; };
+  var lics = S.D.licenses.filter(function (l) { return l['顧客ID'] === d['顧客ID'] && !l._pending && MM_SECURITY.test(l['製品名'] || ''); });
+  var licHtml = lics.length ? lics.map(function (l) {
+    var mine = (IDX.alloc[l['ライセンスID']] || []).some(function (a) { return a['機器ID'] === id; });
+    return '<div>' + esc(l['製品名']) + (mine ? ' <span class="sub">（この機器に割当）</span>' : '') + '　期限 ' + expiryHtml(l['有効期限'], S.D.licenseWarnDays) + '</div>';
+  }).join('') : '<span class="note">ウイルス対策のライセンスは登録されていません。</span>';
+  var diagHtml;
+  if (g === undefined && S.mm.diagErr === id) diagHtml = '<p class="note" id="mmDiagWait">収集ツールの情報を読み込めませんでした。<button type="button" class="btn small" data-act="mmRetry" data-id="' + esc(id) + '">もう一度</button></p>';
+  else if (g === undefined) diagHtml = '<p class="note" id="mmDiagWait">収集ツールの情報を読み込んでいます…</p>';
+  else if (!g) diagHtml = '<p class="note">この機器には、収集ツールの情報がまだ届いていません。</p>';
+  else {
+    var crit = Number(g['イベント重大']) || 0, err = Number(g['イベントエラー']) || 0;
+    var long = function (label, text, open) {
+      return text ? '<details' + (open ? ' open' : '') + '><summary>' + esc(label) + '</summary><pre>' + esc(text) + '</pre></details>' : '';
+    };
+    diagHtml = '<dl class="kv" id="mmKv">' +
+      row('受信日時', g['受信日時'] + (mmAgo(g['受信日時']) ? '（' + mmAgo(g['受信日時']) + '）' : '')) +
+      row('ウイルス対策', g['ウイルス対策ソフト']) +
+      '<dt>ライセンスの期限</dt><dd>' + licHtml + '</dd>' +
+      row('Windows Update', g['Windows Update']) +
+      row('イベント重大', g['イベント重大'] === '' ? '' : g['イベント重大'] + '件', crit > 0 ? '要確認' : '') +
+      row('イベントエラー', g['イベントエラー'] === '' ? '' : g['イベントエラー'] + '件', err > 0 ? '確認' : '') +
+      row('ディスク関連', g['ディスク関連イベント']) +
+      row('バッテリー', g['バッテリー状態']) +
+      row('稼働時間', g['稼働時間']) +
+      row('クラッシュダンプ', g['クラッシュダンプ']) +
+      row('BitLocker', g['BitLocker']) +
+      row('前回メンテナンス', g['前回メンテナンス']) +
+      row('Cドライブ空き', g['Cドライブ空き'] === '' || g['Cドライブ空き'] === undefined ? '' : g['Cドライブ空き'] + 'GB') +
+      '</dl>' + (reportBtnHtml(g) ? '<div class="row">' + reportBtnHtml(g) + '</div>' : '') +
+      long('前回との比較', g['前回との比較'], true) +
+      long('スタートアップ', g['スタートアップ'], false) +
+      long('イベント重大の内容（' + (g['イベント重大'] === '' ? '—' : g['イベント重大']) + '件）', g['イベント重大（内容）'], crit > 0) +
+      long('イベントエラーの内容（' + (g['イベントエラー'] === '' ? '—' : g['イベントエラー']) + '件）', g['イベントエラー（内容）'], false) +
+      long('そのほか（OS・CPU・メモリ・ストレージ・プリンター）', ['コンピューター名', 'IPアドレス', 'OS', 'CPU', 'メモリ', 'ストレージ', 'プリンター情報', 'ツールバージョン']
+        .filter(function (k) { return g[k] !== '' && g[k] !== undefined; }).map(function (k) { return '■ ' + k + '\n' + g[k]; }).join('\n\n'), false);
+  }
+  var note = S.mm.notes[id] !== undefined ? S.mm.notes[id] : (done ? done['内容'] : '');
+  return head('保守', '<button type="button" class="btn small" data-act="mmList">← 一覧へ</button>') +
+    '<section class="panel"><h2>' + (done ? '✓ ' : '') + esc(devLabel(id) || id) + ' <span class="sub">' + esc(cname) + '</span></h2><div class="hpad mmcheck" id="mmDevBox">' +
+      '<div class="note">' + esc([d['種類'], d['設置場所'], d['シリアル'], id].filter(function (x) { return x; }).join('・')) + '</div>' +
+      diagHtml +
+      '<div class="mmnote"><label for="mmNote"><b>備考</b>（この台でやったこと・気づいたこと）</label>' +
+      '<textarea id="mmNote" data-mmnote="' + esc(id) + '" maxlength="5000" placeholder="例：Windows Update 適用、イベントエラーは既知のもの">' + esc(note) + '</textarea></div>' +
+      '<div class="mmbar"><button type="button" class="btn primary" id="mmDone" data-act="mmDone" data-id="' + esc(id) + '"' + (S.mm.saving[id] ? ' disabled' : '') + '>' + (S.mm.saving[id] ? '保存しています…' : done ? '備考を直す' : 'この台は完了') + '</button>' +
+      '<button type="button" class="btn" data-act="editRecord:device" data-id="' + esc(id) + '">機器を開く</button></div>' +
+      (done ? '<p class="note">' + (done._pending ? '今日の保守の記録を保存しています…' : '今日の保守の記録（' + esc(done['実施ID']) + '）があります。直すと、その記録の内容が変わります。') + '</p>' : '') +
+    '</div></section>';
+}
+/** 開いている機器の、収集ツールの情報を読む（読んである・読んでいる・失敗したときは何もしない。描くたびに呼ばれる） */
+function mmLoadDiag(id) {
+  if (!id || S.mm.diagFor === id || S.mm.loading === id || S.mm.diagErr === id) return;
+  S.mm.diagFor = ''; S.mm.diag = null; S.mm.loading = id;
+  call('getDeviceDiagnostics', { deviceId: id }, true).then(function (r) {
+    if (S.mm.loading === id) S.mm.loading = '';
+    if (S.mm.dev !== id) return;
+    S.mm.diagFor = id; S.mm.diag = r.diagnostics || null;
+    if (S.view === 'mmaint' && !$('modals').children.length) mmRedraw();
+  }).catch(function (e) {
+    if (S.mm.loading === id) S.mm.loading = '';
+    if (S.mm.dev !== id) return;
+    S.mm.diagErr = id;
+    if (S.view === 'mmaint' && !$('modals').children.length) mmRedraw();
+    failToast(e);
+  });
+}
+/** 打っている備考を消さないように、画面を作り直す */
+function mmRedraw() {
+  var t = $('mmNote');
+  if (t) S.mm.notes[t.dataset.mmnote] = t.value;
+  render();
+}
+function mmSummaryText() {
+  var devs = mmDevices(S.mm.cust);
+  var done = devs.filter(function (d) { return mmDoneRec(d['機器ID']); });
+  return 'PC ' + devs.length + '台のうち ' + done.length + '台を保守' + (done.length ? '（' + done.map(function (d) { return devLabel(d['機器ID']) || d['機器ID']; }).join('、') + '）' : '') + '\n報告書を写真で添付';
+}
+
+// ===========================================================================
+// 下書き（入力の途中の内容を、この端末に残す）
+//   まちがって閉じた・「戻る」を押した・ページが読み直された、のあとで、「続きから」入れられる。
+//   残すのは、記録の窓（対応・修理・保守・ライセンス・機器・メモなど）の項目だけ。認証情報と写真は残さない。
+//   3日たったもの・ほかのスタッフのもの・ログアウトしたときは消す。5件まで。
+// ===========================================================================
+var DRAFT_KEY = 'pcpkg_drafts', DRAFT_MAX = 5, DRAFT_HOURS = 72, DRAFT_DELAY = 400;
+var draftOpening = false, draftTimers = [];
+function draftable(form) { return form.dataset.form !== 'credential'; }
+function formSnapshot(form) {
+  var key = form.dataset.form;
+  if (!S.D || !S.D.schema[key]) return '';
+  var data = collectForm(form, key);
+  Object.keys(data).forEach(function (k) { if (Array.isArray(data[k])) data[k] = data[k].join(','); });
+  return JSON.stringify(data);
+}
+/** 開いたときから、中身が変わっているか（まだ送っていない写真があるときも） */
+function formDirty(form) {
+  if (!form || !form.isConnected || !S.D || !S.D.schema[form.dataset.form]) return false;
+  if (form._forceDirty || (form._photos && form._photos.length)) return true;
+  if (form.dataset.form === 'license' && licCredOf(form)) return true;
+  return form._initial !== undefined && formSnapshot(form) !== form._initial;
+}
+function draftsAll() {
+  if (!S.D) return [];
+  var box = null;
+  try { box = JSON.parse(keepGet(DRAFT_KEY) || 'null'); } catch (e) { box = null; }
+  if (!box || box.staff !== S.D.me.id || !Array.isArray(box.list)) return [];
+  var oldest = Date.now() - DRAFT_HOURS * 3600000;
+  return box.list.filter(function (d) {
+    return d && typeof d.did === 'string' && typeof d.key === 'string' && Object.prototype.hasOwnProperty.call(S.D.schema, d.key) && d.key !== 'credential' &&
+      typeof d.id === 'string' && d.data && typeof d.data === 'object' && Number(d.at) > oldest;
+  }).slice(0, DRAFT_MAX);
+}
+function draftsWrite(list) { keepSet(DRAFT_KEY, list.length && S.D ? JSON.stringify({ staff: S.D.me.id, list: list.slice(0, DRAFT_MAX) }) : ''); }
+/** 古いもの・ほかのスタッフのものを片づける（ログインした直後） */
+function draftsPurge() { if (keepGet(DRAFT_KEY)) draftsWrite(draftsAll()); }
+function draftById(did) { return draftsAll().filter(function (d) { return d.did === did; })[0] || null; }
+function draftDropId(did) { var all = draftsAll(), left = all.filter(function (d) { return d.did !== did; }); if (left.length !== all.length) draftsWrite(left); }
+function draftPut(form, sent) {
+  var key = form.dataset.form;
+  if (!S.D || !S.D.schema[key] || !draftable(form)) return;
+  if (!form._draftId) form._draftId = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  var data = JSON.parse(formSnapshot(form) || '{}');
+  S.D.schema[key].fields.forEach(function (f) { if (f.type === 'secret') delete data[f.name]; });
+  var id = form.dataset.id || '';
+  if (id) {
+    // いまある記録の編集は、変えた項目だけを残す（続きから開くときに、ほかの人が直した項目を古い値で戻さないため）
+    var first = {};
+    try { first = JSON.parse(form._initial || '{}'); } catch (e) { first = {}; }
+    var keep = form._draftFields || {};
+    Object.keys(data).forEach(function (k) { if (data[k] !== first[k]) keep[k] = true; });
+    form._draftFields = keep;
+    Object.keys(data).forEach(function (k) { if (!keep[k]) delete data[k]; });
+  }
+  var d = { did: form._draftId, key: key, id: id, lock: form.dataset.lock === '1', lockR: form.dataset.lockr === '1', base: form.dataset.base || '', data: data, at: Date.now() };
+  if (sent) d.sent = Date.now();
+  draftsWrite([d].concat(draftsAll().filter(function (x) { return x.did !== d.did; })));
+}
+/** 窓の中身と下書きを合わせる（変わっていれば残す。元に戻っていれば消す） */
+function draftSync(form) {
+  if (!form || !form.isConnected || !S.D || !S.D.schema[form.dataset.form] || !draftable(form)) return;
+  if (formDirty(form)) draftPut(form);
+  else if (form._draftId) draftDropId(form._draftId);
+}
+function draftLater(form) {
+  if (form._draftWait) return;
+  form._draftWait = true;
+  draftTimers.push(form);
+  setTimeout(function () { form._draftWait = false; draftTimers = draftTimers.filter(function (f) { return f !== form; }); draftSync(form); }, DRAFT_DELAY);
+}
+function draftFlush() { draftTimers.forEach(function (form) { try { draftSync(form); } catch (e) { /* 閉じる途中でも止めない */ } }); }
+function draftWhen(d) {
+  var t = new Date(d.at);
+  return (t.getMonth() + 1) + '/' + t.getDate() + ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes());
+}
+function draftLabel(d) {
+  var schema = S.D.schema[d.key];
+  var src = d.data;
+  if (d.id) {
+    // 編集の下書きは変えた項目しか持っていないので、名前はもとの記録から
+    var before = findRecord(d.key, d.id);
+    if (before) { src = {}; Object.keys(before).forEach(function (k) { src[k] = before[k]; }); Object.keys(d.data).forEach(function (k) { src[k] = d.data[k]; }); }
+  }
+  var who = src['顧客ID'] ? custName(src['顧客ID']) : '';
+  return schema.label + (d.id ? 'の編集' : '') + (who ? '（' + who + '）' : '') + ' ' + (recordTitle(d.key, src) || (d.id || ''));
+}
+/** 画面のいちばん上に出す「入力の途中のものがあります」。窓が開いていないときだけ */
+function draftBarHtml() {
+  // いま送っている最中のもの（返事待ち）は出さない
+  var list = draftsAll().filter(function (d) { return !S.sending[d.did]; });
+  if (!list.length) return '';
+  return '<div class="draftbar" id="draftBar"><div class="cap">入力の途中のものがあります</div>' + list.map(function (d) {
+    return '<div class="d"><span class="t">' + esc(draftLabel(d)) + '<small>' + esc(draftWhen(d)) + '</small>' +
+      (d.sent ? '<small class="sent">保存の途中で閉じられました。一覧に入っていないか、先に確かめてください。</small>' : '') + '</span>' +
+      '<button type="button" class="btn small primary" data-act="draftOpen" data-draft="' + esc(d.did) + '">続きから</button>' +
+      '<button type="button" class="btn small" data-act="draftDrop" data-draft="' + esc(d.did) + '">捨てる</button></div>';
+  }).join('') + '</div>';
+}
+/** 下書きを、窓に戻す */
+var draftWaiting = false;
+function openDraft(d) {
+  var schema = S.D.schema[d.key];
+  var token = S.token;
+  var run = function () {
+    draftWaiting = false;
+    if (!S.D || S.token !== token) return;
+    if ($('modals').children.length) return;          // 待っている間に、ほかの窓を開いていた（下書きは残っている）
+    var before = d.id ? findRecord(d.key, d.id) : null;
+    if (d.id && (!before || before._pending)) { toast('もとの記録が見つかりませんでした（消されたか、まだ読み込めていません）。下書きは残してあります。', true); render(); return; }
+    var data = {};
+    Object.keys(d.data).forEach(function (k) { data[k] = d.data[k]; });
+    var wrap;
+    draftOpening = true;
+    try {
+      if (before) {
+        // いまの記録に、下書きで変えていた項目だけを重ねる
+        var merged = {};
+        Object.keys(before).forEach(function (k) { merged[k] = before[k]; });
+        Object.keys(data).forEach(function (k) { merged[k] = data[k]; });
+        merged[schema.idField] = d.id;
+        wrap = openForm(d.key, merged, null);
+      } else {
+        delete data[schema.idField];
+        data.lockCustomer = !!d.lock;
+        data.lockRental = !!d.lockR;
+        wrap = openForm(d.key, null, data);
+      }
+    } finally { draftOpening = false; }
+    var form = wrap && wrap.querySelector('form');
+    if (!form) return;
+    form._draftId = d.did;
+    form._forceDirty = true;
+    if (before) {
+      form._draftFields = {};
+      Object.keys(d.data).forEach(function (k) { form._draftFields[k] = true; });
+      // 窓の「もと」は、いまの記録（下書きで変えた項目は、ここから変わっている扱いになる）
+      var first = {};
+      try { first = JSON.parse(form._initial || '{}'); } catch (e) { first = {}; }
+      Object.keys(d.data).forEach(function (k) { if (before[k] !== undefined) first[k] = Array.isArray(before[k]) ? before[k].join(',') : String(before[k]); });
+      form._initial = JSON.stringify(first);
+      if ((d.base || '') !== (before['更新日時'] || '')) {
+        form.querySelector('.body').insertAdjacentHTML('afterbegin', '<p class="draft-note" id="draftChanged">下書きを作ったあとに、この記録は更新されています。下書きで変えていた項目だけを重ねてあるので、保存する前に中身を確かめてください。</p>');
+      }
+    }
+    if (form.querySelector('details.rest')) form.querySelector('details.rest').open = true;
+  };
+  if (draftWaiting) return;
+  // いまある記録の続き・ほかの一覧から選ぶ欄がある種類は、残りのデータが要る（スマホでは、まだ読んでいないことがある）
+  var needRest = !S.ready && ((d.id && d.key !== 'device' && d.key !== 'customer') || d.key === 'loan' || d.key === 'repair');
+  if (needRest) { draftWaiting = true; ensureRest().then(run, run); } else run();
+}
+// ---- この端末で最近選んだ顧客（顧客を選ぶ欄で、先に出す。IDだけを覚える）
+var RECENT_CUST_KEY = 'pcpkg_recent_cust';
+function recentCustIds() {
+  try { var l = JSON.parse(keepGet(RECENT_CUST_KEY) || '[]'); return Array.isArray(l) ? l.filter(function (x) { return typeof x === 'string'; }).slice(0, 6) : []; } catch (e) { return []; }
+}
+function noteRecentCust(id) {
+  id = String(id || '');
+  if (!id) return;
+  keepSet(RECENT_CUST_KEY, JSON.stringify([id].concat(recentCustIds().filter(function (x) { return x !== id; })).slice(0, 6)));
+}
+
+// ===========================================================================
+// 「戻る」（スマホの戻るボタン・ブラウザの戻る）
+//   何もしないと、戻るを押したとたんにページを離れて、入力の途中の内容が消える。
+//   窓が開いている・最初の画面でないときは、履歴に1つ足しておき、戻るを「窓を閉じる／前の画面へ」に使う。
+//   入力の途中なら、閉じる前に確かめる（閉じても、下書きに残る）。
+// ===========================================================================
+var backArmed = false;
+var GAS_HISTORY = (window.google && google.script && google.script.history) || null;
+// ---- 読み直し用の券（v0.19.0）。ページのURLの # のあとに r=… で入れる（サーバーには送られない部分）
+//   画面の中の保存（sessionStorage）が使えないブラウザでも、読み直したときにログインを戻せるように。
+function parseTicket(h) { var m = /(?:^|[#&])r=([0-9a-f]{64})(?:&|$)/.exec(String(h || '')); return m ? m[1] : ''; }
+function ticketHash() {
+  if (!S.ticket) return '';
+  var l = S.D ? currentLoc() : null, h = 'r=' + S.ticket;
+  if (l) Object.keys(l).forEach(function (k) { if (l[k] !== '' && l[k] !== undefined && l[k] !== null) h += '&' + k + '=' + encodeURIComponent(String(l[k])); });
+  return h;
+}
+// ---- 読み直す前の画面に戻す（v0.29.0）：画面・顧客・タブ・ミーティングの週・開いていた記録・スクロールの位置
+var LOC_VIEWS = { mmaint: 1, customers: 1, devices: 1, activities: 1, repairs: 1, meeting: 1, licenses: 1, rentals: 1, notices: 1, settings: 1, audit: 1, customer: 1, home: 1 };
+function currentLoc() {
+  var l = { v: S.view };
+  if (S.view === 'customer') { l.c = S.customerId || ''; l.s = S.sub || ''; }
+  if (S.view === 'meeting' && S.mtg) l.w = S.mtg.off;
+  if (S.view === 'mmaint') { l.c = S.mm.cust || ''; l.s = S.mm.dev || ''; }      // 保守の画面：選んでいる顧客と機器（v0.35.0）
+  if (S.openRec) l.m = S.openRec;
+  var y = Math.round(window.scrollY || 0);
+  if (y > 0) l.y = y;
+  return l;
+}
+function parseLoc(h) {
+  var out = {};
+  String(h || '').replace(/^#/, '').split('&').forEach(function (kv) {
+    var i = kv.indexOf('='); if (i < 1) return;
+    var k = kv.slice(0, i), v = '';
+    try { v = decodeURIComponent(kv.slice(i + 1)); } catch (e) { return; }
+    if (/^(v|c|s|w|m|y)$/.test(k) && v.length <= 60) out[k] = v;
+  });
+  return Object.prototype.hasOwnProperty.call(LOC_VIEWS, out.v) ? out : null;
+}
+var locTimer = null, lastLocHash = '';
+/** 場所が変わったら、URLの # をすぐ書き換える（同じなら何もしない） */
+function saveLocSoon() {
+  if (!S.ticket || !S.D) return;
+  var h = ticketHash();
+  if (h === lastLocHash) return;
+  lastLocHash = h;
+  try { if (GAS_HISTORY && GAS_HISTORY.replace) { GAS_HISTORY.replace(null, {}, h); return; } } catch (e) { /* 下へ */ }
+  try { window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + '#' + h); } catch (e) { /* 書けない環境では戻せない */ }
+}
+// スクロールの位置は、止まってから書く
+window.addEventListener('scroll', function () { if (!S.D) return; clearTimeout(locTimer); locTimer = setTimeout(saveLocSoon, 300); }, { passive: true });
+/** 覚えていた場所へ戻す（ログインを戻した直後）。戻せなければ最初の画面 */
+function restoreLoc(l) {
+  if (!l || !S.D) return false;
+  var v = l.v;
+  var own = function (o, k) { return Object.prototype.hasOwnProperty.call(o, k); };
+  if (!own(LOC_VIEWS, v)) return false;
+  if (v === 'customer') { if (!l.c || !own(IDX.cust, l.c)) return false; }
+  else if (!own(VIEWS, v) && !(isPhone() && own(PHONE_VIEWS, v)) && v !== 'home') return false;
+  // 顧客の画面のタブは、その人に見えるタブだけ（管理者だけのタブに、URLから入れないように）
+  var SUBS = ['devices', 'activities', 'repairs', 'maint', 'licenses', 'credentials', 'memos', 'layout', 'files', 'report', 'year'];
+  if (S.D.me.isAdmin) SUBS.push('portal', 'receiver');
+  if (v === 'customer' && SUBS.indexOf(l.s) === -1) l.s = 'devices';
+  if (typeof navVisible === 'function' && NAV.some(function (n) { return n[0] === v; }) && !navVisible(v)) return false;
+  if (v === 'meeting') { var st = mtgState(); var w = parseInt(l.w, 10); st.off = isFinite(w) && w <= 0 && w > -60 ? w : -1; }
+  go(v, v === 'customer' ? { customerId: l.c, sub: l.s || 'devices' } : null);
+  if (v === 'mmaint' && l.c && own(IDX.cust, l.c)) {
+    S.mm.cust = l.c;
+    S.mm.dev = l.s && own(IDX.dev, l.s) && IDX.dev[l.s]['顧客ID'] === l.c ? l.s : '';
+    render();
+  }
+  var y = parseInt(l.y, 10);   // go() で消えるので、このあとで入れる
+  S.restoreY = isFinite(y) && y > 0 ? y : 0;
+  S.restoreRec = l.m && /^[a-z]{3,12}:[A-Za-z0-9_-]{1,30}$/.test(l.m) ? l.m : '';
+  afterRestore();
+  return true;
+}
+/** データがそろってから、スクロールの位置と、開いていた記録を戻す */
+function afterRestore() {
+  if (S.restoreY) { var y = S.restoreY; window.scrollTo(0, y); if (S.ready || document.documentElement.scrollHeight - window.innerHeight >= y) { if (S.ready) S.restoreY = 0; } }
+  if (S.restoreRec && S.ready) {
+    var p = S.restoreRec.split(':'); S.restoreRec = '';
+    var rec = Object.prototype.hasOwnProperty.call(S.D.schema, p[0]) ? findRecord(p[0], p[1]) : null;
+    if (rec && !rec._pending) openForm(p[0], rec, null);
+  }
+}
+function urlTicketRead(cb) {
+  var done = false, once = function (t) { if (!done) { done = true; cb(t || ''); } };
+  try {
+    var gurl = window.google && google.script && google.script.url;
+    if (gurl && gurl.getLocation) { gurl.getLocation(function (loc) { S.restoreLoc = parseLoc(loc && loc.hash); once(parseTicket(loc && loc.hash)); }); setTimeout(function () { once(''); }, 3000); return; }
+  } catch (e) { /* 下へ */ }
+  S.restoreLoc = parseLoc(window.location.hash);
+  once(parseTicket(window.location.hash));
+}
+function urlTicketWrite(t) {
+  if ((S.ticket || '') === (t || '')) return;
+  S.ticket = t || '';
+  lastLocHash = ticketHash();
+  try {
+    if (GAS_HISTORY && GAS_HISTORY.replace) { GAS_HISTORY.replace(null, {}, lastLocHash); return; }
+  } catch (e) { /* 下へ */ }
+  try { window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search + (S.ticket ? '#' + ticketHash() : '')); } catch (e) { /* URLを変えられない環境では、読み直すとログインし直し */ }
+}
+/** 開いているあいだは、20分ごとに券を新しくする（券は30分で切れるので。URLが漏れても使える時間を短くする） */
+var TICKET_RENEW_MS = 20 * 60 * 1000, ticketAt = 0;
+function renewTicketSoon() {
+  if (!S.D || !S.token || Date.now() - ticketAt < TICKET_RENEW_MS) return;
+  ticketAt = Date.now();
+  var token = S.token;
+  call('renewResume', { ticket: S.ticket || '' }, true).then(function (r) {
+    if (S.D && S.token === token && r.resume) urlTicketWrite(r.resume);
+  }).catch(function () { ticketAt = 0; });
+}
+setInterval(renewTicketSoon, 60 * 1000);
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') renewTicketSoon(); });
+/** 券でログインを戻す。だめなら、覚えてある合言葉か、ログイン画面へ */
+var resumeBusy = false;
+function resumeFromTicket(ticket, failMsg) {
+  resumeBusy = true;
+  if (S.D && !S.restoreLoc) { S.restoreLoc = currentLoc(); delete S.restoreLoc.m; }     // 使っている途中なら、いまの場所に戻す（開いている窓は、そのまま残す）
+  S.timing = { t0: Date.now() };
+  showSplash('ログインを戻しています…');
+  S.ticket = ticket;
+  $('loginBtn').disabled = true;
+  call('resumeSession', { ticket: ticket, withRest: !isPhone() }, true).then(function (r) {
+    resumeBusy = false; S.ticketTried = false;
+    $('loginBtn').disabled = false;
+    afterLogin(r);
+  }).catch(function () {
+    resumeBusy = false;
+    $('loginBtn').disabled = false;
+    urlTicketWrite('');
+    $('loginMsg').hidden = true;
+    if (!autoLogin()) { toLogin(failMsg || ''); ($('loginId').value ? $('loginPw') : $('loginId')).focus(); }
+  });
+}
+function needsBack() { return !!S.D && ($('modals').children.length > 0 || S.view !== rootView()); }
+function armBack() {
+  if (backArmed || !needsBack()) return;
+  try {
+    if (GAS_HISTORY) GAS_HISTORY.push({ pc: 1 }, {}, ticketHash()); else window.history.pushState({ pc: 1 }, '');
+    backArmed = true;
+  } catch (e) { /* 履歴を使えない環境では、下書きだけが頼り */ }
+}
+function onBack() {
+  backArmed = false;
+  if (!S.D) return;
+  var all = $('modals').children, top = all[all.length - 1];
+  if (top) {
+    var no = top.querySelector('[data-answer="no"]');
+    var form = top.querySelector('form[data-form]');
+    if (no) no.click();                                     // 確かめの窓は「やめる」と同じ
+    else if (form && S.D.schema[form.dataset.form] && formDirty(form)) {
+      armBack();
+      confirmDialog('入力の途中です', draftable(form) ? '閉じますか？\n入力した内容は下書きに残るので、あとで「続きから」入れられます。' : '閉じますか？\n閉じると、入力した内容は消えます（認証情報は、下書きに残しません）。',
+        '閉じる', false, '入力に戻る').then(function (yes) {
+        if (yes && form.isConnected) closeModal(form);
+        armBack();
+      });
+      return;
+    } else closeModal(top);
+  } else if (S.view === 'customer' || S.view === 'devices') go('customers');
+  else if (S.view === 'mmaint' && S.mm.dev) { ACT.mmList(); return; }
+  else if (S.view === 'mmaint' && S.mm.cust) { S.mm.cust = ''; render(); }
+  else if (S.view !== rootView()) go(rootView());
+  else {
+    // 戻るものが無いのに履歴だけ残っていた（窓をボタンで閉じたあとなど）。そのまま、もう1つ戻る
+    try { window.history.back(); } catch (e) { /* そのまま */ }
+    return;
+  }
+  armBack();
+}
+if (GAS_HISTORY && GAS_HISTORY.setChangeHandler) GAS_HISTORY.setChangeHandler(function () { onBack(); });
+else window.addEventListener('popstate', onBack);
+
+VIEWS.customers = function () {
+  if (isPhone()) return PHONE_VIEWS.customers();
+  var D = S.D, ready = S.ready;
+  var tile = function (n, label, act, attn, extra) {
+    return '<button type="button" class="tile' + (attn && n ? ' attn' : '') + '" data-act="' + act + '"><b>' + n + '</b><span>' + label + '</span>' + (extra || '') + '</button>';
+  };
+  var wait = '…';
+  var urgentN = ready ? pcAlerts().filter(function (a) { return a.level === 'danger'; }).length : 0;
+  var regular = D.customers.filter(function (c) { return c['状態'] === '有効' && c['保守契約'] === D.maintKindRegular; });
+  var month = D.today.slice(0, 7), maintDone = {};
+  D.maintenances.forEach(function (m) { if (String(m['実施日']).slice(0, 7) === month) maintDone[m['顧客ID']] = 1; });
+  var maintLeft = regular.filter(function (c) { return !maintDone[c['顧客ID']]; }).length;
+  var live = D.customers.filter(function (c) { return c['状態'] === '有効'; });
+  // 数字のタイルは、いちばん上（見出しのすぐ下）
+  var tilesHtml = '<div class="tiles">' +
+      tile(live.length, '有効な顧客', 'tileCustomers') +
+      tile(D.devices.filter(function (d) { return d['状況'] === '使用中'; }).length, '使用中の機器', 'tileDevices') +
+      tile(!ready ? wait : regular.length ? maintLeft : '—', '今月の定期保守　まだ', 'tileMaint', false, !ready ? '' : regular.length ? '<span class="tsub">' + (regular.length - maintLeft) + ' / ' + regular.length + '社 済み</span>' : '<span class="tsub">定期保守の顧客なし</span>') +
+      tile(ready ? pcAlerts().length : wait, '要対応', 'tileAlerts', ready && urgentN > 0, ready ? '<span class="tsub' + (urgentN ? ' hot' : '') + '">' + (urgentN ? 'うち急ぎ ' + urgentN + '件' : '急ぎはなし') + '</span>' : '') +
+    '</div>';
+  return '<div class="head"><h1>PC管理</h1><span class="sub">' + esc(D.today) + ' 時点</span></div>' +
+    tilesHtml +
+    winInfoPanelHtml() +
+    '<div class="toolbar"><input type="search" id="q_home_find" data-q="home.find" placeholder="シリアル・PC名・利用者・機種・顧客名で、全社の機器を探す（ひらがな可）" value="' + esc(q('home.find')) + '" aria-label="全社の機器を探す">' +
+      '<button type="button" class="btn" data-act="nav" data-view="devices">機器の一覧</button></div>' +
+    '<div id="found">' + foundHtml() + '</div>' +
+    '<section class="panel" id="custPanel"><h2><span class="grow">顧客</span><button type="button" class="btn small primary" data-act="newRecord" data-key="customer">＋ 顧客を追加</button></h2>' +
+      '<div class="pad filters">' +
+        '<div class="toolbar">' +
+          '<input type="search" id="q_cust_text" data-q="cust.text" placeholder="顧客の名前・住所で探す（ひらがな可）" value="' + esc(q('cust.text')) + '" aria-label="顧客を探す">' +
+          '<select id="q_cust_state" data-q="cust.state" aria-label="状態">' + optionsHtml([['有効', '有効な顧客'], ['停止', '停止した顧客'], ['all', 'すべて']], q('cust.state', '有効')) + '</select>' +
+        '</div>' +
+        '<div id="custChips">' + custChipsHtml() + '</div>' +
+      '</div>' +
+      '<div id="list">' + LISTS.customers() + '</div></section>' +
+    (ready ? '<div class="cols">' + alertsHtml('') + regularMaintHtml() + memosPanelHtml() + warrantyPanelHtml() + '</div>'
+      : '<section class="panel" id="homeWait"><h2>要対応・定期保守・社内メモ</h2>' + notReadyHtml() + '</section>') +
+    timingHtml();
+};
+/** 顧客が、いまの絞り込みに当てはまるか。skip に渡した条件（'contract' か 'region'）は見ない */
+function custMatch(c, skip) {
+  var state = q('cust.state', '有効'), contract = q('cust.contract'), region = q('cust.region');
+  if (state !== 'all' && c['状態'] !== state) return false;
+  if (skip !== 'contract' && contract && (c['保守契約'] || '（未設定）') !== contract) return false;
+  if (skip !== 'region' && region && (c['地域'] || '（未設定）') !== region) return false;
+  return textMatch(q('cust.text'), [c['顧客名'], c['ふりがな'], c['住所'], c['先方担当者'], c['顧客ID']]);
+}
+/**
+ * 契約・地域のチップ。件数は、ほかの絞り込みを掛けたあとの数にする
+ * （「定期保守」を選ぶと、地域の件数は定期保守の顧客だけの数になる。逆も同じ）。
+ */
+function custChipsHtml() {
+  var D = S.D;
+  var row = function (qName, field, skip, order) {
+    var scope = D.customers.filter(function (c) { return custMatch(c, skip); });
+    var counts = {};
+    scope.forEach(function (c) { var k = c[field] || '（未設定）'; counts[k] = (counts[k] || 0) + 1; });
+    var cur = q(qName);
+    // 出すのは、1件でもある値と、いま選んでいる値（0件になっても、外せるように残す）
+    var keys = order.concat(Object.keys(counts).filter(function (k) { return order.indexOf(k) === -1; }).sort())
+      .filter(function (k) { return counts[k] || k === cur; });
+    if (cur && keys.indexOf(cur) === -1) keys.push(cur);
+    return '<div class="chipset small"><button type="button" data-act="qChip" data-q="' + qName + '" data-v="" aria-pressed="' + (!cur) + '">すべて ' + scope.length + '</button>' +
+      keys.map(function (k) { return '<button type="button" data-act="qChip" data-q="' + qName + '" data-v="' + esc(k) + '" aria-pressed="' + (cur === k) + '">' + esc(k) + ' ' + (counts[k] || 0) + '</button>'; }).join('') + '</div>';
+  };
+  // 地域の行は、地域が2つ以上あるときだけ出す（状態で絞った範囲で数える）
+  var state = q('cust.state', '有効'), regionsAll = {};
+  D.customers.forEach(function (c) { if (state === 'all' || c['状態'] === state) regionsAll[c['地域'] || '（未設定）'] = true; });
+  // 地域は、選択肢に並べた順（選択肢に無い値・未設定は、そのあと）
+  var regionOrder = (D.options['地域'] || []).map(function (o) { return o.value; });
+  var filtering = q('cust.contract') || q('cust.region') || q('cust.text') || q('cust.state', '有効') !== '有効';
+  return '<div class="frow"><span class="flabel">契約</span>' + row('cust.contract', '保守契約', 'contract', ['定期保守', 'スポット保守', 'なし']) + '</div>' +
+    (Object.keys(regionsAll).length > 1 || q('cust.region') ? '<div class="frow"><span class="flabel">地域</span>' + row('cust.region', '地域', 'region', regionOrder) + '</div>' : '') +
+    (filtering ? '<div><button type="button" class="btn small" data-act="custClear">絞り込みを外す</button></div>' : '');
+}
+
+function sortedMemos(list) {
+  return list.slice().sort(function (a, b) {
+    return (a['ピン留め'] === b['ピン留め'] ? 0 : a['ピン留め'] === 'はい' ? -1 : 1) || cmp(b['更新日時'] + b['メモID'], a['更新日時'] + a['メモID']);
+  });
+}
+function memosPanelHtml() {
+  var list = sortedMemos(S.D.memos).slice(0, 6);
+  return '<section class="panel" id="memoPanel"><h2><span class="grow">社内メモ</span><button type="button" class="btn small" data-act="newRecord" data-key="memo">＋ メモを書く</button></h2>' +
+    tableHtml('dashMemos', [COL.memoBody, COL.memoCustomer, COL.memoBy], list, { act: 'editRecord:memo', id: function (m) { return m['メモID']; }, empty: 'メモはまだありません。お客様には見えない、スタッフどうしの連絡に使えます。' }) +
+    (S.D.memos.length > list.length ? '<p class="more">ピン留めと新しいものから6件。ほかは顧客の画面の「メモ」で見られます。</p>' : '') + '</section>';
+}
+/** 今月の定期保守：定期保守の契約がある顧客のうち、今月「定期保守」を記録したところ */
+function regularMaintHtml() {
+  var D = S.D, month = D.today.slice(0, 7);
+  var targets = D.customers.filter(function (c) { return c['状態'] === '有効' && c['保守契約'] === D.maintKindRegular; })
+    .sort(function (a, b) { return cmp(a['ふりがな'] || a['顧客名'], b['ふりがな'] || b['顧客名']); });
+  if (!targets.length) return '';
+  var done = {};
+  D.maintenances.forEach(function (m) { if (String(m['実施日']).slice(0, 7) === month) done[m['顧客ID']] = m['実施日']; });      // 今月に保守の記録があれば済み（種別は問わない。v0.38.0）
+  var n = targets.filter(function (c) { return done[c['顧客ID']]; }).length;
+  return '<section class="panel" id="maintPanel"><h2><span class="grow">今月の定期保守　' + n + ' / ' + targets.length + ' 社</span>' + (n === targets.length ? pill('今月は全社おわり', 'ok') : '') + '</h2>' +
+    tableHtml('dashMaint', [
+      { label: '顧客', cls: 'cname', html: function (c) { return esc(c['顧客名']); } },
+      { label: '今月', cls: 'nowrap', html: function (c) { return done[c['顧客ID']] ? pill('実施 ' + done[c['顧客ID']].slice(5), 'ok') : pill('まだ', 'warn'); } },
+      { label: '前回', cls: 'nowrap', ml: '前回', html: function (c) { return IDX.lastMaint[c['顧客ID']] ? esc(IDX.lastMaint[c['顧客ID']]) : DASH; } },
+      { label: '', cls: 'nowrap', html: function (c) { return done[c['顧客ID']] ? '' : '<button type="button" class="btn small" data-act="recordMaint" data-id="' + esc(c['顧客ID']) + '">実施を記録</button>'; } }
+    ], targets, { act: 'openCustomerMaint', id: function (c) { return c['顧客ID']; } }) + '</section>';
+}
+
+// ---- 顧客の一覧（PC管理の下半分） ----
+LISTS.customers = function () {
+  var rows = S.D.customers.filter(function (c) { return custMatch(c); });
+  if (!S.sort.customers) rows.sort(function (a, b) { return cmp(a['ふりがな'] || a['顧客名'], b['ふりがな'] || b['顧客名']); });
+  // 赤は「急ぎ（ディスク異常・期限切れなど）」があるときだけ。件数だけのものは落ち着いた色（v0.23.0）
+  var urgent = {};
+  pcAlerts().forEach(function (a) { if (a.level === 'danger') urgent[a.customerId] = (urgent[a.customerId] || 0) + 1; });
+  var hasRegion = S.D.customers.some(function (c) { return c['地域']; });
+  return tableHtml('customers', [
+    { label: '顧客名', html: function (c) { return esc(c['顧客名']) + (c['ふりがな'] ? '<span class="minor">' + esc(c['ふりがな']) + '</span>' : ''); }, key: function (c) { return c['ふりがな'] || c['顧客名']; }, cls: 'cname' },
+    { label: '保守契約', html: function (c) { return contractPill(c['保守契約']) + (c['状態'] === '停止' ? ' ' + pill('停止') : ''); }, key: function (c) { return c['保守契約']; }, cls: 'nowrap' },
+    { label: '機器', html: function (c) { return IDX.devCount[c['顧客ID']] || 0; }, key: function (c) { return IDX.devCount[c['顧客ID']] || 0; }, cls: 'num', ml: '機器' },
+    { label: '要対応', html: function (c) { if (!S.ready) return '<span class="sub">…</span>'; var n = IDX.alertCount[c['顧客ID']] || 0; var u = urgent[c['顧客ID']] || 0; return n ? pill(n + '件', u ? 'danger' : 'warn') + (u ? '<span class="minor">急ぎ ' + u + '</span>' : '') : '<span class="sub">0</span>'; }, key: function (c) { return (urgent[c['顧客ID']] || 0) * 1000 + (IDX.alertCount[c['顧客ID']] || 0); }, cls: 'num', ml: '要対応' },
+    hasRegion && { label: '地域', html: function (c) { return esc(c['地域']); }, key: function (c) { return c['地域']; }, cls: 'nowrap' },
+    { label: '電話', html: function (c) { return esc(c['電話']); }, cls: 'nowrap' }
+  ].filter(Boolean), rows, { act: 'openCustomer', id: function (c) { return c['顧客ID']; }, empty: S.D.customers.length ? '条件に合う顧客がいません。' : 'まだ顧客がいません。「＋ 顧客を追加」から登録してください。' });
+};
+
+// ---- 顧客の詳細 ----
+VIEWS.customer = function () {
+  var c = IDX.cust[S.customerId];
+  if (!c) return '<p class="empty">この顧客は見つかりません。</p>';
+  var id = c['顧客ID'];
+  var mine = function (r) { return r['顧客ID'] === id; };
+  var devs = S.D.devices.filter(mine), acts = (S.custActs[id] || S.D.activities.filter(mine)), reps = S.D.repairs.filter(mine), lics = S.D.licenses.filter(mine);
+  var mnts = S.D.maintenances.filter(mine).sort(function (a, b) { return cmp(b['実施日'] + b['実施ID'], a['実施日'] + a['実施ID']); });
+  var memos = sortedMemos(S.D.memos.filter(mine));
+  var tabs = [['devices', '機器 ' + devs.length], ['activities', '対応履歴 ' + acts.length], ['repairs', '修理 ' + reps.length], ['maint', '保守 ' + mnts.length],
+    ['licenses', 'ライセンス ' + lics.length], ['credentials', '認証情報'], ['memos', 'メモ ' + memos.length], ['layout', 'レイアウト'], ['files', '添付'], ['report', 'レポート'], ['year', '1年の振り返り']];
+  if (S.D.me.isAdmin) { tabs.push(['portal', 'お客様ページ']); tabs.push(['receiver', '収集ツール']); }
+  var fact = function (label, value) { return value ? '<div><dt>' + label + '</dt><dd>' + esc(value) + '</dd></div>' : ''; };
+  var addBtn = function (key, label) { return '<button type="button" class="btn small primary" data-act="newRecord" data-key="' + key + '">＋ ' + label + '</button>'; };
+  var body = '';
+  if (S.sub === 'devices') {
+    body = '<h2><span class="grow">機器</span>' + addBtn('device', '機器を追加') + '</h2>' +
+      tableHtml('cDevs', [COL.devUser, COL.devModel, COL.devKind, COL.devSerial, COL.devPlace, COL.devWarranty, COL.devUpd, COL.devState], devs.slice().sort(byDevStamp), { act: 'editRecord:device', id: function (d) { return d['機器ID']; }, empty: '機器はまだ登録されていません。' });
+  } else if (S.sub === 'activities') {
+    body = '<h2><span class="grow">対応履歴</span>' + addBtn('activity', '対応を記録') + '</h2>' +
+      tableHtml('cActs', [COL.actDate, COL.actKind, COL.actBody, COL.actStatus, COL.actStaff], acts, { act: 'editRecord:activity', id: function (a) { return a['対応ID']; }, empty: '対応履歴はまだありません。' });
+  } else if (S.sub === 'repairs') {
+    body = '<h2><span class="grow">修理</span>' + addBtn('repair', '修理を受け付け') + '</h2>' +
+      tableHtml('cReps', [COL.repDate, COL.repTitle, COL.repKind, COL.repItems, COL.repStatus, COL.repDone], reps, { act: 'editRecord:repair', id: function (r) { return r['修理ID']; }, empty: '修理はまだありません。' });
+  } else if (S.sub === 'licenses') {
+    body = '<h2><span class="grow">ライセンス</span>' + addBtn('license', 'ライセンスを追加') + '</h2>' +
+      tableHtml('cLics', [COL.licName, COL.licUse, COL.licExpiry, COL.licAct], lics, { act: 'editRecord:license', id: function (l) { return l['ライセンスID']; }, empty: 'ライセンスはまだ登録されていません。' });
+  } else if (S.sub === 'credentials') {
+    body = '<h2><span class="grow">認証情報</span>' + addBtn('credential', '認証情報を追加') + '</h2><div id="credList">' + credentialsHtml() + '</div>';
+  } else if (S.sub === 'maint') {
+    body = '<h2><span class="grow">保守の実施</span>' + addBtn('maintenance', '保守を記録') + '</h2>' +
+      tableHtml('cMaint', [COL.mntDate, COL.mntKind, COL.mntBody, COL.mntStaff], mnts, { act: 'editRecord:maintenance', id: function (m) { return m['実施ID']; }, empty: '保守の記録はまだありません。' });
+  } else if (S.sub === 'memos') {
+    body = '<h2><span class="grow">社内メモ</span>' + addBtn('memo', 'メモを書く') + '</h2>' +
+      tableHtml('cMemos', [COL.memoBody, COL.memoBy], memos, { act: 'editRecord:memo', id: function (m) { return m['メモID']; }, empty: 'この顧客のメモはまだありません。お客様には見えません。' });
+  } else if (S.sub === 'layout') {
+    body = '<h2>レイアウト図</h2><div id="layoutBox">' + layoutBoxHtml() + '</div>';
+  } else if (S.sub === 'files') {
+    body = '<h2>添付</h2><div id="filesBox">' + filesBoxHtml() + '</div>';
+  } else if (S.sub === 'report') {
+    body = '<h2>月次レポート</h2><div id="reportBox">' + reportBoxHtml() + '</div>';
+  } else if (S.sub === 'year') {
+    body = '<h2><span class="grow">1年の振り返り</span><button type="button" class="btn small" data-act="printYear">印刷・PDFにする</button></h2><div class="pad" id="yearBox">' + yearHtml(c, acts, reps, mnts) + '</div>';
+  } else if (S.sub === 'portal') {
+    body = '<h2>お客様ページ</h2><div class="pad" id="portalBox">' + portalHtml(c) + '</div>';
+  } else if (S.sub === 'receiver') {
+    body = '<h2>収集ツール（PCInfoTool）</h2><div class="pad" id="receiverBox">' + receiverHtml(c) + '</div>';
+  }
+  if (!S.ready && S.sub !== 'devices' && S.sub !== 'portal' && S.sub !== 'receiver') body = '<h2>読み込み中</h2>' + notReadyHtml();
+  return '<div><button type="button" class="link" data-act="nav" data-view="customers">← 顧客の一覧</button></div>' +
+    '<div class="head"><h1>' + esc(c['顧客名']) + '</h1>' + contractPill(c['保守契約']) + (c['状態'] === '停止' ? pill('停止') : '') +
+      '<button type="button" class="btn" data-act="printCustomer">印刷・PDFにする</button>' +
+      '<button type="button" class="btn" data-act="editRecord:customer" data-id="' + esc(id) + '">顧客の情報を編集</button></div>' +
+    '<section class="panel"><div class="pad"><dl class="facts">' +
+      fact('ふりがな', c['ふりがな']) + fact('住所', [c['郵便番号'] ? '〒' + c['郵便番号'] : '', c['住所']].filter(function (x) { return x; }).join(' ')) +
+      fact('電話', c['電話']) + fact('メール', c['メール']) + fact('先方担当者', c['先方担当者']) + fact('地域', c['地域']) + fact('備考', c['備考']) +
+      fact('最後の保守', IDX.lastMaint[id]) +
+      '<div><dt>顧客ID</dt><dd>' + esc(id) + '</dd></div>' +
+    '</dl></div></section>' +
+    alertsHtml(id) +
+    '<div class="tabs" role="tablist">' + tabs.map(function (t) {
+      return '<button type="button" role="tab" data-act="sub" data-sub="' + t[0] + '" aria-selected="' + (S.sub === t[0]) + '">' + esc(t[1]) + '</button>';
+    }).join('') + '</div>' +
+    '<section class="panel">' + body + '</section>';
+};
+
+// 顧客ごとの1年の振り返り（v0.22.0）。今月を含む12か月の、対応・修理・保守の回数を月ごとに
+function yearMonths() {
+  var t = S.D.today, y = +t.slice(0, 4), m = +t.slice(5, 7), out = [];
+  for (var i = 11; i >= 0; i--) { var mm = m - i, yy = y; while (mm < 1) { mm += 12; yy--; } out.push(yy + '-' + (mm < 10 ? '0' : '') + mm); }
+  return out;
+}
+function yearHtml(c, acts, reps, mnts) {
+  var months = yearMonths();
+  var cnt = function (list, field) {
+    var o = {}; list.forEach(function (r) { var k = String(r[field] || '').slice(0, 7); o[k] = (o[k] || 0) + 1; });
+    return months.map(function (k) { return o[k] || 0; });
+  };
+  var rows = [['対応', cnt(acts, '受付日'), 'ya'], ['修理', cnt(reps, '受付日'), 'yr'], ['保守', cnt(mnts, '実施日'), 'ym']];
+  var mx = 1; rows.forEach(function (r) { r[1].forEach(function (v) { if (v > mx) mx = v; }); });
+  var sum = function (a) { return a.reduce(function (x, y) { return x + y; }, 0); };
+  var devs = S.D.devices.filter(function (d) { return d['顧客ID'] === c['顧客ID'] && d['状況'] === '使用中'; }).length;
+  var maintMonths = rows[2][1].filter(function (v) { return v > 0; }).length;
+  var head = '<p class="ynote">' + esc(months[0].replace('-', '年') + '月〜' + months[11].replace('-', '年') + '月') + '　使用中の機器 ' + devs + '台　保守を実施した月 ' + maintMonths + '/12か月' +
+    (S.D.activityTotal > S.D.activities.length && !S.custActs[c['顧客ID']] ? '　<span class="note">（対応履歴をすべて読み込み中…）</span>' : '') + '</p>';
+  var tiles = '<div class="ytiles">' + rows.map(function (r) {
+    return '<div class="ytile ' + r[2] + '"><span>' + r[0] + '</span><b>' + sum(r[1]) + '<small>回</small></b>' + sparkSvg(r[1], r[0] + '（12か月）') + '</div>';
+  }).join('') + '</div>';
+  var table = '<div class="tablewrap"><table class="ytbl"><thead><tr><th></th>' + months.map(function (k) { return '<th>' + (+k.slice(5)) + '月' + (k.slice(5) === '01' || k === months[0] ? '<small>' + k.slice(0, 4) + '</small>' : '') + '</th>'; }).join('') + '<th>合計</th></tr></thead><tbody>' +
+    rows.map(function (r) {
+      return '<tr class="' + r[2] + '"><th>' + r[0] + '</th>' + r[1].map(function (v) {
+        return '<td><i style="height:' + Math.round(v / mx * 36) + 'px"></i><span>' + (v || '·') + '</span></td>';
+      }).join('') + '<td class="ysum">' + sum(r[1]) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  // 内容の内訳（対応の種別・修理の内容）
+  var kinds = function (list, f) { var o = {}; list.forEach(function (r) { var k = r[f] || '（未設定）'; o[k] = (o[k] || 0) + 1; }); return Object.keys(o).sort(function (a, b) { return o[b] - o[a]; }).map(function (k) { return '<span class="mchip">' + esc(k) + ' ' + o[k] + '</span>'; }).join(''); };
+  var inYear = function (list, f) { return list.filter(function (r) { var k = String(r[f] || '').slice(0, 7); return k >= months[0] && k <= months[11]; }); };
+  var ya = inYear(acts, '受付日'), yr = inYear(reps, '受付日');
+  var detail = '<div class="ydetail"><div><h3>対応の種別</h3>' + (ya.length ? kinds(ya, '対応種別') : '<span class="note">なし</span>') + '</div>' +
+    '<div><h3>修理の種別</h3>' + (yr.length ? kinds(yr, '種別') : '<span class="note">なし</span>') + '</div></div>';
+  return head + tiles + table + detail;
+}
+
+function loadCustomerActivities() {
+  var id = S.customerId;
+  if (S.D.activityTotal <= S.D.activities.length || S.custActs[id]) return;
+  call('listActivities', { customerId: id }).then(function (r) {
+    S.custActs[id] = r.activities;
+    if (S.view === 'customer' && S.customerId === id) render();
+  }).catch(failToast);
+}
+
+// 認証情報
+function loadCredentials() {
+  var id = S.customerId;
+  if (S.creds && S.creds.customerId === id) return;
+  S.creds = null;
+  call('listCredentials', { customerId: id }).then(function (r) {
+    S.creds = { customerId: id, list: r.credentials, canReveal: r.canReveal, shown: {} };
+    // 管理者には、パスワードとシリアルキーが最初から届く（v0.20.0）。そのまま見えるようにする
+    if (r.withSecrets) r.credentials.forEach(function (c) {
+      if (c['パスワード'] !== undefined) S.creds.shown[c['認証ID']] = { password: c['パスワード'], serialKey: c['シリアルキー'] };
+      delete c['パスワード']; delete c['シリアルキー'];
+    });
+    var el = $('credList');
+    if (el && S.customerId === id) el.innerHTML = credentialsHtml();
+  }).catch(failToast);
+}
+function credentialsHtml() {
+  var cr = S.creds;
+  if (!cr || cr.customerId !== S.customerId) return '<p class="empty">読み込んでいます…</p>';
+  var secretCell = function (c, field, has) {
+    if (!has) return DASH;
+    var shown = cr.shown[c['認証ID']];
+    if (shown) {
+      var value = field === 'パスワード' ? shown.password : shown.serialKey;
+      return '<span class="secret">' + esc(value) + '</span> <button type="button" class="btn small" data-act="copyCred" data-id="' + esc(c['認証ID']) + '" data-field="' + field + '">コピー</button>';
+    }
+    return '<span class="secret">••••••••</span>';
+  };
+  return tableHtml('cCreds', [
+    { label: '名称', html: function (c) { return esc(c['名称']) + (c['備考'] ? '<span class="minor">' + esc(c['備考']) + '</span>' : ''); }, key: function (c) { return c['名称']; } },
+    { label: '対象', html: function (c) {
+      if (c['対象区分'] === '機器') return esc(devLabel(c['対象ID'])) + '<span class="minor">機器</span>';
+      if (c['対象区分'] === 'ライセンス') return esc((IDX.lic[c['対象ID']] || {})['製品名'] || c['対象ID']) + '<span class="minor">ライセンス</span>';
+      return DASH;
+    } },
+    { label: 'ログインID', html: function (c) { return '<span class="secret">' + esc(c['ログインID']) + '</span>'; } },
+    { label: 'パスワード', html: function (c) { return secretCell(c, 'パスワード', c['パスワードあり']); } },
+    { label: 'シリアルキー', html: function (c) { return secretCell(c, 'シリアルキー', c['シリアルキーあり']); } },
+    { label: '', cls: 'nowrap', html: function (c) {
+      if (!cr.canReveal) return '<span class="sub">表示は管理者のみ</span>';
+      var id = esc(c['認証ID']);
+      return (cr.shown[c['認証ID']] ? '<button type="button" class="btn small" data-act="hideCred" data-id="' + id + '">隠す</button>'
+        : '<button type="button" class="btn small" data-act="revealCred" data-id="' + id + '">表示</button>') +
+        ' <button type="button" class="btn small" data-act="editCred" data-id="' + id + '">編集</button>';
+    } }
+  ], cr.list, { empty: '認証情報はまだ登録されていません。' }) +
+    '<p class="more">パスワードとシリアルキーは「表示」を押したときだけ読み込みます。表示したことは変更履歴に残ります。</p>';
+}
+
+// お客様ページ
+function portalHtml(c) {
+  var tabs = c['ポータル表示'] ? c['ポータル表示'].split(',').join('・') : '（なし）';
+  return '<div class="row" style="margin-bottom:12px">' +
+      '<div class="grow"><div>公開：' + (c['ポータル公開'] === 'はい' ? pill('公開中', 'ok') : pill('公開していない')) +
+      '　見せる内容：' + esc(tabs) + '</div>' +
+      '<p class="note">公開するかどうかと見せる内容は「顧客の情報を編集」で変えられます。備考・認証情報・修理の内容は、お客様ページには出ません。</p></div></div>' +
+    '<div class="row">' +
+      (c['ポータル発行済'] ? '<button type="button" class="btn" data-act="showPortalUrl">URLを表示</button><button type="button" class="btn danger" data-act="issuePortal" data-again="1">URLを作り直す</button>'
+        : '<button type="button" class="btn primary" data-act="issuePortal">URLを発行</button>') +
+    '</div><div id="portalUrl" style="margin-top:12px"></div>';
+}
+function showPortalUrl(r) {
+  var el = $('portalUrl');
+  if (!el) return;
+  if (r.needsUrlSetting) {
+    el.innerHTML = '<p class="msg">ウェブアプリのURLが分かりません。「設定」→「基本設定」の「ウェブアプリURL」に、デプロイしたURL（…/exec）を入れてください。</p>';
+    return;
+  }
+  el.innerHTML = '<div class="box secret" id="portalUrlText">' + esc(r.url) + '</div>' +
+    '<div class="row" style="margin-top:8px"><button type="button" class="btn small" data-act="copyPortalUrl">URLをコピー</button>' +
+    '<span class="note">このURLを知っている人は、ログインなしでこの顧客のページを開けます。</span></div>';
+}
+
+// 収集ツールの受信
+function receiverHtml(c) {
+  return '<p class="note" style="margin-bottom:12px">この顧客のPCに入れた収集ツールの設定画面で、下の「送信先URL」と「APIトークン」を入れると、PCの情報がこの顧客の機器として届きます。' +
+    '初めて届いたPCは自動で機器に登録されます。手で入れた内容は上書きしません。</p>' +
+    '<div class="row">' + (c['受信発行済']
+      ? '<button type="button" class="btn" data-act="showReceive">トークンを表示</button><button type="button" class="btn danger" data-act="issueReceive" data-again="1">トークンを作り直す</button>'
+      : '<button type="button" class="btn primary" data-act="issueReceive">トークンを発行</button>') +
+    '</div><div id="receiveInfo" style="margin-top:12px"></div>';
+}
+function showReceiveInfo(r) {
+  var el = $('receiveInfo');
+  if (!el) return;
+  if (!r.issued && !r.receiveToken) { el.innerHTML = ''; return; }
+  el.innerHTML = (r.needsUrlSetting
+      ? '<p class="msg">ウェブアプリのURLが分かりません。「設定」→「基本設定」の「ウェブアプリURL」に、デプロイしたURL（…/exec）を入れてください。</p>'
+      : '<div class="field"><span class="lab">送信先URL</span><div class="box secret" id="receiveUrl">' + esc(r.url) + '</div>' +
+        '<div><button type="button" class="btn small" data-act="copyById" data-target="receiveUrl">URLをコピー</button></div></div>') +
+    '<div class="field" style="margin-top:10px"><span class="lab">APIトークン</span><div class="box secret" id="receiveToken">' + esc(r.receiveToken) + '</div>' +
+    '<div><button type="button" class="btn small" data-act="copyById" data-target="receiveToken">トークンをコピー</button></div></div>';
+}
+
+// ---- 機器 ----
+VIEWS.devices = function () {
+  return '<div><button type="button" class="link" data-act="nav" data-view="customers">← PC管理</button></div>' +
+    '<div class="head"><h1>機器の一覧</h1><button type="button" class="btn primary" data-act="newRecord" data-key="device">＋ 機器を追加</button></div>' +
+    '<div class="toolbar">' +
+      '<input type="search" id="q_dev_text" data-q="dev.text" placeholder="利用者・機種・シリアル・顧客名で探す（ひらがな可）" value="' + esc(q('dev.text')) + '" aria-label="機器を探す">' +
+      '<select id="q_dev_kind" data-q="dev.kind" aria-label="種類">' + optionsHtml(activeOptions('機器種類', q('dev.kind')), q('dev.kind'), '種類：すべて') + '</select>' +
+      '<select id="q_dev_state" data-q="dev.state" aria-label="状況">' + optionsHtml([['live', '廃棄以外'], ['使用中', '使用中'], ['未使用', '未使用'], ['廃棄', '廃棄'], ['all', 'すべて']], q('dev.state', 'live')) + '</select>' +
+    '</div><div class="panel" id="list">' + LISTS.devices() + '</div>';
+};
+LISTS.devices = function () {
+  var state = q('dev.state', 'live'), kind = q('dev.kind'), text = q('dev.text');
+  var rows = S.D.devices.filter(function (d) {
+    if (state === 'live' ? d['状況'] === '廃棄' : (state !== 'all' && d['状況'] !== state)) return false;
+    if (kind && d['種類'] !== kind) return false;
+    return textMatch(text, [d['利用者'], d['ふりがな'], d['機種名'], d['メーカー'], d['シリアル'], d['設置場所'], d['部署'], (IDX.diag[d['機器ID']] || {})['コンピューター名'], custWords(d['顧客ID']), d['機器ID']]);
+  });
+  rows = rows.slice().sort(byDevStamp);      // ふだんは更新の新しい順（見出しを押せば並べ替えられる。v0.35.0）
+  return tableHtml('devices', [COL.devCustomer, COL.devKind, COL.devUser, COL.devModel, COL.devSerial, COL.devPlace, COL.devWarranty, COL.devUpd, COL.devState], rows,
+    { act: 'editRecord:device', id: function (d) { return d['機器ID']; }, empty: S.D.devices.length ? '条件に合う機器がありません。' : 'まだ機器がありません。' });
+};
+
+// ---- 対応履歴（週ごと・月ごとの報告、検索、月ごとの推移） ----
+function actMinutes(a) {
+  var re = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/, x = re.exec(a['開始日時'] || ''), y = re.exec(a['完了日時'] || '');
+  if (!x || !y) return null;
+  var m = (Date.UTC(+y[1], +y[2] - 1, +y[3], +y[4], +y[5]) - Date.UTC(+x[1], +x[2] - 1, +x[3], +x[4], +x[5])) / 60000;
+  return m > 0 && m <= 1440 ? m : null;
+}
+function minutesText(m) { return m >= 60 ? Math.floor(m / 60) + '時間' + (m % 60 ? (m % 60) + '分' : '') : m + '分'; }
+/** 最初に読んだ対応履歴で、漏れなくそろっているのは何日より後か（件数に上限があるため）。全部そろっていれば '' */
+function actLoadedAfter() {
+  var D = S.D;
+  if (D.activityTotal <= D.activities.length) return '';
+  if (D.activityLoadedAfter !== undefined && D.activityLoadedAfter !== '') return D.activityLoadedAfter;      // サーバーが決めた境目（v0.38.0）
+  var done = D.activities.filter(function (a) { return !isOpenActivity(a); });
+  return done.reduce(function (min, a) { return !min || a['受付日'] < min ? a['受付日'] : min; }, '');
+}
+/** その期間の対応履歴。最初に読んだぶんで足りなければ、サーバーから取ったもの（まだなら null） */
+function actRows(r) {
+  var D = S.D, after = actLoadedAfter();
+  if (!after || (r.mode !== 'all' && r.from > after)) return D.activities.filter(function (a) { return inRange(a['受付日'], r.from, r.to); });
+  // 「すべて」で一部しか読んでいないときは、サーバーから全部取る（件数が合うように。v0.38.0）
+  var hit = S.actRange[r.mode === 'all' ? 'all' : r.from + '~' + r.to];
+  return Array.isArray(hit) ? hit : null;
+}
+function loadActivityRange() {
+  var r = perRange('act'), key = r.mode === 'all' ? 'all' : r.from + '~' + r.to;
+  if (actRows(r) || S.actRange[key] === 'loading') return;
+  S.actRange[key] = 'loading';
+  call('listActivities', r.mode === 'all' ? { from: '1900-01-01', to: '2999-12-31' } : { from: r.from, to: r.to }).then(function (res) {
+    S.actRange[key] = res.activities;
+    if (S.view === 'activities' && !$('modals').children.length) render();
+  }).catch(function (e) { delete S.actRange[key]; failToast(e); });
+}
+function actFiltered() {
+  var r = perRange('act'), rows = actRows(r);
+  if (!rows) return null;
+  var status = q('act.status'), kind = q('act.kind'), inc = q('act.inc'), cust = q('act.cust'), staff = q('act.staff'), text = q('act.text');
+  var base = rows.filter(function (a) {
+    if (status === 'open' ? !isOpenActivity(a) : (status && a['ステータス'] !== status)) return false;
+    if (cust && a['顧客ID'] !== cust) return false;
+    if (staff && a['受付スタッフ'] !== staff) return false;
+    return textMatch(text, [a['内容'], custWords(a['顧客ID']), devWords(a['機器ID']), a['先方担当者'], a['受付スタッフ'], a['対応種別'], a['インシデント種別'], a['対応ID']]);
+  });
+  var list = base.filter(function (a) { return (!kind || a['対応種別'] === kind) && (!inc || a['インシデント種別'] === inc); });
+  return { range: r, all: rows, base: base, list: list, filtering: !!(status || kind || inc || cust || staff || text) };
+}
+var ACT_COLS = null;
+function actCols() {
+  return ACT_COLS || (ACT_COLS = [
+    { label: '受付日', html: function (a) { return esc(a['受付日']) + '<span class="minor">' + DOW[dowOf(a['受付日'])] + '曜' + (a['ピン留め'] === 'はい' ? ' ' + pill('ピン', 'brand') : '') + '</span>'; }, key: function (a) { return a['受付日'] + a['対応ID']; }, cls: 'nowrap' },
+    COL.actCustomer, COL.actStaff, COL.actKind, COL.actBody,
+    { label: '時間', html: function (a) { var m = actMinutes(a); return m === null ? DASH : esc(a['開始日時'].slice(11)) + '〜' + esc(a['完了日時'].slice(11)) + '<span class="minor">' + minutesText(m) + '</span>'; }, key: function (a) { return actMinutes(a) || 0; }, cls: 'nowrap', ml: '時間' },
+    COL.actStatus
+  ]);
+}
+/** 期間の報告（数字・グラフ・一覧）。opt.print なら印刷用（全件・ボタンなし） */
+function actReportHtml(f, opt) {
+  opt = opt || {};
+  var r = f.range, list = f.list, base = f.base;
+  var custSet = {}, visit = 0, minSum = 0, minN = 0, open = 0, byDay = {}, byStaff = {};
+  list.forEach(function (a) {
+    custSet[a['顧客ID']] = true;
+    if (a['対応種別'] === '訪問') visit++;
+    var m = actMinutes(a); if (m !== null) { minSum += m; minN++; }
+    if (isOpenActivity(a)) open++;
+    byDay[a['受付日']] = (byDay[a['受付日']] || 0) + 1;
+    var st = a['受付スタッフ'] || '（未設定）'; byStaff[st] = (byStaff[st] || 0) + 1;
+  });
+  // 前の期間との差（絞り込んでいないときだけ。前の期間のぶんが手元にそろっているときだけ）
+  var delta = '';
+  if (!f.filtering && r.prevFrom) {
+    var after = actLoadedAfter();
+    if (!after || r.prevFrom > after) {
+      var prev = S.D.activities.filter(function (a) { return inRange(a['受付日'], r.prevFrom, r.prevTo); }).length, d = list.length - prev;
+      delta = r.prevWord + 'は' + prev + '件' + (d ? '（' + (d > 0 ? '+' : '−') + Math.abs(d) + '）' : '（同じ）');
+    }
+  }
+  var tiles = '<div class="tiles stats">' +
+    statTile(list.length, '件', '対応の件数', esc(Object.keys(custSet).length + '社' + (delta ? '　' + delta : ''))) +
+    statTile(minN ? minutesText(minSum) : '—', '', '対応時間の合計', minN ? esc('平均 ' + minutesText(Math.round(minSum / minN)) + '（時間の記録がある' + minN + '件）') : '開始・完了の日時を入れた対応が無い') +
+    statTile(visit, '件', '訪問', list.length ? Math.round(visit / list.length * 100) + '%' : '') +
+    statTile(open, '件', '完了していない', open ? 'この期間に受け付けて、まだ終わっていない' : '', open ? 'attn' : '') + '</div>';
+  var chart = '';
+  if (r.from) {
+    var bk = periodBuckets(r.from, r.to);
+    var items = bk.list.map(function (b) {
+      var v = bk.unit === 'day' ? (byDay[b.key] || 0) : list.filter(function (a) { return a['受付日'].slice(0, 7) === b.key; }).length;
+      return { label: b.label, sub: b.sub, tip: b.tip, value: v };
+    });
+    chart = '<section class="panel"><h2>' + (bk.unit === 'day' ? '日ごとの件数' : '月ごとの件数') + '</h2><div class="pad">' + vbarsHtml(items) + '</div></section>';
+  }
+  var kinds = {}, incs = {};
+  base.forEach(function (a) { if (a['対応種別']) kinds[a['対応種別']] = (kinds[a['対応種別']] || 0) + 1; if (a['インシデント種別']) incs[a['インシデント種別']] = (incs[a['インシデント種別']] || 0) + 1; });
+  var staffKeys = Object.keys(byStaff).sort(function (a, b) { return byStaff[b] - byStaff[a] || cmp(a, b); }), maxStaff = staffKeys.reduce(function (m, k) { return Math.max(m, byStaff[k]); }, 0);
+  var breakdown = '<section class="panel"><h2>内訳' + (opt.print ? '' : '<span class="note" style="font-weight:400">　押すと、その種類だけに絞ります</span>') + '</h2><div class="pad filters">' +
+    '<div class="frow"><span class="flabel">種別</span>' + chipFilterHtml('act.kind', kinds, base.length, q('act.kind')) + '</div>' +
+    '<div class="frow"><span class="flabel">区分</span>' + chipFilterHtml('act.inc', incs, base.length, q('act.inc')) + '</div>' +
+    (staffKeys.length ? '<div class="frow"><span class="flabel">担当</span><div class="bars" style="flex:1">' + staffKeys.map(function (k) {
+      return '<div class="bar"><span>' + esc(k) + '</span><i style="width:' + Math.round(byStaff[k] / maxStaff * 100) + '%"></i><em>' + byStaff[k] + '</em></div>';
+    }).join('') + '</div></div>' : '') + '</div></section>';
+  var saveLimit = ROW_LIMIT;
+  if (opt.print) ROW_LIMIT = 100000;
+  var table = '<section class="panel"><h2><span class="grow">一覧 ' + list.length + '件' + (f.filtering ? '<span class="note" style="font-weight:400">　（この期間の' + f.all.length + '件から絞り込み）</span>' : '') + '</span></h2>' +
+    tableHtml(opt.print ? 'actPrint' : 'activities', actCols(), list,
+      { act: opt.print ? '' : 'editRecord:activity', id: function (a) { return a['対応ID']; }, empty: f.all.length ? '条件に合う対応がありません。' : 'この期間の対応はありません。' }) + '</section>';
+  ROW_LIMIT = saveLimit;
+  return tiles + '<div class="cols">' + chart + breakdown + '</div>' + table;
+}
+VIEWS.activities = function () {
+  if (isPhone()) return PHONE_VIEWS.activities();
+  var D = S.D, r = perRange('act'), rows = actRows(r);
+  var after = actLoadedAfter();
+  // 顧客と担当の選択肢は、その期間に出てくるものだけ
+  var custIds = {}, staffs = {};
+  (rows || []).forEach(function (a) { custIds[a['顧客ID']] = true; if (a['受付スタッフ']) staffs[a['受付スタッフ']] = true; });
+  if (q('act.cust') && !custIds[q('act.cust')]) S.q['act.cust'] = '';
+  if (q('act.staff') && !staffs[q('act.staff')]) S.q['act.staff'] = '';
+  var custOpts = Object.keys(custIds).map(function (id) { return [id, custName(id)]; }).sort(function (a, b) { return cmp(a[1], b[1]); });
+  // 期間に関係なく出すもの：持ち越し（完了していない対応）、ピン留め、月ごとの推移、顧客ごとの件数
+  var openActs = D.activities.filter(isOpenActivity);
+  var pinned = D.activities.filter(function (a) { return a['ピン留め'] === 'はい'; });
+  var months = lastMonths(12), since = months[0] + '-01';
+  var rank = {};
+  D.activities.forEach(function (a) { if (a['受付日'] >= since) rank[a['顧客ID']] = (rank[a['顧客ID']] || 0) + 1; });
+  // 月ごとの件数：全部が手元にあれば、手元で数える（記録した直後にも合う）。件数が多くて一部しか無いときは、サーバーが数えたものを使う
+  // 全部そろっている月は手元で数える（記録・修正・削除がすぐ合う）。そろっていない古い月だけ、サーバーが数えたもの（v0.38.0）
+  var monthCount = {}, fullFrom = after ? addMonths(after.slice(0, 7), 1) : '';
+  Object.keys(D.activityMonthCounts || {}).forEach(function (m) { if (after && m < fullFrom) monthCount[m] = D.activityMonthCounts[m]; });
+  D.activities.forEach(function (a) { var m = String(a['受付日']).slice(0, 7); if (!after || m >= fullFrom) monthCount[m] = (monthCount[m] || 0) + 1; });
+  var rankIds = Object.keys(rank).sort(function (a, b) { return rank[b] - rank[a] || cmp(custName(a), custName(b)); }).slice(0, 10), rankMax = rankIds.length ? rank[rankIds[0]] : 0;
+  return '<div class="head"><h1>対応履歴</h1>' +
+      '<button type="button" class="btn" data-act="printActs">印刷・PDFにする</button>' +
+      '<button type="button" class="btn primary" data-act="newRecord" data-key="activity">＋ 対応を記録</button></div>' +
+    periodBarHtml('act') +
+    '<div class="toolbar">' +
+      '<input type="search" id="q_act_text" data-q="act.text" placeholder="内容・顧客名・利用者・担当で探す（ひらがな可）" value="' + esc(q('act.text')) + '" aria-label="対応履歴を探す">' +
+      '<select id="q_act_cust" data-q="act.cust" aria-label="顧客">' + optionsHtml(custOpts, q('act.cust'), '顧客：すべて') + '</select>' +
+      '<select id="q_act_staff" data-q="act.staff" aria-label="担当">' + optionsHtml(Object.keys(staffs).sort(), q('act.staff'), '担当：すべて') + '</select>' +
+      groupButtonHtml('act.group') +
+      '<select id="q_act_status" data-q="act.status" aria-label="ステータス">' + optionsHtml([['open', '完了していないもの'], ['完了', '完了'], ['対応中', '対応中'], ['保留中', '保留中']], q('act.status'), 'ステータス：すべて') + '</select>' +
+    '</div>' +
+    (r.mode === 'all' && after ? '<p class="note" id="actCapNote">件数が多いので、' + esc(after) + ' より後の対応（と完了していないもの）から探しています。それより前は、週・月・期間を選ぶと見られます。</p>' : '') +
+    '<div id="list" class="stack">' + LISTS.activities() + '</div>' +
+    '<h2 class="sect">期間に関係なく出しているもの</h2>' +
+    '<div class="cols">' +
+      '<section class="panel" id="openActsPanel"><h2>完了していない対応（持ち越し） ' + openActs.length + '件</h2>' +
+        tableHtml('dashActs', [COL.actDate, COL.actCustomer, COL.actBody, COL.actStatus, COL.actStaff], openActs, { act: 'editRecord:activity', id: function (a) { return a['対応ID']; }, empty: '完了していない対応はありません。' }) + '</section>' +
+      (pinned.length ? '<section class="panel" id="pinPanel"><h2>ピン留めした対応</h2>' +
+        tableHtml('dashPins', [COL.actDate, COL.actCustomer, COL.actBody], pinned, { act: 'editRecord:activity', id: function (a) { return a['対応ID']; } }) + '</section>' : '') +
+      '<section class="panel" id="actTrend"><h2>月ごとの件数（直近12か月）</h2><div class="pad">' +
+        vbarsHtml(monthItems(months, function (m) { return monthCount[m] || 0; })) + '</div></section>' +
+      '<section class="panel" id="actRank"><h2>対応の多い顧客（直近12か月）</h2><div class="pad">' +
+        (rankIds.length ? '<div class="bars wide">' + rankIds.map(function (id, i) {
+          return '<div class="bar"><span>' + (i + 1) + '. ' + esc(custName(id)) + '</span><i style="width:' + Math.round(rank[id] / rankMax * 100) + '%"></i><em>' + rank[id] + '</em></div>';
+        }).join('') + '</div>' + (after && since <= after ? '<p class="note">件数が多いので、' + esc(after) + ' より後のぶんで数えています。</p>' : '')
+          : '<p class="note">直近12か月の対応はまだありません。</p>') + '</div></section>' +
+    '</div>';
+};
+LISTS.activities = function () {
+  var f = actFiltered();
+  if (!f) return '<p class="empty" id="actRangeLoading">この期間の対応履歴を読み込んでいます…</p>';
+  return actReportHtml(f);
+};
+
+// ---- 修理履歴（進行中の持ち越し、期間内の受付・完了、月ごとの推移） ----
+function repElapsed(r) { return r['受付日'] ? Math.round((ymdUtc(S.D.today) - ymdUtc(r['受付日'])) / 86400000) : null; }
+function repIsLong(r) { var n = repElapsed(r); return isOpenRepair(r) && S.D.repairLongDays > 0 && n !== null && n >= S.D.repairLongDays; }
+function repFiltered() {
+  var r = perRange('rep'), status = q('rep.status'), cust = q('rep.cust'), text = q('rep.text');
+  var received = function (x) { return inRange(x['受付日'], r.from, r.to); };
+  var doneIn = function (x) { return !isOpenRepair(x) && inRange(x['完了日'], r.from, r.to); };
+  var scope = S.D.repairs.filter(function (x) { return r.mode === 'all' || isOpenRepair(x) || received(x) || doneIn(x); });
+  var list = scope.filter(function (x) {
+    if (status === 'open' ? !isOpenRepair(x) : (status && x['ステータス'] !== status)) return false;
+    if (cust && x['顧客ID'] !== cust) return false;
+    return textMatch(text, [x['件名'], x['内容'], x['型番'], x['シリアル'], x['預かり品'], custWords(x['顧客ID']), devWords(x['機器ID']), x['先方担当者'], x['担当スタッフ'], x['種別'], x['修理ID']]);
+  });
+  // 進行中を先に（古いものから）、そのあと完了したもの（新しいものから）
+  if (!S.sort.repairs) list.sort(function (a, b) {
+    var oa = isOpenRepair(a), ob = isOpenRepair(b);
+    if (oa !== ob) return oa ? -1 : 1;
+    return oa ? cmp(a['受付日'] + a['修理ID'], b['受付日'] + b['修理ID']) : cmp((b['完了日'] || b['受付日']) + b['修理ID'], (a['完了日'] || a['受付日']) + a['修理ID']);
+  });
+  return { range: r, scope: scope, list: list, received: S.D.repairs.filter(received), doneIn: S.D.repairs.filter(doneIn), filtering: !!(status || cust || text) };
+}
+var REP_COLS = null;
+function repCols() {
+  return REP_COLS || (REP_COLS = [COL.repDate, COL.repCustomer, COL.repTitle, COL.repKind, COL.repItems,
+    { label: 'ステータス', html: function (r) {
+      var n = repElapsed(r);
+      return statusPill(r['ステータス']) + (isOpenRepair(r) && n !== null ? '<span class="minor">' + (repIsLong(r) ? pill(n + '日経過', 'danger') : n + '日経過') + '</span>' : '');
+    }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
+    COL.repDone,
+    { label: '担当', html: function (r) { return esc(r['担当スタッフ']); }, key: function (r) { return r['担当スタッフ']; }, cls: 'nowrap', ml: '担当' }]);
+}
+function repReportHtml(f, opt) {
+  opt = opt || {};
+  var D = S.D, r = f.range, all = D.repairs;
+  var open = all.filter(isOpenRepair), long = open.filter(repIsLong), done = all.length - open.length;
+  var pct = all.length ? Math.round(done / all.length * 100) : 0;
+  var tiles = '<div class="tiles stats">' +
+    statTile(open.length, '件', '進行中', '受付・実施中・保留中', open.length ? 'attn' : '') +
+    statTile(long.length, '件', '長引いている', D.repairLongDays > 0 ? '受付から' + D.repairLongDays + '日以上' : '日数の設定が0（数えない）', long.length ? 'attn' : '') +
+    (r.from ? statTile(f.received.length, '件', 'この期間に受付', esc(r.title)) + statTile(f.doneIn.length, '件', 'この期間に完了', esc(r.title))
+      : statTile(done, '件', '完了', '累計') + statTile(all.length, '件', '全部', '完了 ' + pct + '%')) + '</div>';
+  var saveLimit = ROW_LIMIT;
+  if (opt.print) ROW_LIMIT = 100000;
+  var table = '<section class="panel"><h2><span class="grow">' + (r.from ? '進行中の修理と、この期間に受付・完了した修理' : 'すべての修理') + ' ' + f.list.length + '件' +
+      (f.filtering ? '<span class="note" style="font-weight:400">　（' + f.scope.length + '件から絞り込み）</span>' : '') + '</span></h2>' +
+    tableHtml(opt.print ? 'repPrint' : 'repairs', repCols(), f.list,
+      { act: opt.print ? '' : 'editRecord:repair', id: function (x) { return x['修理ID']; }, empty: all.length ? '条件に合う修理がありません。' : 'まだ修理がありません。' }) + '</section>';
+  ROW_LIMIT = saveLimit;
+  return tiles + table;
+}
+VIEWS.repairs = function () {
+  if (isPhone()) return PHONE_VIEWS.repairs();
+  var D = S.D, months = lastMonths(12);
+  var rec = {}, don = {};
+  D.repairs.forEach(function (x) {
+    if (x['受付日']) rec[x['受付日'].slice(0, 7)] = (rec[x['受付日'].slice(0, 7)] || 0) + 1;
+    if (!isOpenRepair(x) && x['完了日']) don[x['完了日'].slice(0, 7)] = (don[x['完了日'].slice(0, 7)] || 0) + 1;
+  });
+  var items = months.map(function (m, i) { return { label: Number(m.slice(5, 7)) + '月', sub: i === 0 || m.slice(5, 7) === '01' ? m.slice(0, 4) : '', tip: m, value: rec[m] || 0, value2: don[m] || 0 }; });
+  var custIds = {};
+  D.repairs.forEach(function (x) { custIds[x['顧客ID']] = true; });
+  if (q('rep.cust') && !custIds[q('rep.cust')]) S.q['rep.cust'] = '';     // 覚えていた顧客に、もう修理が無いとき
+  var custOpts = Object.keys(custIds).map(function (id) { return [id, custName(id)]; }).sort(function (a, b) { return cmp(a[1], b[1]); });
+  var done = D.repairs.filter(function (x) { return !isOpenRepair(x); }).length, pct = D.repairs.length ? Math.round(done / D.repairs.length * 100) : 0;
+  return '<div class="head"><h1>修理履歴</h1>' +
+      '<button type="button" class="btn" data-act="printReps">印刷・PDFにする</button>' +
+      '<button type="button" class="btn primary" data-act="newRecord" data-key="repair">＋ 修理を受け付け</button></div>' +
+    periodBarHtml('rep') +
+    '<div class="toolbar">' +
+      '<input type="search" id="q_rep_text" data-q="rep.text" placeholder="件名・型番・シリアル・顧客名・利用者で探す（ひらがな可）" value="' + esc(q('rep.text')) + '" aria-label="修理を探す">' +
+      '<select id="q_rep_cust" data-q="rep.cust" aria-label="顧客">' + optionsHtml(custOpts, q('rep.cust'), '顧客：すべて') + '</select>' +
+      groupButtonHtml('rep.group') +
+      '<select id="q_rep_status" data-q="rep.status" aria-label="ステータス">' + optionsHtml([['open', '進行中のもの'], ['受付', '受付'], ['実施中', '実施中'], ['保留中', '保留中'], ['完了', '完了']], q('rep.status'), 'ステータス：すべて') + '</select>' +
+    '</div>' +
+    '<div id="list" class="stack">' + LISTS.repairs() + '</div>' +
+    '<h2 class="sect">期間に関係なく出しているもの</h2>' +
+    '<div class="cols">' +
+      '<section class="panel" id="repTrend"><h2>月ごとの受付と完了（直近12か月）</h2><div class="pad">' + vbarsHtml(items, { legend: ['受付', '完了'] }) + '</div></section>' +
+      '<section class="panel" id="repTotal"><h2>これまでの修理</h2><div class="pad">' +
+        '<div class="row"><b style="font-size:20px">' + done + ' / ' + D.repairs.length + '件</b><span class="note">完了 ' + pct + '%</span></div>' +
+        '<div class="meter" role="img" aria-label="完了 ' + pct + '%"><i style="width:' + pct + '%"></i></div>' +
+        '<p class="note">「長引いている」の日数は、設定の「修理の長期化の日数」（いまは' + D.repairLongDays + '日）で変えられます。</p></div></section>' +
+    '</div>';
+};
+LISTS.repairs = function () { return repReportHtml(repFiltered()); };
+
+// ---- ライセンス ----
+VIEWS.licenses = function () {
+  if (isPhone()) return PHONE_VIEWS.licenses();
+  return '<div class="head"><h1>ライセンス</h1><button type="button" class="btn primary" data-act="newRecord" data-key="license">＋ ライセンスを追加</button></div>' +
+    '<div class="toolbar">' +
+      '<input type="search" id="q_lic_text" data-q="lic.text" placeholder="製品名・顧客名・使っている人で探す（ひらがな可）" value="' + esc(q('lic.text')) + '" aria-label="ライセンスを探す">' +
+      groupButtonHtml('lic.group') +
+      '<select id="q_lic_due" data-q="lic.due" aria-label="期限">' + optionsHtml([['soon', '期限が近い・切れた'], ['expired', '期限切れ']], q('lic.due'), '期限：すべて') + '</select>' +
+    '</div><div class="panel" id="list">' + LISTS.licenses() + '</div>';
+};
+LISTS.licenses = function () {
+  var due = q('lic.due'), text = q('lic.text');
+  var rows = S.D.licenses.filter(function (l) {
+    var d = daysUntil(l['有効期限']);
+    if (due === 'soon' && !(d !== null && d <= S.D.licenseWarnDays)) return false;
+    if (due === 'expired' && !(d !== null && d < 0)) return false;
+    return textMatch(text, [l['製品名'], l['契約期間'], custWords(l['顧客ID']), l['備考'], l['ライセンスID'],
+      (IDX.alloc[l['ライセンスID']] || []).map(function (a) { return devWords(a['機器ID']); }).join(' ')]);
+  });
+  if (!S.sort.licenses) rows.sort(function (a, b) { return cmp(a['有効期限'] || '9999', b['有効期限'] || '9999'); });
+  return tableHtml('licenses', [COL.licCustomer, COL.licName, COL.licUse, COL.licExpiry, COL.licAct], rows,
+    { act: 'editRecord:license', id: function (l) { return l['ライセンスID']; }, empty: S.D.licenses.length ? '条件に合うライセンスがありません。' : 'まだライセンスがありません。' });
+};
+
+// ---- レンタル ----
+function rentalState(r) {
+  var l = IDX.openLoan[r['レンタルID']];
+  if (!l) return { text: r['状態'], kind: r['状態'] === S.D.rentalAvailable ? 'ok' : '', loan: null };
+  var d = l['返却予定日'] ? daysUntil(l['返却予定日']) : null;
+  return { text: '貸出中', kind: d !== null && d < 0 ? 'danger' : 'brand', loan: l, late: d !== null && d < 0 ? -d : 0,
+    soon: d !== null && d >= 0 && d <= (S.D.settings['レンタル返却の手前日数'] === '' || S.D.settings['レンタル返却の手前日数'] === undefined ? 3 : Number(S.D.settings['レンタル返却の手前日数']) || 0) ? d : null };
+}
+function loanWho(l) { return [l['顧客ID'] ? custName(l['顧客ID']) : '', l['貸出先']].filter(function (x) { return x; }).join(' / '); }
+VIEWS.rentals = function () {
+  if (!S.D.rentalOn) return '<p class="empty">レンタル機器は使わない設定になっています（設定 →「レンタル機器を使う」）。</p>';
+  return '<div class="head"><h1>レンタル機器</h1><button type="button" class="btn primary" data-act="newRecord" data-key="rental">＋ 機器を追加</button></div>' +
+    '<section class="panel"><h2>機器</h2>' + tableHtml('rentals', [
+      { label: '名称', cls: 'cname', html: function (r) { return esc(r['名称']) + (r['機種名'] ? '<span class="minor">' + esc(r['機種名']) + '</span>' : ''); }, key: function (r) { return r['名称']; } },
+      { label: '種類', cls: 'nowrap', html: function (r) { return esc(r['種類']) + (r['用途'] ? '<span class="minor">' + esc(r['用途']) + '</span>' : ''); }, key: function (r) { return r['種類']; } },
+      { label: '状態', cls: 'nowrap', html: function (r) { var st = rentalState(r); return pill(st.text, st.kind) + (st.late ? ' ' + pill(st.late + '日超過', 'danger') : st.soon !== null ? ' ' + pill(st.soon ? 'あと' + st.soon + '日で返却' : '今日返却', 'warn') : ''); }, key: function (r) { return rentalState(r).text; } },
+      { label: '貸出先', cls: 'title', html: function (r) { var l = rentalState(r).loan; return l ? esc(loanWho(l)) + '<span class="minor">' + esc(l['貸出日']) + ' から' + (l['返却予定日'] ? '・返却予定 ' + esc(l['返却予定日']) : '') + '</span>' : DASH; } },
+      { label: '', cls: 'nowrap', html: function (r) {
+        var st = rentalState(r), id = esc(r['レンタルID']);
+        if (st.loan) return '<button type="button" class="btn small primary" data-act="returnLoan" data-id="' + esc(st.loan['貸出ID']) + '">返却を記録</button>';
+        return r['状態'] === S.D.rentalAvailable ? '<button type="button" class="btn small" data-act="lendRental" data-id="' + id + '">貸し出す</button>' : '';
+      } }
+    ], S.D.rentals, { act: 'editRecord:rental', id: function (r) { return r['レンタルID']; }, empty: 'レンタル機器はまだ登録されていません。' }) + '</section>' +
+    '<div class="toolbar">' + groupButtonHtml('loan.group') + '<select id="q_loan_state" data-q="loan.state" aria-label="貸出記録の絞り込み">' + optionsHtml([['open', '貸出中だけ'], ['all', 'すべての貸出記録']], q('loan.state', 'all')) + '</select></div>' +
+    '<section class="panel"><h2>貸出記録</h2><div id="list">' + LISTS.rentals() + '</div></section>';
+};
+LISTS.rentals = function () {
+  var only = q('loan.state', 'all') === 'open';
+  var rows = S.D.loans.filter(function (l) { return !only || !l['返却日']; }).sort(function (a, b) { return cmp(b['貸出日'] + b['貸出ID'], a['貸出日'] + a['貸出ID']); });
+  return tableHtml('loans', [
+    { label: '貸出日', cls: 'nowrap', html: function (l) { return esc(l['貸出日']); }, key: function (l) { return l['貸出日']; } },
+    { label: '機器', cls: 'cname', html: function (l) { return esc((IDX.rental[l['レンタルID']] || {})['名称'] || l['レンタルID']); } },
+    { label: '貸出先', cls: 'title', html: function (l) { return esc(loanWho(l)); } },
+    { label: '返却予定', cls: 'nowrap', ml: '予定', html: function (l) { return l['返却予定日'] ? esc(l['返却予定日']) : DASH; }, key: function (l) { return l['返却予定日']; } },
+    { label: '返却日', cls: 'nowrap', html: function (l) { return l['返却日'] ? esc(l['返却日']) : pill('貸出中', 'brand'); }, key: function (l) { return l['返却日']; } },
+    { label: '担当', cls: 'nowrap', ml: '担当', html: function (l) { return esc(l['担当スタッフ']); } }
+  ], rows, { act: 'editRecord:loan', id: function (l) { return l['貸出ID']; }, empty: '貸出記録はまだありません。' });
+};
+
+// ---- お知らせ ----
+VIEWS.notices = function () {
+  var rows = S.D.notices.slice().sort(function (a, b) { return cmp(b['登録日時'] + b['お知らせID'], a['登録日時'] + a['お知らせID']); });
+  return '<div class="head"><h1>お知らせ</h1><button type="button" class="btn primary" data-act="newRecord" data-key="notice">＋ お知らせを追加</button></div>' +
+    '<p class="note">お客様ページの上に出ます。顧客を選ばなければ、公開しているすべての顧客に出ます。掲載期限を過ぎると出なくなります。</p>' +
+    '<section class="panel">' + tableHtml('notices', [
+      { label: '本文', cls: 'clamp', html: function (n) { return '<span>' + esc(n['本文']) + '</span>'; } },
+      { label: '出す先', cls: 'cname', html: function (n) { return n['顧客ID'] ? esc(custName(n['顧客ID'])) : pill('すべての顧客', 'brand'); }, key: function (n) { return custName(n['顧客ID']); } },
+      { label: '重要度', cls: 'nowrap', html: function (n) { return n['重要度'] === '重要' ? pill('重要', 'danger') : pill('通常'); }, key: function (n) { return n['重要度']; } },
+      { label: '掲載期限', cls: 'nowrap', ml: '期限', html: function (n) { return !n['掲載期限'] ? '<span class="sub">なし</span>' : esc(n['掲載期限']) + (daysUntil(n['掲載期限']) < 0 ? ' ' + pill('掲載おわり') : ''); }, key: function (n) { return n['掲載期限'] || '9999'; } }
+    ], rows, { act: 'editRecord:notice', id: function (n) { return n['お知らせID']; }, empty: 'お知らせはまだありません。' }) + '</section>' +
+    '<div class="head" id="winInfoHead" style="margin-top:8px"><h1 style="font-size:17px">Windows情報</h1>' +
+      (S.D.feed && S.D.feed.on ? '<button type="button" class="btn" data-act="feedNow">いますぐ更新</button>' : '') +
+      '<button type="button" class="btn" data-act="winInfoPaste">まとめて貼り付け</button>' +
+      '<button type="button" class="btn primary" data-act="newRecord" data-key="wininfo">＋ Windows情報を追加</button></div>' +
+    '<p class="note">更新プログラムやドライバーの不具合のメモです。日付が' + S.D.wininfoShowDays + '日以内のものが、新しい順に' + S.D.wininfoShowMax + '件まで、PC管理とお客様ページの上に出ます（お客様ページは「顧客に見せる」が「はい」のものだけ）。「📌 ピン留め」したものは、日数にかかわらず、いちばん上に出しつづけます（10件まで）。</p>' +
+    feedStatusHtml() +
+    '<section class="panel" id="winInfoList">' + tableHtml('wininfo', [
+      { label: '日付', cls: 'nowrap', html: function (w) { return esc(w['日付']); }, key: function (w) { return w['日付']; } },
+      { label: '種類', cls: 'nowrap', html: function (w) { return esc(w['種類']) + (w['重要度'] === '重要' ? ' ' + pill('重要', 'danger') : ''); }, key: function (w) { return w['種類']; } },
+      { label: 'タイトル', cls: 'title', html: function (w) { return '<b>' + (winInfoPinned(w) ? '📌 ' : '') + esc(w['タイトル']) + '</b>' + (w['内容'] ? '<span class="minor">' + esc(w['内容']) + '</span>' : ''); } },
+      { label: '顧客に', cls: 'nowrap', ml: '顧客に', html: function (w) {
+        var on = w['顧客に見せる'] === 'はい';
+        return (on ? pill('見せる', 'ok') : pill('社内だけ', 'warn')) + ' <button type="button" class="btn small" data-act="winInfoShow" data-id="' + esc(w['情報ID']) + '" data-on="' + (on ? '1' : '') + '">' + (on ? '社内だけにする' : '顧客に見せる') + '</button>' +
+          ' <button type="button" class="btn small" data-act="winInfoPin" data-id="' + esc(w['情報ID']) + '" data-on="' + (winInfoPinned(w) ? '1' : '') + '">' + (winInfoPinned(w) ? 'ピンを外す' : '📌 ピン留め') + '</button>';
+      } },
+      { label: 'リンク', cls: 'nowrap', html: function (w) { var l = safeLink(w['リンク']); return l ? '<a href="' + esc(l) + '" target="_blank" rel="noopener noreferrer" data-stop="1">開く</a>' : ''; } }
+    ], winInfoSorted().filter(winInfoPinned).concat(winInfoSorted().filter(function (w) { return !winInfoPinned(w); })), { act: 'editRecord:wininfo', id: function (w) { return w['情報ID']; }, empty: 'Windows情報はまだありません。「まとめて貼り付け」か「＋ Windows情報を追加」から登録できます。' }) + '</section>';
+};
+
+// ---- 変更履歴（管理者） ----
+VIEWS.audit = function () {
+  return '<div><button type="button" class="link" data-act="nav" data-view="settings">← 設定</button></div>' +
+    '<div class="head"><h1>変更履歴</h1></div>' +
+    '<div class="toolbar"><input type="search" id="q_audit_text" data-q="audit.text" placeholder="種別・対象・顧客名・実行者・内容で探す" value="' + esc(q('audit.text')) + '" aria-label="変更履歴を探す"></div>' +
+    '<section class="panel"><div id="list">' + LISTS.audit() + '</div></section>';
+};
+LISTS.audit = function () {
+  if (!S.audit) return '<p class="empty">読み込んでいます…</p>';
+  var text = q('audit.text');
+  var rows = S.audit.logs.filter(function (r) { return textMatch(text, [r['種別'], r['対象'], custWords(r['顧客ID']), r['項目'], r['変更前'], r['変更後'], r['実行者']]); });
+  return tableHtml('audit', [
+    { label: '日時', cls: 'nowrap', html: function (r) { return esc(r['日時']); } },
+    { label: '種別', cls: 'nowrap', html: function (r) { return esc(r['種別']); } },
+    { label: '対象', cls: 'nowrap', html: function (r) { return esc(r['対象']) + (r['顧客ID'] ? '<span class="minor">' + esc(custName(r['顧客ID'])) + '</span>' : ''); } },
+    { label: '項目', html: function (r) { return esc(r['項目']); } },
+    { label: '変更前', cls: 'clamp', html: function (r) { return '<span>' + esc(r['変更前']) + '</span>'; } },
+    { label: '変更後', cls: 'clamp', html: function (r) { return '<span>' + esc(r['変更後']) + '</span>'; } },
+    { label: '実行者', cls: 'nowrap', ml: '実行', html: function (r) { return esc(r['実行者']); } }
+  ], rows, { empty: '該当する履歴がありません。' }) +
+    '<p class="more">新しいものから ' + S.audit.logs.length + ' 件を読み込んでいます（全部で ' + S.audit.total + ' 件）。' +
+    (S.audit.logs.length < Math.min(S.audit.total, 500) ? ' <button type="button" class="link" data-act="auditMore">500件まで読み込む</button>' : (S.audit.total > 500 ? ' それより前は、スプレッドシートの「変更履歴」シートで見られます。' : '')) +
+    (S.audit.archiveUrl && /^https:\/\/docs\.google\.com\//.test(S.audit.archiveUrl) ? ' 設定の日数より古いものは、<a href="' + esc(S.audit.archiveUrl) + '" target="_blank" rel="noopener">保管用のスプレッドシート</a>に移してあります。' : '') + '</p>';
+};
+function loadAudit(limit) {
+  call('getAuditLog', { limit: limit }).then(function (r) { S.audit = { logs: r.logs, total: r.total, archiveUrl: r.archiveUrl || '' }; refreshList(); }).catch(failToast);
+}
+
+// ---- 設定（管理者） ----
+var SETTING_FIELDS = [
+  ['自社名', 'text', '画面の見出しと、お客様ページに出す社名'],
+  ['開いた直後の画面', 'start', 'ログインした直後に開く画面。スタッフは、上の「自分の設定」で自分のぶんを選べます（選んでいない人にこの設定を使います）'],
+  ['ウェブアプリURL', 'text', 'デプロイしたURL（…/exec）。お客様ページのURLを作るのに使います'],
+  ['保証期限の手前日数', 'number:3650', 'この日数以内になったら「保証がもうすぐ切れる」として出します'],
+  ['スタッフに認証情報を見せる', 'yesno', '「いいえ」にすると、パスワード類を表示できるのは管理者だけになります'],
+  ['レンタル機器を使う', 'yesno', '「いいえ」にすると、レンタルの画面と返却のアラートを出しません'],
+  ['配信フォルダー', 'text', 'Windows情報と Tips を自動で取り込む、Google ドライブのフォルダー（URL か ID を貼る）。空なら、自動では取り込みません'],
+  ['Tipsを出す', 'yesno', 'Windows の便利機能（Tips）を、管理画面とお客様ページのいちばん上に出します'],
+  ['Windows情報を取り込む', 'yesno', '配信フォルダーの Windows情報（不具合など）を取り込みます。「いいえ」なら取り込みません'],
+  ['Tipsを取り込む', 'yesno', '配信フォルダーの Tips を取り込みます。「いいえ」なら取り込みません（入っている Tips はそのまま）'],
+  ['取り込んだWindows情報をお客様に見せる', 'yesno', '「はい」：取り込んだ Windows情報を、すぐお客様ページにも出す。「いいえ」：社内だけで入れ、確かめてから「顧客に見せる」を押す（おすすめ）'],
+  ['Windows情報を残す日数', 'number:36500', '日付がこの日数より古い Windows情報を、毎朝の処理で消します（ピン留めしたものは消しません）。0 で消しません。おすすめは 365（1年）'],
+  ['変更履歴を残す日数', 'number:36500', '日時がこの日数より古い変更履歴を、毎朝の処理で「保管用のスプレッドシート」へ移します（消えません。変更履歴の画面から開けます）。0 で移しません。おすすめは 365（1年）'],
+  ['配信を確かめる間隔（時間）', 'number:6:1', '配信フォルダーを確かめる間隔（1〜6時間。ふつうは6）'],
+  ['レポートは公開した月だけ見せる', 'yesno', '「はい」：お客様ページの月次レポートは、顧客の画面の「レポート」で「お客様ページに出す」を押した月だけ見せる。「いいえ」：終わった月（過去12か月）を全部見せる'],
+  ['添付をリンクで共有する', 'yesno', '「はい」だと、添付はリンクを知っている人が見られる状態で保存します（スマホから開け、お客様ページにも出せます）']
+];
+var ALERT_SETTING_FIELDS = [
+  ['通知先メール', 'text', '要対応の通知メールを送る先。複数は「,」で区切る（5件まで）。空なら送りません'],
+  ['通知の時刻', 'number:23', '毎朝の通知を送る時刻（0〜23時）。変えたら、スプレッドシートのメニュー「毎朝の通知を設定」をやり直してください'],
+  ['イベントエラーのしきい値', 'number:99999', '収集ツールのイベントエラーがこの件数以上の機器を出します'],
+  ['ディスク異常を出す', 'yesno', '収集ツールがディスクの異常イベントを見つけた機器を出します'],
+  ['収集ツール未受信の日数', 'number:3650', '収集ツールからこの日数届いていない機器を出します'],
+  ['修理の長期化の日数', 'number:3650', '受付からこの日数たっても完了していない修理を出します'],
+  ['対応の保留の日数', 'number:3650', '受付からこの日数たっても完了していない対応を出します'],
+  ['リモート多発の回数', 'number:99999', '保守契約のある顧客で、今月の「リモート」がこの回数以上になったら出します'],
+  ['訪問多発の回数', 'number:99999', '保守契約のある顧客で、今月の「訪問」がこの回数以上になったら出します'],
+  ['スポット保守の確認日', 'number:31', '毎月この日を過ぎても今月の対応が無い、スポット保守の顧客を出します'],
+  ['レンタル返却の手前日数', 'number:3650', '返却予定日がこの日数以内になった貸出を出します（予定日を過ぎたものは常に出します）'],
+  ['アラートの再表示日数', 'number:3650', '「対応済み」にしたアラートを、状況が変わらなくても出し直すまでの日数'],
+  ['ライセンス期限の手前日数', 'number:3650', '有効期限がこの日数以内になったライセンスを出します（期限切れは常に出します）'],
+  ['Cドライブ空きの下限GB', 'number:100000', 'ミーティングの「PCの健康チェック」で、Cドライブの空きがこれ（GB）より少ないPCを出します。0で出しません']
+];
+// 設定の画面のまとまり（v0.27.0）。上から順に、見出しと、その中の項目
+var SETTING_GROUPS = [
+  ['会社と画面', 'お客様ページ・印刷・ログインのあとに出る画面', ['自社名', '開いた直後の画面', 'ウェブアプリURL']],
+  ['使う機能', '使わない機能は「いいえ」にすると、画面から消えます', ['レンタル機器を使う', 'スタッフに認証情報を見せる', '添付をリンクで共有する', 'レポートは公開した月だけ見せる', '保証期限の手前日数']],
+  ['Windows情報・Tips の配信', 'ドライブのフォルダーから自動で取り込みます', ['配信フォルダー', 'Windows情報を取り込む', 'Tipsを取り込む', '取り込んだWindows情報をお客様に見せる', '配信を確かめる間隔（時間）', 'Windows情報を残す日数', 'Tipsを出す']],
+  ['記録の保管', '古い記録を、毎朝の処理で片づけます', ['変更履歴を残す日数']]
+];
+var ALERT_SETTING_GROUPS = [
+  ['毎朝の通知', '新しく出た要対応を、毎朝メールで知らせます', ['通知先メール', '通知の時刻']],
+  ['収集ツール・PCの状態', '収集ツールから届いた値で出すもの', ['イベントエラーのしきい値', 'ディスク異常を出す', '収集ツール未受信の日数', 'Cドライブ空きの下限GB']],
+  ['対応・修理', '対応履歴・修理履歴から出すもの', ['修理の長期化の日数', '対応の保留の日数', 'リモート多発の回数', '訪問多発の回数', 'スポット保守の確認日']],
+  ['期限', '期限が近づいたら出すもの', ['ライセンス期限の手前日数', 'レンタル返却の手前日数', 'アラートの再表示日数']]
+];
+function settingField(name) {
+  var all = SETTING_FIELDS.concat(ALERT_SETTING_FIELDS);
+  for (var i = 0; i < all.length; i++) if (all[i][0] === name) return { f: all[i], id: 'set_' + i };
+  return null;
+}
+function settingGroupHtml(g, extraTop, extraBottom) {
+  return '<fieldset class="setgrp"><legend>' + esc(g[0]) + '</legend><p class="note setgrp-note">' + esc(g[1]) + '</p>' + (extraTop || '') +
+    '<div class="setgrid">' + g[2].map(function (n) { var x = settingField(n); return x ? settingInputHtml(x.f, x.id) : ''; }).join('') + '</div>' + (extraBottom || '') + '</fieldset>';
+}
+function settingInputHtml(f, id) {
+  var v = S.D.settings[f[0]];
+  var kind = f[1].split(':');
+  var input = kind[0] === 'start' ? '<select id="' + id + '" data-setting="' + esc(f[0]) + '">' + optionsHtml(S.D.startViews, v) + '</select>'
+    : kind[0] === 'yesno' ? '<select id="' + id + '" data-setting="' + esc(f[0]) + '">' + optionsHtml(['はい', 'いいえ'], v) + '</select>'
+    : kind[0] === 'number' ? '<input type="number" inputmode="numeric" min="' + (kind[2] || 0) + '" max="' + (kind[1] || 3650) + '" id="' + id + '" data-setting="' + esc(f[0]) + '" value="' + esc(v) + '">'
+    : '<input type="text" id="' + id + '" data-setting="' + esc(f[0]) + '" value="' + esc(v) + '">';
+  return '<div class="field"><label for="' + id + '">' + esc(f[0]) + '</label>' + input + '<span class="note">' + esc(f[2]) + '</span></div>';
+}
+VIEWS.settings = function () {
+  var D = S.D;
+  if (!D.me.isAdmin) return '<p class="empty">設定は管理者だけが開けます。</p>';
+  var cat = S.optCat || D.optionCategories[0];
+  var nav = [['setBasic', '基本設定'], ['setAlert', '要対応と通知'], ['setOptions', '選択肢'], ['setStaff', 'スタッフ'], ['setRelease', '収集ツールの配布']];
+  var notify = '<div class="box" id="notifyState">毎朝の通知：' + (D.notify && D.notify.triggerOn ? pill('設定済み', 'ok') : pill('まだ設定していない', 'warn') +
+    '<div class="note">スプレッドシートのメニュー「PC管理」→「毎朝の通知を設定」を実行すると、毎朝、新しく出た要対応をメールで知らせます。</div>') + '</div>';
+  var save = function (label, extra) { return '<div class="setsave"><button type="submit" class="btn primary">' + label + '</button>' + (extra || '') + '</div>'; };
+  return '<div class="head"><h1>設定</h1><button type="button" class="btn" data-act="nav" data-view="audit">変更履歴を見る</button></div>' +
+    '<div class="setwrap"><nav class="setnav" aria-label="設定の目次">' + nav.map(function (n) {
+      return '<button type="button" data-act="setJump" data-to="' + n[0] + '">' + esc(n[1]) + '</button>';
+    }).join('') + '</nav><div class="setmain">' +
+    '<section class="panel" id="setBasic"><h2>基本設定</h2>' + logoSetHtml() +
+      '<form class="pad settings-form" id="settingsForm" data-done="基本設定を保存しました">' +
+      SETTING_GROUPS.map(function (g) { return settingGroupHtml(g); }).join('') + save('基本設定を保存') + '</form></section>' +
+    '<section class="panel" id="setAlert"><h2>要対応と通知</h2><form class="pad settings-form" id="alertSettingsForm" data-done="要対応と通知の設定を保存しました">' +
+      settingGroupHtml(ALERT_SETTING_GROUPS[0], notify, '<div><button type="button" class="btn" data-act="sendAlertMail">いまの要対応をメールで送ってみる</button></div>') +
+      '<fieldset class="setgrp"><legend>要対応に出す種類</legend>' + alertCatsHtml() + '</fieldset>' +
+      ALERT_SETTING_GROUPS.slice(1).map(function (g) { return settingGroupHtml(g); }).join('') +
+      '<p class="note">しきい値・日数・回数を 0 にしても、その種類は出しません（ライセンス期限は、0 でも期限切れを出します）。</p>' +
+      save('要対応と通知の設定を保存') + '</form></section>' +
+    '<section class="panel" id="setOptions"><h2>選択肢</h2><div class="pad" style="display:flex;flex-direction:column;gap:12px">' +
+      '<p class="note" style="margin:0">機器の種類・メーカー・対応種別・定型文など、入力のときに選ぶ値です。</p>' +
+      '<div class="field"><label for="optCat">区分</label><select id="optCat" data-optcat="1">' + optionsHtml(D.optionCategories, cat) + '</select></div>' +
+      '<div class="chips">' + ((D.options[cat] || []).length ? D.options[cat].map(function (o) {
+        return '<button type="button" class="chip' + (o.active ? '' : ' off') + '" data-act="toggleOption" data-value="' + esc(o.value) + '" data-active="' + (o.active ? '1' : '0') + '" title="' + (o.active ? '押すと使わないようにします' : '押すとまた使えるようにします') + '">' + esc(o.value) + '</button>';
+      }).join('') : '<span class="note">まだ値がありません。</span>') + '</div>' +
+      '<form class="row" id="optionForm"><input type="text" id="optValue" class="grow" maxlength="40" placeholder="足す値" aria-label="足す値"><button type="submit" class="btn">足す</button></form>' +
+      '<p class="note">値を押すと「使う／使わない」が切り替わります。過去のデータに残っている値が読めなくならないよう、削除はしません。</p>' +
+    '</div></section>' +
+    '<section class="panel" id="setStaff"><h2><span class="grow">スタッフ</span><button type="button" class="btn small primary" data-act="newStaff">＋ スタッフを追加</button></h2><div id="staffList">' + staffHtml() + '</div></section>' +
+    '<section class="panel" id="releasePanel"><span id="setRelease"></span><h2>収集ツールの配布（自動更新）</h2><div class="pad" id="releaseBox">' + releaseHtml() + '</div></section>' +
+    '</div></div>';
+};
+/** 要対応に出す種類（チェックを外すと、全員の画面と通知メールから外れる） */
+function alertCatsHtml() {
+  var hidden = String(S.D.settings['要対応に出さない種類'] || '').split(',');
+  return '<div class="field" id="alertCats"><div class="checks">' +
+    S.D.alertCategories.map(function (c) {
+      return '<label><input type="checkbox" data-alertcat="' + esc(c[0]) + '"' + (hidden.indexOf(c[0]) === -1 ? ' checked' : '') + '>' + esc(c[1]) + '</label>';
+    }).join('') + '</div><span class="note">チェックを外した種類は、全員の画面（要対応・件数）と毎朝の通知メールに出なくなります。</span></div>';
+}
+function logoSetHtml() {
+  var logo = currentLogo();
+  return '<div class="pad logo-set"><b>会社のロゴ</b>' +
+    '<div class="row"><div class="logo-preview" id="logoPreview">' + (logo ? '<img src="' + esc(logo) + '" alt="いまのロゴ">' : 'まだ入れていません') + '</div>' +
+    '<input type="file" id="logoFile" accept="image/*" hidden aria-label="ロゴにする画像">' +
+    '<button type="button" class="btn" data-act="pickLogo">' + (logo ? '画像を選び直す' : '画像を選ぶ') + '</button>' +
+    (logo ? '<button type="button" class="btn" data-act="removeLogo">ロゴを外す</button>' : '') + '</div>' +
+    '<p class="note">ログイン画面・上の帯・お客様ページ・印刷の見出しに出ます。大きい画像は自動で小さくします。会社名は、下の「自社名」です。</p></div>';
+}
+// ---- 収集ツールの配布（v0.15.0） ----
+function loadRelease() {
+  S.releaseLoading = true;
+  var token = S.token;
+  call('getToolRelease', {}, true).then(function (r) {
+    if (S.token !== token) return;     // 待っている間にログアウト・ログインし直したときは捨てる
+    S.releaseLoading = false; S.release = r.release || null;
+    var el = $('releaseBox'); if (el) el.innerHTML = releaseHtml();
+  }).catch(function (e) {
+    if (S.token !== token) return;
+    S.releaseLoading = false;
+    var el = $('releaseBox'); if (el) el.innerHTML = '<p class="note">配布の情報を読み込めませんでした。開き直してください。</p>';
+    failToast(e);
+  });
+}
+function releaseHtml() {
+  if (S.release === undefined) return '<p class="empty">読み込んでいます…</p>';
+  var r = S.release;
+  var now = r
+    ? '<div class="box" id="releaseNow">いま配っている版：<b>v' + esc(r.version) + '</b> ' + pill('配布中', 'ok') +
+      '<div class="note">' + esc(r.fileName) + '（' + esc(fileSizeText(r.size)) + '）・登録 ' + esc(r.published) + (r.by ? '（' + esc(r.by) + '）' : '') +
+      '<br>SHA-256：<span style="word-break:break-all">' + esc(r.sha256) + '</span>' +
+      (r.notes ? '<br>メモ：<span style="white-space:pre-wrap">' + esc(r.notes) + '</span>' : '') + '</div></div>'
+    : '<div class="box" id="releaseNow">いま配っている版：' + pill('配っていない', 'warn') + '</div>';
+  return '<p class="note" style="margin-top:0">新しい PCInfoTool.exe を、このアプリを動かしているアカウントの Google ドライブに置いて、ファイルのURLとバージョンを登録します。収集ツール（v1.2.0 以降）は起動のたびにここを確かめ、いまより新しい版なら自動で入れ替えます。ドライブの共有は「制限付き」のままで大丈夫です。</p>' +
+    now +
+    '<form id="releaseForm" style="display:flex;flex-direction:column;gap:12px;margin-top:12px">' +
+      '<div class="field"><label for="relFile">ドライブのファイル（URL か ID）</label><input type="text" id="relFile" autocomplete="off" placeholder="https://drive.google.com/file/d/…/view" value="' + esc(r ? r.fileId : '') + '"></div>' +
+      '<div class="field"><label for="relVersion">バージョン</label><input type="text" id="relVersion" inputmode="decimal" autocomplete="off" maxlength="23" placeholder="1.3.0" value="' + esc(r ? r.version : '') + '"><span class="note">ツールの $script:AppVersion と同じにします。</span></div>' +
+      '<div class="field"><label for="relNotes">メモ（更新の確認で表示されます。なくてもよい）</label><textarea id="relNotes" rows="2" maxlength="300">' + esc(r ? r.notes : '') + '</textarea></div>' +
+      '<div class="row"><button type="submit" class="btn primary">登録する</button>' +
+      (r ? '<button type="button" class="btn danger" data-act="stopRelease">配るのをやめる</button>' : '') + '</div></form>' +
+    '<p class="note">ファイルを差し替えたときは、もう一度「登録する」を押してください（中身が登録のときと変わると、安全のため配りません）。</p>';
+}
+function loadStaff() {
+  call('listStaff', {}).then(function (r) {
+    S.staff = r.staff;
+    var el = $('staffList'); if (el) el.innerHTML = staffHtml();
+  }).catch(failToast);
+}
+function staffHtml() {
+  if (!S.staff) return '<p class="empty">読み込んでいます…</p>';
+  return tableHtml('staff', [
+    { label: 'スタッフID', html: function (s) { return esc(s['スタッフID']); }, key: function (s) { return s['スタッフID']; } },
+    { label: '表示名', html: function (s) { return esc(s['表示名']); }, key: function (s) { return s['表示名']; } },
+    { label: '権限', html: function (s) { return s['権限'] === '管理者' ? pill('管理者', 'brand') : pill('スタッフ'); }, key: function (s) { return s['権限']; } },
+    { label: '状態', html: function (s) { return s['有効'] === 'はい' ? pill('有効', 'ok') : pill('無効'); }, key: function (s) { return s['有効']; } },
+    { label: '最終ログイン', html: function (s) { return s['最終ログイン'] ? esc(s['最終ログイン']) : '<span class="sub">まだ</span>'; }, key: function (s) { return s['最終ログイン']; }, cls: 'nowrap' },
+    { label: '', cls: 'nowrap', html: function (s) {
+      var id = esc(s['スタッフID']);
+      return '<button type="button" class="btn small" data-act="editStaff" data-id="' + id + '">編集</button> <button type="button" class="btn small" data-act="resetStaff" data-id="' + id + '">パスワード再設定</button>';
+    } }
+  ], S.staff, {});
+}
+
+</script>

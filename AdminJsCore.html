@@ -1,0 +1,458 @@
+<script>
+'use strict';
+// AdminJsCore.html … 管理画面の動き（状態・小道具・ログイン）
+// Admin.html から読み込む。順番に意味がある（Admin.html の並び順で読み込むこと）
+// ===========================================================================
+// 状態
+// ===========================================================================
+var S = {
+  token: '', D: null, view: 'customers', customerId: '', sub: 'devices',
+  homeQ: '', recent: [], savedAt: {}, restAsked: 0, sending: {},
+  ready: false, restFailed: false, renderPending: false, timing: {}, per: {}, actRange: {},
+  q: {}, sort: {}, creds: null, custActs: {}, staff: null, optCat: '',
+  alerts: [], alertsStale: false, alertsLoading: false,
+  audit: null, files: null, report: null, reportMonth: '', reportNote: '',
+  mm: { cust: '', dev: '', q: '', diag: null, diagFor: '', notes: {}, loading: '', diagErr: '', saving: {} }      // スマホの保守（v0.15.0）
+};
+var IDX = { cust: {}, dev: {}, lic: {} };
+var ROW_LIMIT = 300;
+var TOKEN_KEY = 'pcpkg_token';
+// 「ログインしたままにする」を選んだ端末だけが持つもの（この端末のブラウザの中だけ。パスワードは入れない）
+var REMEMBER_KEY = 'pcpkg_remember';      // サーバーが出した合言葉（64桁）
+var LOGIN_ID_KEY = 'pcpkg_login_id';      // スタッフID（ログイン画面に戻すため）
+function keepGet(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
+function keepSet(key, value) { try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch (e) { /* 保存できない環境でも動く */ } }
+function rememberNow() { var v = keepGet(REMEMBER_KEY); return /^[0-9a-f]{64}$/.test(v) ? v : ''; }
+
+function resetState() {
+  S.token = ''; S.D = null; S.view = 'customers'; S.customerId = ''; S.sub = 'devices';
+  S.ready = false; S.restFailed = false; S.renderPending = false; S.timing = {}; S.per = {}; S.actRange = {};
+  S.q = {}; S.sort = {}; S.creds = null; S.custActs = {}; S.staff = null; S.release = undefined; S.releaseLoading = false; S.optCat = '';
+  S.alerts = []; S.alertsStale = false; S.alertsLoading = false;
+  S.audit = null; S.files = null; S.report = null; S.reportMonth = ''; S.reportNote = '';
+  resetLayoutState();
+  IDX = { cust: {}, dev: {}, lic: {} };
+  S.homeQ = ''; S.recent = []; S.savedAt = {}; S.restAsked = 0; S.sending = {};
+  S.mm = { cust: '', dev: '', q: '', diag: null, diagFor: '', notes: {}, loading: '', diagErr: '', saving: {} };
+  S.p = {}; S.pAlertsOpen = false; S.openRec = ''; S.restoreY = 0; S.restoreRec = '';
+  restBusy = null; draftWaiting = false;
+  try { sessionStorage.removeItem(TOKEN_KEY); } catch (e) { /* 保存できない環境でも動く */ }
+}
+/** スマホの幅か。スマホでは「入力」の画面から始めて、一覧のデータは要るときまで読まない */
+function isPhone() { try { return !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches); } catch (e) { return false; } }
+/** 開いた直後の画面（「戻る」で最後に戻ってくる画面でもある） */
+function rootView() { return isPhone() ? 'home' : ((S.D && START_KEY[S.D.startView]) || 'customers'); }
+
+// ===========================================================================
+// 小道具
+// ===========================================================================
+function $(id) { return document.getElementById(id); }
+function esc(v) {
+  return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function cmp(a, b) { return a < b ? -1 : a > b ? 1 : 0; }
+function daysUntil(ymd) {
+  if (!ymd) return null;
+  var a = S.D.today.split('-'), b = String(ymd).split('-');
+  return Math.round((Date.UTC(+b[0], +b[1] - 1, +b[2]) - Date.UTC(+a[0], +a[1] - 1, +a[2])) / 86400000);
+}
+var DASH = '<span class="dash">—</span>';
+/** 機器のいちばん新しい更新（機器の更新日時と、収集ツールの受信日時の新しいほう。v0.35.0） */
+function devStamp(d) {
+  var a = String(d['更新日時'] || ''), b = String((IDX.diag[d['機器ID']] || {})['受信日時'] || '');
+  // 登録してから一度も直していない機器（移行した機器もここ）は、収集ツールの受信があればそちらを使う（v0.38.0）
+  if (b && a && a === String(d['登録日時'] || '')) return b;
+  return a > b ? a : b;
+}
+/** 新しい順（同じなら機器ID順） */
+function byDevStamp(a, b) { return cmp(devStamp(b), devStamp(a)) || cmp(a['機器ID'], b['機器ID']); }
+/** 更新の新しさ：今日＝緑、7日以内＝青、それより前はそのまま */
+function devUpdHtml(d) {
+  var s = devStamp(d);
+  if (!s) return '<span class="sub">—</span>';
+  var days = daysUntil(s.slice(0, 10));
+  var g = (IDX.diag[d['機器ID']] || {})['受信日時'] || '';
+  var how = g && g >= String(d['更新日時'] || '') ? '収集ツール' : '';
+  var badge = days === 0 ? pill('今日', 'ok') : days !== null && days < 0 && days >= -7 ? pill((-days) + '日前', 'brand') : '';
+  return (badge ? badge + ' ' : '') + esc(s.slice(0, 16)) + (how ? '<span class="minor">' + how + '</span>' : '');
+}
+function pill(text, kind) { return '<span class="pill' + (kind ? ' ' + kind : '') + '">' + esc(text) + '</span>'; }
+function expiryHtml(ymd, warnDays) {
+  if (!ymd) return DASH;
+  var d = daysUntil(ymd);
+  if (d < 0) return esc(ymd) + ' ' + pill('期限切れ', 'danger');
+  if (d <= warnDays) return esc(ymd) + ' ' + pill('あと' + d + '日', 'warn');
+  return esc(ymd);
+}
+function statusPill(s) {
+  if (!s) return '';
+  if (s === '完了') return pill(s, 'ok');
+  if (s === '保留中') return pill(s, 'warn');
+  if (s === '対応中' || s === '実施中') return pill(s, 'brand');
+  return pill(s);
+}
+function contractPill(s) {
+  if (s === '定期保守') return pill(s, 'brand');
+  if (s === 'スポット保守') return pill(s, 'ok');
+  return '<span class="sub">なし</span>';
+}
+function custName(id) { var c = IDX.cust[id]; return c ? c['顧客名'] : (id || ''); }
+function devLabel(id) {
+  var d = IDX.dev[id];
+  if (!d) return id || '';
+  var parts = [d['利用者'], d['機種名']].filter(function (x) { return x; });
+  return parts.length ? parts.join(' / ') : d['種類'];
+}
+function isOpenActivity(a) { return a['ステータス'] !== S.D.activityDone; }
+function isOpenRepair(r) { return r['ステータス'] !== S.D.repairDone; }
+
+function reindex() {
+  var D = S.D;
+  IDX = { cust: {}, dev: {}, lic: {}, devCount: {}, openAct: {}, alloc: {}, diag: {}, alertCount: {}, rental: {}, openLoan: {}, lastMaint: {} };
+  D.customers.forEach(function (c) { IDX.cust[c['顧客ID']] = c; });
+  D.devices.forEach(function (d) {
+    IDX.dev[d['機器ID']] = d;
+    if (d['状況'] !== '廃棄') IDX.devCount[d['顧客ID']] = (IDX.devCount[d['顧客ID']] || 0) + 1;
+  });
+  D.licenses.forEach(function (l) { IDX.lic[l['ライセンスID']] = l; });
+  D.activities.forEach(function (a) { if (isOpenActivity(a)) IDX.openAct[a['顧客ID']] = (IDX.openAct[a['顧客ID']] || 0) + 1; });
+  D.allocations.forEach(function (a) { (IDX.alloc[a['ライセンスID']] = IDX.alloc[a['ライセンスID']] || []).push(a); });
+  (D.diagnostics || []).forEach(function (g) { IDX.diag[g['機器ID']] = g; });
+  S.alerts.forEach(function (a) { if (!a.resolved && isPcAlert(a)) IDX.alertCount[a.customerId] = (IDX.alertCount[a.customerId] || 0) + 1; });
+  D.rentals.forEach(function (r) { IDX.rental[r['レンタルID']] = r; });
+  D.loans.forEach(function (l) { if (!l['返却日']) IDX.openLoan[l['レンタルID']] = l; });
+  D.maintenances.forEach(function (m) { if (!IDX.lastMaint[m['顧客ID']] || IDX.lastMaint[m['顧客ID']] < m['実施日']) IDX.lastMaint[m['顧客ID']] = m['実施日']; });
+}
+
+// ---- 会社のロゴ・会社名 ----
+var IMAGE_URL_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/]+={0,2}$/;
+/** 画像の data URL だけを通す（それ以外は空にする） */
+function safeImage(v) { return typeof v === 'string' && IMAGE_URL_RE.test(v) ? v : ''; }
+function currentLogo() { return safeImage(S.D ? S.D.logo : document.body.dataset.logo); }
+/** ログイン画面と上の帯に、ロゴと会社名を出す */
+function showBrand() {
+  var logo = currentLogo();
+  ['loginLogo', 'brandLogo'].forEach(function (id) {
+    var im = $(id);
+    if (!im) return;
+    if (logo) im.src = logo; else im.removeAttribute('src');
+    im.hidden = !logo;
+  });
+  if (S.D) {
+    var company = S.D.settings['自社名'] || '';
+    $('brand').textContent = (company ? company + ' ' : '') + S.D.appName;
+    $('loginCompany').textContent = company;
+    document.body.dataset.logo = logo;
+  }
+}
+/** 印刷の見出しに付けるロゴ */
+function printLogoHtml() { var logo = currentLogo(); return logo ? '<img class="plogo" src="' + esc(logo) + '" alt="">' : ''; }
+
+var toastTimer = null;
+function toast(text, isError) {
+  var t = $('toast');
+  t.textContent = text; t.className = isError ? 'err' : ''; t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.hidden = true; }, isError ? 6000 : 2600);
+}
+
+var busyCount = 0;
+function setBusy(on) { busyCount = Math.max(0, busyCount + (on ? 1 : -1)); $('busy').hidden = busyCount === 0; }
+
+/** サーバーの関数を呼ぶ。トークンは自動で付ける */
+/** 裏で動いている呼び出しの数（上の帯は出さないもの）。body の data-bg に出す */
+var bgCount = 0;
+function setBg(on) { bgCount = Math.max(0, bgCount + (on ? 1 : -1)); document.body.dataset.bg = String(bgCount); }
+function call(fn, params, quiet) {
+  var busy = quiet ? setBg : setBusy;
+  return new Promise(function (resolve, reject) {
+    var p = {};
+    Object.keys(params || {}).forEach(function (k) { p[k] = params[k]; });
+    if (fn !== 'login' && fn !== 'loginWithRemember') p.token = S.token;
+    busy(true);
+    google.script.run
+      .withSuccessHandler(function (r) {
+        busy(false);
+        if (r && r.ok) { resolve(r); return; }
+        // 古いトークンで出した呼び出しの返事（ログインし直したあとに届いたもの）では、何もしない
+        if (r && r.error === 'unauthorized' && fn !== 'login' && fn !== 'loginWithRemember' && p.token === S.token) { sessionExpired(); }
+        reject(r || { message: 'サーバーから返事がありませんでした。' });
+      })
+      .withFailureHandler(function () {
+        busy(false);
+        reject({ message: '通信に失敗しました。電波の状態を確かめて、もう一度試してください。' });
+      })[fn](p);
+  });
+}
+function failToast(e) { if (!e || e.error !== 'unauthorized') toast((e && e.message) || 'うまくいきませんでした。', true); }
+
+function copyText(text) {
+  var done = function () { toast('コピーしました'); };
+  var fallback = function () {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    var okCopy = false;
+    try { okCopy = document.execCommand('copy'); } catch (e) { okCopy = false; }
+    document.body.removeChild(ta);
+    if (okCopy) done(); else toast('コピーできませんでした。手で選んでコピーしてください。', true);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
+}
+
+// ===========================================================================
+// ログイン
+// ===========================================================================
+/** 起動中・入り直し中に出す画面（ログイン画面は出さない。v0.29.0） */
+function showSplash(msg) {
+  var b = $('bootSplash'); if (!b) return;
+  $('bsMsg').textContent = msg || '読み込んでいます…';
+  b.hidden = false;
+}
+function hideSplash() { var b = $('bootSplash'); if (b) b.hidden = true; }
+function toLogin(message) {
+  hideSplash();
+  closeScanner();
+  urlTicketWrite('');
+  resetState();
+  $('modals').innerHTML = '';
+  $('shell').hidden = true;
+  $('main').innerHTML = '';
+  $('login').hidden = false;
+  $('loginPw').value = '';
+  clearTimeout(viewTimer); viewTimer = null; viewSaved = '';
+  showBrand();
+  var m = $('loginMsg');
+  m.textContent = message || ''; m.hidden = !message;
+  fillLoginForm();
+}
+/** ログイン画面に、覚えてあるスタッフIDとチェックを戻す */
+function fillLoginForm() {
+  var id = keepGet(LOGIN_ID_KEY);
+  if (id && !$('loginId').value) $('loginId').value = id;
+  $('loginKeep').checked = !!id;
+}
+/**
+ * 「ログインしたままにする」を選んである端末なら、合言葉でログインし直す（画面には「ログインしています…」を出す）。
+ * 合言葉が使えなくなっていたら（期限・ログアウト・パスワードの変更）、合言葉を捨ててログイン画面にする。
+ * @return {boolean} 自動ログインを始めたか
+ */
+var autoBusy = false;
+var refreshBusy = false;
+function autoLogin() {
+  var secret = rememberNow();
+  if (!secret || autoBusy) return autoBusy;
+  autoBusy = true;
+  if (S.D && !S.restoreLoc) { S.restoreLoc = currentLoc(); delete S.restoreLoc.m; }
+  var ticketKeep = S.ticket;
+  toLogin('ログインしています…');
+  S.ticket = ticketKeep;
+  showSplash('ログインしています…');
+  $('login').hidden = true;
+  $('loginBtn').disabled = true;
+  S.timing = { t0: Date.now() };
+  call('loginWithRemember', { remember: secret, withRest: !isPhone() }, true).then(function (r) {
+    autoBusy = false; $('loginBtn').disabled = false;
+    afterLogin(r);
+  }).catch(function (err) {
+    autoBusy = false; $('loginBtn').disabled = false;
+    hideSplash(); $('login').hidden = false;
+    var gone = err && err.error === 'unauthorized';
+    if (gone) keepSet(REMEMBER_KEY, '');
+    // 待っている間に打ったパスワードや、外したチェックは、そのままにする（メッセージだけ変える）
+    var m = $('loginMsg');
+    m.textContent = gone ? 'ログインの保存が切れました。もう一度ログインしてください。' : 'ログインし直せませんでした。パスワードを入れてログインしてください。';
+    m.hidden = false;
+    if (!document.activeElement || document.activeElement === document.body) $('loginPw').focus();
+  });
+  return true;
+}
+/** サーバーに「ログインし直してください」と言われたとき */
+function sessionExpired() {
+  if (autoBusy || resumeBusy) return;
+  // URLに読み直し用の券があれば、まずそれでログインを戻す（v0.28.0。セッションの控えが消えたときも、ログアウトしないように）
+  if (S.ticket && !S.ticketTried) { S.ticketTried = true; resumeFromTicket(S.ticket, '時間がたったので、もう一度ログインしてください。'); return; }
+  if (!autoLogin()) toLogin('時間がたったので、もう一度ログインしてください。');
+}
+
+// ---- 最初の読み込みは2段階 ----
+//   core … 最初の画面に要るぶん（顧客・機器・設定）。ログインの返事に付いてくる
+//   rest … 残り（対応履歴・修理・ライセンス・要対応など）。画面を出したあと、裏で読む
+// rest が届くまでは S.ready が false。届く前の画面は「読み込んでいます…」を出す。
+var REST_EMPTY = { diagnostics: [], licenses: [], allocations: [], repairs: [], activities: [], activityTotal: 0, activityLoadedAfter: '', activityMonthCounts: {},
+  maintenances: [], memos: [], notices: [], rentals: [], loans: [], photoCounts: {}, wininfo: [], feed: null, alerts: [], notify: null };
+var START_KEY = { 'PC管理': 'customers', '対応履歴': 'activities', '修理履歴': 'repairs' };
+
+/** ログインの返事を画面に入れる。パソコンは、残りのデータも同じ返事で届く（v0.20.0。もう1往復しない） */
+function afterLogin(r) {
+  restBusy = null;     // 前のログインのときに頼んでいた残りのデータは待たない（読み直し中に入り直したとき、待ち続けないように）
+  if (!r.rest) { applyCore(r.boot, r.token, r.resume); if (!isPhone()) loadRest(); return; }
+  S.restAsked = Date.now();
+  var token = r.token, done = null;
+  // 届いている残りを入れるまでの間に、画面が「残りを読む」と言っても、もう一度は頼まない
+  var mine = new Promise(function (resolve) { done = resolve; });
+  restBusy = mine;
+  applyCore(r.boot, r.token, r.resume);
+  // 先に最初の画面を出してから、残りを入れる
+  setTimeout(function () {
+    if (restBusy === mine) restBusy = null;
+    if (S.D && S.token === token && !S.ready) applyRest(r.rest);
+    done();
+  }, 0);
+}
+function applyCore(core, token, resume) {
+  S.token = token;
+  S.ticketTried = false;     // ログインできたら、次の時間切れでもまた券を試せるように
+  if (resume) { urlTicketWrite(resume); ticketAt = Date.now(); } else ticketAt = 0;
+  Object.keys(REST_EMPTY).forEach(function (k) { core[k] = Array.isArray(REST_EMPTY[k]) ? [] : REST_EMPTY[k] && typeof REST_EMPTY[k] === 'object' ? {} : REST_EMPTY[k]; });
+  S.D = core;
+  S.alerts = [];
+  S.ready = false; S.restFailed = false;
+  applyViewState(core.viewState);
+  try { sessionStorage.setItem(TOKEN_KEY, token); } catch (e) { /* 保存できなくても続ける */ }
+  reindex();
+  $('login').hidden = true;
+  $('shell').hidden = false;
+  hideSplash();
+  showBrand();
+  $('who').textContent = core.me.name + '（' + core.me.role + '）';
+  // 開いた直後の画面（スタッフが自分で選ぶ。選んでいなければ全体の設定）。スマホは、いつも「入力」から
+  draftsPurge();
+  var loc = S.restoreLoc; S.restoreLoc = null;
+  if (!restoreLoc(loc)) go(rootView());
+  S.timing.first = Date.now() - S.timing.t0;
+  S.timing.coreMs = core.coreMs;
+  S.timing.coreCache = core.coreCache;
+}
+function applyRest(rest) {
+  var D = S.D;
+  if (!D) return;
+  setTimeout(function () { if (S.D && (S.restoreY || S.restoreRec) && !$('modals').children.length) afterRestore(); else { S.restoreY = 0; S.restoreRec = ''; } }, 0);
+  // 届くまでの間に画面で足した記録は、消さずに残す。
+  // ただし残すのは「返事を待っているもの」と「残りのデータを頼んだあとに保存できたもの」だけ。
+  // それより前に保存したものは、届いたデータのほうが新しい（ほかの人が直した・消したかもしれない）ので、届いたほうを使う
+  Object.keys(COLLECTION).forEach(function (key) {
+    var name = COLLECTION[key], local = D[name], idField = D.schema[key] && D.schema[key].idField;
+    if (!Array.isArray(rest[name]) || !Array.isArray(local) || !local.length || !idField || REST_EMPTY[name] === undefined) return;
+    local.slice().reverse().forEach(function (rec) {
+      var newer = rec._pending || (S.savedAt[key + ':' + rec[idField]] || 0) >= (S.restAsked || 0);
+      if (newer) upsert(rest[name], idField, rec);
+    });
+  });
+  Object.keys(REST_EMPTY).forEach(function (k) { if (rest[k] !== undefined) D[k] = rest[k]; });
+  S.alerts = rest.alerts || [];
+  S.ready = true; S.restFailed = false; S.alertsStale = false;
+  S.timing.all = Date.now() - S.timing.t0;
+  S.timing.restMs = rest.restMs;
+  S.timing.restCache = rest.restCache;
+  reindex();
+  if ($('modals').children.length) S.renderPending = true; else render();
+  // 残りのデータが届く前に開いていた窓（スマホでは、要るときまで読まない）の、機器・元の対応などの選択肢と、収集ツールの欄を直す
+  Array.prototype.forEach.call($('modals').querySelectorAll('form[data-form]'), function (form) {
+    if (!D.schema[form.dataset.form]) return;
+    refreshDependents(form);
+    var box = form.querySelector('#diagBox');
+    if (box && form.dataset.id) box.innerHTML = diagBoxInner(form.dataset.id);
+    if (!formDirty(form)) form._initial = formSnapshot(form);
+  });
+  if (S.view === 'home' && !$('modals').children.length) drawHomeHits();
+  checkFeed(false);
+}
+/**
+ * 配信フォルダーを確かめる（裏で）。新しい Windows情報・Tips が届いていたら、画面に入れる。
+ * サーバーは、6時間に1回だけドライブを見にいく。force は「いますぐ更新」。
+ */
+function checkFeed(force) {
+  if (!S.D || !S.D.feed || !S.D.feed.on) return Promise.resolve(null);
+  return call('refreshFeed', { force: !!force }, !force).then(function (r) {
+    if (!S.D) return r;
+    S.D.feed = r.feed;
+    if (r.wininfo) S.D.wininfo = r.wininfo;
+    if (r.tips) { S.D.tips = r.tips; S.tipIx = null; }
+    if (r.added || r.addedTips) {
+      toast('配信が届きました：Windows情報 ' + r.added + '件、Tips ' + r.addedTips + '件' + (r.added ? '（お客様には、まだ見せていません）' : ''));
+    } else if (force) toast(r.message || '新しい配信はありませんでした。', !r.feed.status || !r.feed.status.ok);
+    if (r.added || r.addedTips || force) softRender();
+    return r;
+  }).catch(function (e) { if (force) failToast(e); return null; });
+}
+var restBusy = null;      // 残りのデータを読んでいる途中なら、その約束（二重に読まないため）
+function loadRest() {
+  if (restBusy) return restBusy;
+  S.restFailed = false;
+  var token = S.token;
+  S.restAsked = Date.now();
+  var mine = call('getBootstrap', { part: 'rest' }).then(function (rest) {
+    if (restBusy === mine) restBusy = null;
+    if (S.D && S.token === token) applyRest(rest);
+  }).catch(function (e) {
+    if (restBusy === mine) restBusy = null;
+    if (!S.D || S.token !== token) return;
+    S.restFailed = true;
+    if (!$('modals').children.length) render();
+    failToast(e);
+  });
+  restBusy = mine;
+  return mine;
+}
+/** 残りのデータ（対応履歴・修理・ライセンス・要対応など）が要るときに呼ぶ。もう読んであれば、何もしない */
+function ensureRest() {
+  if (!S.D || S.ready) return Promise.resolve();
+  return loadRest();
+}
+/** ログインしたまま開き直したとき：core と rest を同時に呼ぶ（待ち時間が短いほうに合う） */
+function boot(token) {
+  S.token = token;
+  S.timing = { t0: Date.now() };
+  // スマホは「入力」の画面から始まるので、残りのデータは、要るときまで読まない
+  if (!isPhone()) S.restAsked = Date.now();
+  var restP = isPhone() ? null : call('getBootstrap', { part: 'rest' });
+  if (restP) { restP.catch(function () { /* 下でまとめて扱う */ }); restBusy = restP; }
+  return call('getBootstrap', { part: 'core' }).then(function (core) {
+    applyCore(core, token);
+    if (!restP) return;
+    var mine = restP.then(function (rest) {
+      if (restBusy === mine) restBusy = null;
+      if (S.D && S.token === token) applyRest(rest);
+    }, function (e) {
+      if (restBusy === mine) restBusy = null;
+      if (!S.D || S.token !== token) return;
+      S.restFailed = true;
+      if (!$('modals').children.length) render();
+      failToast(e);
+    });
+    restBusy = mine;
+  });
+}
+function notReadyHtml() {
+  return S.restFailed
+    ? '<p class="empty" id="restFailed">データを読み込めませんでした。<button type="button" class="btn small" data-act="retryRest">もう一度読み込む</button></p>'
+    : '<p class="empty" id="restLoading">読み込んでいます…</p>';
+}
+
+$('loginForm').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var btn = $('loginBtn');
+  btn.disabled = true;
+  $('loginMsg').hidden = true;
+  S.timing = { t0: Date.now() };
+  var keep = $('loginKeep').checked;
+  call('login', { staffId: $('loginId').value, password: $('loginPw').value, remember: keep, withRest: !isPhone() })
+    .then(function (r) {
+      // ログインできてから覚える（まちがえたものは覚えない）。チェックを外して入ったら、前に覚えたものも消す
+      keepSet(REMEMBER_KEY, keep && r.remember ? r.remember : '');
+      keepSet(LOGIN_ID_KEY, keep ? r.me.id : '');
+      afterLogin(r);
+      if (r.rememberFailed) toast('ログインはできましたが、「ログインしたまま」は保存できませんでした。次に開いたときは、もう一度ログインしてください。', true);
+    })
+    .catch(function (err) {
+      S.token = '';
+      var m = $('loginMsg'); m.textContent = (err && err.message) || 'ログインできませんでした。'; m.hidden = false;
+    })
+    .then(function () { btn.disabled = false; });
+});
+
+</script>

@@ -45,6 +45,16 @@ function brandCached_() {
   return brand;
 }
 
+/**
+ * 管理画面の部品（AdminCss・AdminJs…）を、Admin.html の中に読み込む（v0.41.0）。
+ * Admin.html から <?!= include_('AdminCss') ?> のように呼ぶ。部品の中では <?= ?> は使えない（そのまま出る）。
+ */
+const ADMIN_PARTS = ['AdminCss', 'AdminJsCore', 'AdminJsViews', 'AdminJsMobile', 'AdminJsUi', 'AdminJsLayout', 'AdminJsPhoto', 'AdminJsActions'];
+function include_(name) {
+  if (ADMIN_PARTS.indexOf(name) === -1) throw new Error('読み込めない部品です: ' + name);
+  return HtmlService.createHtmlOutputFromFile(name).getContent();
+}
+
 function messagePage_(title, message) {
   const html = '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"></head>' +
     '<body style="font-family:sans-serif;padding:32px;color:#1f2933">' +

@@ -1,0 +1,302 @@
+<script>
+'use strict';
+// AdminJsUi.html … 管理画面の動き（重ねる窓・印刷・添付・月次レポート）
+// Admin.html から読み込む。順番に意味がある（Admin.html の並び順で読み込むこと）
+// ===========================================================================
+// 重ねる窓
+// ===========================================================================
+function openModal(html, narrow, sheet) {
+  var wrap = document.createElement('div');
+  wrap.className = 'overlay' + (sheet ? ' sheet' : '');
+  wrap.innerHTML = '<div class="dialog' + (narrow ? ' narrow' : '') + '" role="dialog" aria-modal="true">' + html + '</div>';
+  $('modals').appendChild(wrap);
+  // スマホでは、開いた瞬間にキーボードを出さない（候補やボタンが隠れるので）。押したところから打ち始める
+  var first = wrap.querySelector(isPhone() ? 'button.primary' : 'input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea, button.primary');
+  if (first && !isPhone()) first.focus();
+  armBack();
+  return wrap;
+}
+function closeModal(el) {
+  var wrap = el && el.closest ? el.closest('.overlay') : null;
+  if (!wrap) { var all = $('modals').children; wrap = all[all.length - 1]; }
+  if (wrap && wrap.querySelector('form[data-form]')) { S.openRec = ''; saveLocSoon(); }
+  if (wrap && wrap.classList.contains('scanwrap') && SCAN && SCAN.pages && SCAN.pages.length && !wrap._confirmed) { ACT.scanClose(); return; }   // 撮りためたページがあれば、確かめてから
+  if (wrap && wrap.classList.contains('scanwrap')) closeScanner();     // カメラを止める
+  if (wrap && wrap._blobUrl) { try { URL.revokeObjectURL(wrap._blobUrl); } catch (e) { /* そのまま */ } }
+  if (wrap) {
+    // 入力の途中で閉じたときは、下書きに残す（まちがって「やめる」や「戻る」を押しても、打ち直さなくてよいように）
+    var dform = wrap.querySelector('form[data-form]');
+    if (dform && !wrap._noDraft && S.D && S.D.schema[dform.dataset.form] && draftable(dform) && formDirty(dform)) {
+      draftPut(dform);
+      if (dform._draftId && draftById(dform._draftId)) {
+        toast('下書きに残しました（上の「続きから」で戻せます' + (dform._photos && dform._photos.length ? '。写真・PDFは残りません' : '') + '）');
+        S.renderPending = true;
+      }
+    }
+    wrap.remove();
+  }
+  // 窓を開いている間に届いたデータは、閉じたときに画面へ出す
+  if (S.renderPending && S.D && !$('modals').children.length) render();
+}
+function confirmDialog(title, message, okLabel, danger, noLabel) {
+  return new Promise(function (resolve) {
+    var wrap = openModal('<header><h2>' + esc(title) + '</h2></header><div class="body"><p style="margin:0;white-space:pre-wrap">' + esc(message) + '</p></div>' +
+      '<footer><span class="grow"></span><button type="button" class="btn" data-answer="no">' + esc(noLabel || 'やめる') + '</button><button type="button" class="btn ' + (danger ? 'danger' : 'primary') + '" data-answer="yes">' + esc(okLabel) + '</button></footer>', true, true);
+    wrap.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-answer]');
+      if (!b) return;
+      wrap.remove();
+      resolve(b.dataset.answer === 'yes');
+      // 窓を開いている間に届いたデータは、閉じたときに画面へ出す（closeModal と同じ）
+      setTimeout(function () { if (S.renderPending && S.D && !$('modals').children.length) render(); }, 0);
+    });
+  });
+}
+function infoDialog(title, bodyHtml) {
+  openModal('<header><h2>' + esc(title) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body">' + bodyHtml + '</div>' +
+    '<footer><span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>', true, true);
+}
+
+
+// ===========================================================================
+// 印刷（ブラウザの印刷でPDFにする）。印刷するものを #printArea に写し、ほかは印刷のときだけ隠す
+// ===========================================================================
+function printHtml(html) {
+  $('printArea').innerHTML = html;
+  document.body.classList.add('printing');
+  var done = function () {
+    document.body.classList.remove('printing');
+    $('printArea').innerHTML = '';
+    window.removeEventListener('afterprint', done);
+  };
+  window.addEventListener('afterprint', done);
+  window.print();
+}
+
+// ---- 顧客ごとの印刷（会社の情報・機器の一覧・ライセンス・レイアウト図）
+//   認証情報（ID・パスワード）は入れない。備考は、選んだときだけ入れる（社内用）。
+/** 印刷用の表。どの行も空の列は出さない（No. は残す）。tight に入れた見出しの列は折り返さない */
+function ptableHtml(headers, rows, tight, loose) {
+  var keep = headers.map(function (h, i) { return i === 0 || rows.some(function (r) { return r[i] !== '' && r[i] !== null && r[i] !== undefined; }); });
+  // nw … 折り返さない列（日付・種類など短いもの）。brk … 文字の途中でも折り返してよい列（シリアルなど、空白の無い長い文字）
+  var cls = function (i) { return tight && tight.indexOf(headers[i]) !== -1 ? ' class="nw"' : loose && loose.indexOf(headers[i]) !== -1 ? ' class="brk"' : ''; };
+  return '<table class="ptable"><thead><tr>' + headers.map(function (h, i) { return keep[i] ? '<th>' + esc(h) + '</th>' : ''; }).join('') + '</tr></thead><tbody>' +
+    rows.map(function (r) { return '<tr>' + r.map(function (v, i) { return keep[i] ? '<td' + cls(i) + '>' + esc(v) + '</td>' : ''; }).join('') + '</tr>'; }).join('') + '</tbody></table>';
+}
+/**
+ * 印刷する中身を作る。
+ * opt: {info, devices, licenses, notes（備考も入れる）, gone（廃棄した機器も入れる）}、layouts: [{name, data, ratio}]
+ */
+function customerPrintHtml(customerId, opt, layouts) {
+  var D = S.D, c = IDX.cust[customerId];
+  var mine = function (r) { return r['顧客ID'] === customerId; };
+  var html = '<h1 class="ptitle">' + printLogoHtml() + esc(c['顧客名']) + ' 様　<small>' + esc(D.settings['自社名']) + '　' + esc(D.today) + ' 時点</small></h1>';
+  if (opt.info) {
+    var rows = [['ふりがな', c['ふりがな']], ['住所', [c['郵便番号'] ? '〒' + c['郵便番号'] : '', c['住所']].filter(function (x) { return x; }).join(' ')], ['電話', c['電話']], ['メール', c['メール']],
+      ['ご担当者', c['先方担当者']], ['保守契約', c['保守契約']], ['最後の保守', IDX.lastMaint[customerId] || '']];
+    if (opt.notes) rows.push(['備考', c['備考']]);
+    html += '<section class="psec" id="pInfo"><h2>会社の情報</h2><table class="ptable pinfo"><tbody>' +
+      rows.filter(function (r) { return r[1]; }).map(function (r) { return '<tr><th>' + esc(r[0]) + '</th><td>' + esc(r[1]) + '</td></tr>'; }).join('') + '</tbody></table></section>';
+  }
+  if (opt.devices) {
+    var devs = D.devices.filter(mine).filter(function (d) { return opt.gone || d['状況'] !== '廃棄'; })
+      .sort(function (a, b) { return cmp(a['設置場所'], b['設置場所']) || cmp(a['部署'], b['部署']) || cmp(a['ふりがな'] || a['利用者'], b['ふりがな'] || b['利用者']) || cmp(a['機器ID'], b['機器ID']); });
+    var kinds = {};
+    devs.forEach(function (d) { var k = d['種類'] || '（種類なし）'; kinds[k] = (kinds[k] || 0) + 1; });
+    var head = ['No.', '利用者', '部署', '設置場所', '種類', 'メーカー・機種', 'シリアル', 'コンピューター名', 'OS', '購入日', '保証期限', '状況'];
+    if (opt.notes) head.push('備考');
+    html += '<section class="psec" id="pDevices"><h2>機器の一覧　' + devs.length + '台' +
+      (devs.length ? '<small>（' + Object.keys(kinds).sort(function (a, b) { return kinds[b] - kinds[a]; }).map(function (k) { return esc(k) + ' ' + kinds[k]; }).join('、') + '）</small>' : '') + '</h2>' +
+      (devs.length ? ptableHtml(head, devs.map(function (d, i) {
+        var g = IDX.diag[d['機器ID']] || {};
+        var row = [i + 1, d['利用者'], d['部署'], d['設置場所'], d['種類'], [d['メーカー'], d['機種名']].filter(function (x) { return x; }).join(' '), d['シリアル'], g['コンピューター名'] || '', String(g['OS'] || '').replace(/^Microsoft\s+/i, ''), d['購入日'], d['保証期限'], d['状況']];
+        if (opt.notes) row.push(d['備考']);
+        return row;
+      }), ['No.', '種類', 'OS', '購入日', '保証期限', '状況'], ['シリアル', 'コンピューター名']) : '<p class="pnote">機器は登録されていません。</p>') + '</section>';
+  }
+  if (opt.licenses) {
+    var lics = D.licenses.filter(mine).sort(function (a, b) { return cmp(a['製品名'], b['製品名']) || cmp(a['有効期限'], b['有効期限']); });
+    var lhead = ['No.', '製品名', '契約期間', '数量', '割当', '有効期限', '使っている機器'];
+    if (opt.notes) lhead.push('備考');
+    html += '<section class="psec" id="pLicenses"><h2>ライセンス　' + lics.length + '件</h2>' +
+      (lics.length ? ptableHtml(lhead, lics.map(function (l, i) {
+        var al = IDX.alloc[l['ライセンスID']] || [];
+        var n = daysUntil(l['有効期限']);
+        var row = [i + 1, l['製品名'], l['契約期間'], l['数量'], al.length, l['有効期限'] ? l['有効期限'] + (n !== null && n < 0 ? '（期限切れ）' : '') : '', al.map(function (a) { return devLabel(a['機器ID']); }).join('、')];
+        if (opt.notes) row.push(l['備考']);
+        return row;
+      }), ['No.', '数量', '割当', '有効期限']) : '<p class="pnote">ライセンスは登録されていません。</p>') + '</section>';
+  }
+  (layouts || []).forEach(function (l, i) {
+    html += '<section class="psec play" id="pLayout' + i + '"><h2>レイアウト図　' + esc(l.name) + '</h2>' +
+      layoutCanvasHtml(l.data, { edit: false, sels: [], ratio: l.ratio, id: 'layPrint' + i }) + '</section>';
+  });
+  return '<div class="cprint">' + html + '</div>';
+}
+/** レイアウト図を全部読む（背景の画像の縦横比も測る）。→ [{name, data, ratio}] */
+function loadLayoutsForPrint(customerId) {
+  return call('listLayouts', { customerId: customerId }).then(function (r) {
+    var out = [];
+    return r.layouts.reduce(function (chain, l) {
+      return chain.then(function () { return call('getLayout', { layoutId: l['レイアウトID'] }); }).then(function (res) {
+        var data = res.layout;
+        return new Promise(function (resolve) {
+          var push = function (ratio) { out.push({ name: l['名前'], data: data, ratio: ratio }); resolve(); };
+          if (!data.imageBase64) { push(4 / 3); return; }
+          var img = new Image();
+          img.onload = function () { push(img.naturalWidth && img.naturalHeight ? Math.min(4, Math.max(0.4, img.naturalWidth / img.naturalHeight)) : 4 / 3); };
+          img.onerror = function () { push(4 / 3); };
+          img.src = 'data:' + data.imageMimeType + ';base64,' + data.imageBase64;
+        });
+      });
+    }, Promise.resolve()).then(function () { return out; });
+  });
+}
+
+// ===========================================================================
+// 添付
+// ===========================================================================
+function fileSizeText(n) {
+  if (typeof n !== 'number') return '';
+  return n >= 1024 * 1024 ? (Math.round(n / 1024 / 1024 * 10) / 10) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+}
+function loadAttachments() {
+  var id = S.customerId;
+  if (S.files && S.files.customerId === id) return;
+  S.files = null;
+  call('listAttachments', { customerId: id }).then(function (r) {
+    S.files = { customerId: id, list: r.attachments, shared: r.shared };
+    var el = $('filesBox');
+    if (el && S.customerId === id) el.innerHTML = filesBoxHtml();
+  }).catch(failToast);
+}
+function filesBoxHtml() {
+  var f = S.files;
+  if (!f || f.customerId !== S.customerId) return '<p class="empty">読み込んでいます…</p>';
+  return '<div class="pad"><div class="filerow"><input type="file" id="attachFile" aria-label="添付するファイル" style="max-width:100%">' +
+      '<button type="button" class="btn primary" data-act="uploadAttachment">添付する</button></div>' +
+      '<p class="note" style="margin-top:6px">' + Math.floor(S.D.attachMaxBytes / 1024 / 1024) + 'MBまで。使える種類：' + esc(S.D.attachExtensions.join('・')) + '</p>' +
+      (f.shared ? '' : '<p class="note">設定「添付をリンクで共有する」が「いいえ」なので、開けるのはドライブの権限がある人だけです。お客様ページには出せません。</p>') + '</div>' +
+    tableHtml('cFiles', [
+      { label: 'ファイル', cls: 'title strong', html: function (a) {
+        if (a['対象区分'] === '収集レポート') return '<button type="button" class="link" data-act="openDiagReport" data-id="' + esc(a['添付ID']) + '">' + esc(a['ファイル名']) + '</button><span class="minor">収集ツールのレポート（' + esc(devLabel(a['対象ID']) || a['対象ID']) + '）</span>';
+        return '<a href="' + esc(a.url) + '" target="_blank" rel="noopener">' + esc(a['ファイル名']) + '</a>' + (a['対象区分'] ? '<span class="minor">' + esc(a['対象区分'] + ' ' + a['対象ID']) + ' の写真</span>' : ''); }, key: function (a) { return a['ファイル名']; } },
+      { label: '大きさ', cls: 'nowrap', html: function (a) { return esc(fileSizeText(a['サイズ'])); } },
+      { label: '登録', cls: 'nowrap', ml: '登録', html: function (a) { return esc(String(a['登録日時']).slice(0, 10)) + '<span class="minor">' + esc(a['登録者']) + '</span>'; }, key: function (a) { return a['登録日時']; } },
+      { label: 'お客様ページ', cls: 'nowrap', html: function (a) {
+        var on = a['お客様に見せる'] === 'はい';
+        if (a['対象区分'] === '収集レポート') return pill('社内だけ');
+        return (on ? pill('見せる', 'ok') : pill('見せない')) + (f.shared ? ' <button type="button" class="btn small" data-act="toggleAttachment" data-id="' + esc(a['添付ID']) + '" data-on="' + (on ? '1' : '') + '">' + (on ? '見せないにする' : '見せるにする') + '</button>' : '');
+      } },
+      { label: '', cls: 'nowrap', html: function (a) { return S.D.me.isAdmin || (a['対象区分'] && a['自分のもの']) ? '<button type="button" class="btn small danger" data-act="deleteAttachment" data-id="' + esc(a['添付ID']) + '">削除</button>' : ''; } }
+    ], f.list, { empty: '添付はまだありません。' }) +
+    '<p class="more">「見せる」にした添付は、顧客の「ポータル表示」で「資料」を選んでいると、お客様ページに出ます。</p>';
+}
+/** ロゴにする画像を、決めた大きさ（文字数）に収まるまで小さくする。透明なところは残す（PNG）。だめなら白地の JPEG */
+function shrinkLogo(file) {
+  return loadImageFile(file).then(function (img) {
+    var sides = [360, 280, 220, 160, 120], i, url;
+    for (i = 0; i < sides.length; i++) {
+      url = drawImage(img, sides[i], 'image/png');
+      if (safeImage(url) && url.length <= S.D.logoMaxChars) return url;
+    }
+    for (i = 0; i < sides.length; i++) {
+      url = drawImage(img, sides[i], 'image/jpeg', 0.85, '#ffffff');
+      if (safeImage(url) && url.length <= S.D.logoMaxChars) return url;
+    }
+    throw { message: 'この画像は、ロゴ用に小さくできませんでした。別の画像で試してください。' };
+  });
+}
+/** ファイルを読み、Base64にして返す */
+function readFileBase64(file) {
+  return new Promise(function (resolve, reject) {
+    var fr = new FileReader();
+    fr.onload = function () { var str = String(fr.result); resolve(str.slice(str.indexOf(',') + 1)); };
+    fr.onerror = function () { reject({ message: 'ファイルを読めませんでした。' }); };
+    fr.readAsDataURL(file);
+  });
+}
+
+// ===========================================================================
+// 月次レポート
+// ===========================================================================
+function loadReport() {
+  var id = S.customerId;
+  if (!S.reportMonth) S.reportMonth = S.D.today.slice(0, 7);
+  var month = S.reportMonth;
+  if (S.report && S.report.customerId === id && S.report.month === month) return;
+  S.report = null;
+  call('getMonthlyReport', { customerId: id, month: month }).then(function (r) {
+    S.report = { customerId: id, month: month, data: r.report, published: r.published || null, portal: !!r.portalReport };
+    if (r.published) S.reportNote = r.published.note || '';      // 公開している月は、そのときのひとことにする（打っていたものは、公開していない月だけ残す）
+    var ta = $('reportNote'); if (ta && S.customerId === id && S.reportMonth === month) ta.value = S.reportNote;
+    var el = $('reportBox');
+    if (el && S.customerId === id && S.reportMonth === month) el.innerHTML = reportBoxHtml();
+  }).catch(function (e) {
+    failToast(e);
+    S.report = { customerId: id, month: month, data: null };
+    var el = $('reportBox'); if (el) el.innerHTML = reportBoxHtml();
+  });
+}
+function reportBoxHtml() {
+  var head = '<div class="pad"><div class="row"><div class="field" style="flex:0 1 200px"><label for="reportMonth">月</label>' +
+    '<input type="month" id="reportMonth" data-reportmonth="1" max="' + esc(S.D.today.slice(0, 7)) + '" value="' + esc(S.reportMonth || S.D.today.slice(0, 7)) + '"></div>' +
+    '<button type="button" class="btn primary" data-act="printReport" style="align-self:flex-end">印刷・PDFにする</button></div>' +
+    '<div class="field" style="margin-top:10px"><label for="reportNote">ひとこと（レポートの最後に入ります。お客様ページに出すときは一緒に残ります）</label>' +
+    '<textarea id="reportNote" rows="2" data-reportnote="1" maxlength="' + (S.D.reportNoteMax || 300) + '">' + esc(S.reportNote) + '</textarea></div>' +
+    '<p class="note" style="margin-top:6px">お客様に渡す用です。備考・社内メモ・認証情報・修理の内容は入りません。対応の内容はそのまま入るので、渡す前に目を通してください。</p></div>';
+  var r = S.report;
+  if (!r || r.customerId !== S.customerId || r.month !== S.reportMonth) return head + '<p class="empty">読み込んでいます…</p>';
+  if (!r.data) return head + '<p class="empty">このレポートは作れませんでした。月を選び直してください。</p>';
+  return head + reportPubHtml(r) + '<div class="scroll" style="border-top:1px solid var(--line-soft)"><div id="reportSheet">' + reportHtml(r.data, S.reportNote) + '</div></div>';
+}
+/** お客様ページに出す・出さない（v0.30.0） */
+function reportPubHtml(r) {
+  var onlyPub = S.D.settings['レポートは公開した月だけ見せる'] !== 'いいえ';
+  var body;
+  if (!r.portal) body = '<span class="note">お客様ページに月次レポートは出していません（顧客の情報を編集して、「ポータル表示」で「レポート」にチェックすると出せます）。</span>';
+  else if (!onlyPub) body = '<span class="note">設定「レポートは公開した月だけ見せる」が「いいえ」なので、終わった月はお客様ページで自動で見られます' + (r.month === S.D.today.slice(0, 7) ? '（今月は、月が終わってから）' : '') + '。</span>';
+  else if (!S.D.me.isAdmin) body = r.published ? pill('お客様ページに出しています', 'ok') + '<span class="note">出す・やめるは管理者がします。</span>' : pill('お客様ページには出していません') + '<span class="note">出すのは管理者がします。</span>';
+  else body = (r.published ? pill('お客様ページに出しています', 'ok') + '<span class="note">' + esc(r.published.at) + '　' + esc(r.published.by) + '</span>' +
+      '<button type="button" class="btn small" data-act="publishReport" data-on="1">ひとことを直して出し直す</button><button type="button" class="btn small" data-act="publishReport" data-on="0">出すのをやめる</button>'
+    : pill('お客様ページには出していません') + '<button type="button" class="btn small primary" data-act="publishReport" data-on="1">この月をお客様ページに出す</button>');
+  return '<div class="pad row reportpub" id="reportPub">' + body + '</div>';
+}
+/** レポートの本体。お客様ページ（Portal.html）にも同じものがある */
+function reportHtml(d, note) {
+  var ym = d.month.split('-');
+  var tbl = function (heads, rows) {
+    return '<table><thead><tr>' + heads.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+  };
+  var none = function (text) { return '<p class="rnone">' + esc(text) + '</p>'; };
+  var sum = function (n, label) { return '<div><b>' + esc(n) + '</b><span>' + esc(label) + '</span></div>'; };
+  return '<div class="report">' +
+    '<div class="rhead"><div><h1>' + esc(d.customerName) + ' 様　' + Number(ym[0]) + '年' + Number(ym[1]) + '月のご報告</h1></div>' +
+    '<div class="rmeta">' + (d.provider ? esc(d.provider) + '<br>' : '') + '対象：' + esc(d.from) + ' 〜 ' + esc(d.to) + '<br>作成：' + esc(d.createdOn) + '</div></div>' +
+    '<div class="rsum">' + sum(d.summary.activities, '対応') + sum(d.summary.maintenances, '保守の実施') + sum(d.summary.repairsReceived, '修理の受付') + sum(d.summary.repairsDone, '修理の完了') + sum(d.summary.devices, '管理している機器') + '</div>' +
+    '<h2>対応したこと' + (d.summary.kinds.length ? '（' + d.summary.kinds.map(function (k) { return esc(k.name) + ' ' + k.count + '件'; }).join('・') + '）' : '') + '</h2>' +
+    (d.activities.length ? tbl(['日付', '種別', '内容', '状況'], d.activities.map(function (a) {
+      return '<tr><td class="nowrap">' + esc(a['受付日']) + '</td><td class="nowrap">' + esc(a['対応種別']) + (a['インシデント種別'] ? '<br><small>' + esc(a['インシデント種別']) + '</small>' : '') + '</td><td class="body">' + esc(a['内容']) + '</td><td class="nowrap">' + esc(a['ステータス']) + '</td></tr>';
+    })) : none('この月の対応はありませんでした。')) +
+    '<h2>保守の実施</h2>' +
+    (d.maintenances.length ? tbl(['日付', '種別', '内容'], d.maintenances.map(function (m) {
+      return '<tr><td class="nowrap">' + esc(m['実施日']) + '</td><td class="nowrap">' + esc(m['種別']) + '</td><td class="body">' + esc(m['内容']) + '</td></tr>';
+    })) : none('この月の保守の実施はありませんでした。')) +
+    '<h2>修理</h2>' +
+    (d.repairs.length ? tbl(['受付日', '件名', '種別', '状況', '完了日'], d.repairs.map(function (x) {
+      return '<tr><td class="nowrap">' + esc(x['受付日']) + '</td><td>' + esc(x['件名']) + '</td><td class="nowrap">' + esc(x['種別']) + '</td><td class="nowrap">' + esc(x['ステータス']) + '</td><td class="nowrap">' + (x['完了日'] ? esc(x['完了日']) : '—') + '</td></tr>';
+    })) : none('この月に動いた修理はありませんでした。')) +
+    '<h2>機器の状態（' + d.deviceKinds.map(function (k) { return esc(k.name) + ' ' + k.count + '台'; }).join('・') + '）</h2>' +
+    (d.deviceNotes.length ? tbl(['機器', 'お知らせしたいこと'], d.deviceNotes.map(function (n) {
+      return '<tr><td>' + esc(n.name) + '</td><td class="body">' + esc(n.note) + '</td></tr>';
+    })) : none('とくにお知らせすることはありません。')) +
+    '<h2>ライセンスの期限</h2>' +
+    (d.licenses.length ? tbl(['製品', '数量', '有効期限', ''], d.licenses.map(function (l) {
+      return '<tr><td>' + esc(l['製品名']) + '</td><td class="nowrap">' + (l['数量'] === '' ? '—' : esc(l['数量'])) + '</td><td class="nowrap">' + esc(l['有効期限']) + '</td><td class="nowrap">' + esc(l.state) + '</td></tr>';
+    })) : none('期限が近いライセンスはありません。')) +
+    (String(note || '').trim() ? '<h2>ひとこと</h2><div class="rnote">' + esc(note) + '</div>' : '') +
+    '<div class="rfoot">' + (d.provider ? esc(d.provider) : '') + '</div></div>';
+}
+
+
+</script>

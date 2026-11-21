@@ -1,6 +1,7 @@
 // サーバー側（.gs）の、Google のサービスを使わない部分のテスト。実行：npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
 import { loadGas } from './gas.mjs';
 
 const G = loadGas();
@@ -262,4 +263,17 @@ test('キャッシュの部品：もとになるシートは、どれも実在�
     for (const s of sheets) assert.ok(order.has(s), part + ' → ' + s);
   }
   for (const name of order) assert.ok(plain(G.SCHEMA)[name], '列の定義が無いシート：' + name);
+});
+
+test('管理画面の部品：Admin.html が読み込む部品と、include_ が許す部品が同じで、どれも実在する', () => {
+  const admin = readFileSync('Admin.html', 'utf8');
+  const used = [...admin.matchAll(/<\?!= include_\('(\w+)'\) \?>/g)].map((m) => m[1]);
+  assert.deepEqual(used, plain(G.ADMIN_PARTS));
+  for (const name of used) {
+    assert.ok(existsSync(name + '.html'), name + '.html が無い');
+    const src = readFileSync(name + '.html', 'utf8');
+    assert.ok(!src.includes('<?'), name + '.html の中に <? があると、そのまま画面に出てしまう');
+    assert.match(src.trimStart(), name === 'AdminCss' ? /^<style>/ : /^<script>\n'use strict';/);
+  }
+  assert.throws(() => G.include_('Portal'));      // 決めた部品しか読み込まない
 });

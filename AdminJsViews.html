@@ -1,0 +1,927 @@
+<script>
+'use strict';
+// AdminJsViews.html … 管理画面の動き（画面の切り替え・表・各画面・入力の画面・ミーティング）
+// Admin.html から読み込む。順番に意味がある（Admin.html の並び順で読み込むこと）
+// ===========================================================================
+// 画面の切り替え
+// ===========================================================================
+// 上のメニュー。最初の3つは、前のダッシュボードと同じ並び（PC管理・対応履歴・修理履歴）
+var NAV = [
+  ['customers', 'PC管理'], ['activities', '対応履歴'], ['repairs', '修理履歴'], ['meeting', 'ミーティング'],
+  ['licenses', 'ライセンス'], ['rentals', 'レンタル'], ['notices', 'お知らせ'], ['settings', '設定']
+];
+// rest が届くまで中身を出せない画面
+var NEEDS_REST = { devices: 1, meeting: 1, activities: 1, repairs: 1, licenses: 1, rentals: 1, notices: 1, settings: 1 };
+function navVisible(view) {
+  if (view === 'settings' || view === 'audit') return S.D.me.isAdmin;
+  if (view === 'rentals') return S.D.rentalOn;
+  return true;
+}
+function mtgFullOff() {
+  document.body.classList.remove('mtgfull');
+  try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); } catch (e) { /* 何もしない */ }
+}
+document.addEventListener('fullscreenchange', function () { if (!document.fullscreenElement) document.body.classList.remove('mtgfull'); });
+function go(view, opts) {
+  S.restoreY = 0; S.restoreRec = '';      // 自分で画面を移ったら、読み直し前の場所へは戻さない
+  guardLayout(function () {
+    if (view !== 'meeting' && document.body.classList.contains('mtgfull')) mtgFullOff();
+    S.view = view;
+    if (opts) Object.keys(opts).forEach(function (k) { S[k] = opts[k]; });
+    render();
+    window.scrollTo(0, 0);
+    armBack();
+  });
+}
+// ---- スタッフごとに、絞り込み・並び替え・期間の種類を覚える（スタッフのシートの「画面設定」に入る。どの端末でも同じ状態で始まる）
+var VIEW_SAVE_DELAY = 2500;      // 操作が止まってから保存するまで（ミリ秒）。押すたびには送らない
+var viewSaved = '', viewTimer = null, viewOff = false;
+function viewSnapshot() {
+  var out = { q: {}, sort: {}, per: {} };
+  Object.keys(S.q).forEach(function (k) { if (typeof S.q[k] === 'string' && S.q[k].length <= 100 && /^[a-z]{2,12}\.[A-Za-z]{2,16}$/.test(k)) out.q[k] = S.q[k]; });
+  Object.keys(S.sort).forEach(function (k) { var v = S.sort[k]; if (v && /^[A-Za-z]{2,20}$/.test(k)) out.sort[k] = { i: v.i, dir: v.dir }; });
+  Object.keys(S.per).forEach(function (k) { if (S.per[k] && S.per[k].mode) out.per[k] = { mode: S.per[k].mode }; });
+  return out;
+}
+/** 覚えてあった状態を、画面に入れる（ログインした直後） */
+function applyViewState(vs) {
+  vs = vs || {};
+  S.q = {}; S.sort = {}; S.per = {};
+  Object.keys(vs.q || {}).forEach(function (k) { if (typeof vs.q[k] === 'string') S.q[k] = vs.q[k]; });
+  Object.keys(vs.sort || {}).forEach(function (k) { var v = vs.sort[k]; if (v && (v.dir === 1 || v.dir === -1) && v.i >= 0) S.sort[k] = { i: v.i, dir: v.dir }; });
+  Object.keys(vs.per || {}).forEach(function (k) { var v = vs.per[k]; if (v && S.D.viewPeriodModes.indexOf(v.mode) !== -1) perState(k).mode = v.mode; });
+  viewSaved = JSON.stringify(viewSnapshot());
+  viewOff = false;
+}
+function sendView() {
+  clearTimeout(viewTimer); viewTimer = null;
+  if (!S.D || viewOff) return Promise.resolve();
+  var snap = viewSnapshot(), json = JSON.stringify(snap);
+  if (json === viewSaved) return Promise.resolve();
+  viewSaved = json;
+  return call('saveMyView', { view: snap }, true).catch(function (e) {
+    // 列がまだ無い（初期設定をやり直していない）ときは、このあとは送らない。ほかの失敗は、次の操作でまた送る
+    if (e && e.error === 'setup') viewOff = true; else viewSaved = '';
+  });
+}
+/** 絞り込みなどが変わっていたら、少し待ってから保存する */
+function rememberView() {
+  if (!S.D || viewOff || viewTimer) return;
+  if (JSON.stringify(viewSnapshot()) === viewSaved) return;
+  viewTimer = setTimeout(sendView, VIEW_SAVE_DELAY);
+}
+
+// ---- Tips（Windows の便利機能）。いちばん上に1件ずつ。日替わりで変わる。× で、その日は出さない ----
+var TIPS_VIEWS = { customers: 1, activities: 1, repairs: 1, licenses: 1, rentals: 1, notices: 1 };
+function tipIndex() {
+  var n = S.D.tips.length;
+  if (S.tipIx === undefined || S.tipIx === null) {
+    var p = S.D.today.split('-');
+    S.tipIx = Math.floor(Date.UTC(+p[0], +p[1] - 1, +p[2]) / 86400000) % n;
+  }
+  return ((S.tipIx % n) + n) % n;
+}
+function tipsBarHtml() {
+  var D = S.D;
+  if (!D.tips || !D.tips.length || !TIPS_VIEWS[S.view] || q('tips.hide') === D.today || isPhone()) return '';
+  var t = D.tips[tipIndex()];
+  return '<div class="tipsbar" id="tipsBar"><span class="tag">Tips</span><span class="tip"><b>' + esc(t.t) + '</b>' + esc(t.b) + '</span>' +
+    '<button type="button" class="btn small" data-act="tipNext">次のTips</button>' +
+    '<button type="button" class="x" data-act="tipHide" aria-label="今日は出さない" title="今日は出さない">×</button></div>';
+}
+/** リンクは https:// で始まるものだけを出す */
+function safeLink(url) { return typeof url === 'string' && /^https:\/\/[^\s"'<>\\]+$/.test(url) ? url : ''; }
+/** 日付の新しい順（同じ日は、あとから登録したものが先） */
+function winInfoSorted() {
+  return (S.D.wininfo || []).slice().sort(function (a, b) { return cmp(String(b['日付']) + b['情報ID'], String(a['日付']) + a['情報ID']); });
+}
+function winInfoPinned(w) { return (S.D.wininfoPins || []).indexOf(String(w['情報ID'])) !== -1; }
+function winInfoRecent() {
+  var D = S.D, from = addDays(D.today, -D.wininfoShowDays), pins = D.wininfoPins || [];
+  var all = winInfoSorted(), pinned = [];
+  pins.forEach(function (id) { for (var i = 0; i < all.length; i++) if (String(all[i]['情報ID']) === id) { pinned.push(all[i]); break; } });
+  return pinned.concat(all.filter(function (w) { return !winInfoPinned(w) && w['日付'] >= from && w['日付'] <= D.today; }).slice(0, D.wininfoShowMax));
+}
+/** 配信（自動更新）の状態。お知らせの画面に出す */
+function feedStatusHtml() {
+  var f = S.D.feed;
+  if (!f) return '';
+  if (!f.on) return '<p class="note" id="feedStatus">自動更新：まだ設定していません。「設定」→「基本設定」→「配信フォルダー」に、配信ファイルが入る Google ドライブのフォルダーを入れると、Windows情報と Tips が自動で入ります。</p>';
+  var st = f.status;
+  var hidden = (S.D.wininfo || []).filter(function (w) { return w['顧客に見せる'] !== 'はい'; }).length;
+  return '<div class="box" id="feedStatus">自動更新：' + pill('設定済み', 'ok') +
+    (st ? '　最後に確かめたのは ' + esc(st.at) + '　' + (st.ok ? '' : pill('うまくいきませんでした', 'danger') + ' ') + '<span class="note">' + esc(st.message) + '</span>'
+        : '　<span class="note">まだ確かめていません。</span>') +
+    '<div class="note">配信フォルダーは、画面を開いたとき（' + Number(f.hours) + '時間に1回まで）と、毎朝の通知の処理のときに確かめます。自動で入った Windows情報は「社内だけ」で入ります。確かめてから「顧客に見せる」を押してください' +
+    (hidden ? '（いま社内だけ：' + hidden + '件）' : '') + '。</div></div>';
+}
+function winInfoItemHtml(w) {
+  var link = safeLink(w['リンク']);
+  return '<div class="wi"><span class="d">' + esc(String(w['日付']).slice(5).replace('-', '/')) + '</span>' +
+    '<span class="t"><b>' + (winInfoPinned(w) ? '📌 ' : '') + (w['重要度'] === '重要' ? pill('重要', 'danger') + ' ' : '') + esc(w['タイトル']) + (w['顧客に見せる'] === 'はい' ? '' : ' ' + pill('社内だけ', 'warn')) + '</b>' + (w['内容'] ? '<span>' + esc(w['内容']) + '</span>' : '') + '</span>' +
+    (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">くわしく</a>' : '') + '</div>';
+}
+/** PC管理に出す、新しい Windows情報 */
+function winInfoPanelHtml() {
+  if (!S.ready) return '';
+  var list = winInfoRecent();
+  if (!list.length) return '';
+  return '<section class="panel" id="winInfoPanel"><h2><span class="grow">Windows情報（更新プログラム・ドライバーの不具合）</span><button type="button" class="btn small" data-act="nav" data-view="notices">すべて見る</button></h2>' +
+    '<div class="winfo">' + list.map(winInfoItemHtml).join('') + '</div></section>';
+}
+
+// ---- 各ページの使い方（短く） ----
+var HELP = {
+  mmaint: ['保守', ['顧客を選ぶと、収集ツールの情報が新しい順にPCが並びます。', 'PCを押すと、イベント・ウイルス対策・更新などをまとめて確認できます。', '備考を書いて「この台は完了」。すぐ ✓ が付き、保守の記録ができます。', '最後に「報告書を撮って終わる」→「書類をスキャン」で報告書を付けます。', '「戻る」は、PC → 一覧 → 顧客を選ぶ、の順に戻ります。']],
+  home: ['入力', ['「保守をはじめる」で、保守を1台ずつ進めます。', '大きいボタンで、対応・修理・ライセンス・機器・メモを記録します。', '「探して直す」で、機器やライセンスを探して開けます。', '入力の途中で閉じても、下書きに残ります（「続きから」で戻せます）。', '一覧は下のメニュー、設定・ログアウトは右上の「☰ メニュー」から。']],
+  meeting: ['ミーティング', ['毎週の会議用。上から話す順に並んでいます。', '②その週の対応 ⑤前回決まったこと ⑥議題メモ。', '月初は「先月のまとめ」とPCの健康チェックも出ます。', '週は上の矢印で切替。行を押すと編集が開きます。', '⑥のメモは「社内メモに残す」で、次回の⑤に出ます。']],
+  customers: ['PC管理', ['要対応はPCと契約のことだけ。赤は急ぎのときだけ。', '検索欄で、全社の機器をシリアル・利用者・顧客名から探せます。', '顧客の行を押すと、その顧客の機器や履歴が開きます。', '右上の名前を押すと、自分の設定・ログアウト。', 'いちばん下に、開く速さと最後の保存の時間が出ます。']],
+  customer: ['顧客の画面', ['タブで、機器・対応履歴・修理・ライセンスなどを切り替えます。', 'スキャンは何枚かを1つのPDFにまとめて付けられます。', '機器の窓の「別の顧客へ移す」で、納品先へ移せます（管理者）。', '「レポート」の月を、お客様ページに出せます（管理者）。', '「1年の振り返り」で、12か月の対応・修理・保守の回数を見られます。']],
+  devices: ['機器の一覧', ['全社の機器を、文字・種類・状況で絞れます。', '見出しを押すと、並び替えできます。', '行を押すと、機器の編集と写真の窓が開きます。', '機器の窓の「別の顧客へ移す」で、顧客を付け替えられます（管理者）。']],
+  activities: ['対応履歴', ['上で期間（週・月・期間指定・すべて）を選びます。', '検索はひらがなでも探せます。', '「顧客ごとにまとめる」で、顧客別に並びます。', '行を押すと編集。写真も付けられます（カメラ・書類のスキャンも）。', '「印刷・PDFにする」で、ミーティング用の資料になります。']],
+  repairs: ['修理履歴', ['進行中の修理は、期間に関係なく上に出ます。', 'ステータスを「完了」にすると、完了日が入ります。', '「顧客ごとにまとめる」で、顧客別に並びます。', '行を押すと編集。写真も付けられます（カメラ・書類のスキャンも）。']],
+  licenses: ['ライセンス', ['期限が近い・切れたものを、右のプルダウンで絞れます。', '「割当」で、どの機器で使っているかを登録します。', '「顧客ごとにまとめる」で、顧客別に並びます。', '編集の窓で、ID・パスワード・シリアルキーも入れられます。', 'パスワードは、空のまま保存すると今のままです。']],
+  rentals: ['レンタル機器', ['「貸し出す」で貸出を記録、「返却を記録」で返却します。', '返却が近い・過ぎた貸出は、状態に色つきで出ます。', '下の貸出記録は、「顧客ごとにまとめる」で顧客別に並びます。']],
+  notices: ['お知らせ・Windows情報', ['お知らせは、お客様ページの上に出ます。', 'Windows情報は、更新プログラムやドライバーの不具合のメモです。', '配信フォルダーを設定すると、自動で入ります（最初は「社内だけ」）。', '確かめたら「顧客に見せる」を押すと、お客様ページに出ます。', '手で足すときは「まとめて貼り付け」か「＋ 追加」。']],
+  settings: ['設定', ['左の目次で、見たいまとまりへ移れます。', '要対応に出す種類は「要対応と通知」で選びます。', '選択肢（機器の種類・定型文など）は「選択肢」で足します。', '「収集ツールの配布」で、新しいツールを全部のPCに配れます。', 'スタッフの追加・パスワードの再設定は、いちばん下です。']],
+  audit: ['変更履歴', ['だれが・いつ・何を変えたかを見られます。', '見られるのは新しい500件まで。それより前は、スプレッドシートの「変更履歴」です。', '古いものは毎朝、保管用のスプレッドシートへ移します（設定の「変更履歴を残す日数」）。']]
+};
+// スマホの一覧は、作りがちがうので説明も分ける（v0.19.0）
+var HELP_PHONE = {
+  customers: ['PC管理', ['上の「要対応 ○件」を押すと、要対応の一覧が開きます。', '顧客名・ふりがな・電話で探せます。', '顧客を押すと、その顧客の機器や履歴が開きます。', 'ダッシュボード（数字・グラフ）は、パソコンで見ます。']],
+  activities: ['対応履歴', ['「未完了／直近30日／すべて」で絞れます。', '内容・顧客名・担当で探せます（ひらがな可）。', '押すと編集。右上の「＋ 対応を記録」で足します。', '古い対応は、パソコンか顧客の画面で見られます。']],
+  repairs: ['修理履歴', ['「進行中／すべて」で絞れます。', '件名・顧客名・型番・預かり品で探せます。', '押すと編集。右上の「＋ 修理を受け付け」で足します。']],
+  licenses: ['ライセンス', ['最初は、期限が近い・切れたものが、期限の近い順に出ます。', '「すべて」で全部。製品名・顧客名で探せます。', '押すと編集。ID・パスワード・シリアルキーも入れられます。', '右上の「＋ ライセンスを追加」で足します。']]
+};
+function helpFor(view) { return (isPhone() && HELP_PHONE[view]) || HELP[view]; }
+function helpButtonHtml(view) {
+  return HELP[view] ? '<button type="button" class="btn small" data-act="help" data-view="' + view + '" title="このページの使い方">？ 使い方</button>' : '';
+}
+// ---- 顧客ごとにまとめる（対応履歴・修理履歴・ライセンス・貸出記録） ----
+var GROUP_Q = { activities: 'act.group', repairs: 'rep.group', licenses: 'lic.group', loans: 'loan.group' };
+function groupButtonHtml(qName) {
+  return '<button type="button" class="btn small" data-act="toggleGroup" data-q="' + qName + '" aria-pressed="' + (q(qName) === '1') + '">顧客ごとにまとめる：' + (q(qName) === '1' ? 'する' : 'しない') + '</button>';
+}
+function groupOf(tableId, r) {
+  if (tableId === 'loans') return r['顧客ID'] ? { key: 'c:' + r['顧客ID'], label: custName(r['顧客ID']), sort: custWords(r['顧客ID']) } : { key: 't:' + (r['貸出先'] || ''), label: r['貸出先'] || '（貸出先なし）', sort: '\uffff' + (r['貸出先'] || '') };
+  return r['顧客ID'] ? { key: 'c:' + r['顧客ID'], label: custName(r['顧客ID']), sort: (IDX.cust[r['顧客ID']] || {})['ふりがな'] || custName(r['顧客ID']) } : { key: '', label: '（顧客なし）', sort: '\uffff' };
+}
+
+function render() {
+  saveLocSoon();
+  // 自分のメニューは、画面が変わったときだけ閉じる（裏で読み直して描き直しても、開いたまま）
+  var acct = document.getElementById('acct'), viewKey = S.view + '|' + (S.customerId || '');
+  if (acct && acct.open && S.menuView !== viewKey) acct.open = false;
+  S.menuView = viewKey;
+  // 「探して直す」に打っている間は、画面を作り直さない（欄が入れ替わると、キーボードが閉じて続きが打てない）
+  if (S.view === 'home' && document.activeElement && document.activeElement.id === 'homeQ' && $('homeHits')) {
+    rememberView();
+    S.renderPending = false;
+    $('homeHits').innerHTML = homeHitsHtml();
+    $('homeRecent').innerHTML = homeRecentHtml();
+    var oldBar = $('draftBar');
+    if (oldBar) oldBar.remove();
+    $('main').insertAdjacentHTML('afterbegin', draftBarHtml());
+    return;
+  }
+  // スマホの一覧の探す欄に打っている途中なら、描き直したあとも、その欄に戻す（キーボードを閉じない）
+  var pqAct = document.activeElement, pqKey = pqAct && pqAct.dataset ? pqAct.dataset.pq || '' : '', pqPos = pqKey ? pqAct.selectionStart : 0;
+  rememberView();
+  var current = S.view === 'customer' || S.view === 'devices' ? 'customers' : S.view === 'audit' ? 'settings' : S.view;
+  S.renderPending = false;
+  $('nav').innerHTML = NAV.filter(function (n) { return navVisible(n[0]); }).map(function (n) {
+    return '<button type="button" data-act="nav" data-view="' + n[0] + '"' + (n[0] === current ? ' aria-current="page"' : '') + '>' + n[1] + '</button>';
+  }).join('');
+  $('bnav').innerHTML = [['customers', 'PC管理'], ['activities', '対応'], ['', ''], ['repairs', '修理'], ['licenses', 'ライセンス']].map(function (n) {
+    if (!n[0]) return '<button type="button" class="add" data-act="plusInput"' + (current === 'home' || current === 'mmaint' ? ' aria-current="page"' : '') + '><i>＋</i>入力</button>';
+    return '<button type="button" data-act="nav" data-view="' + n[0] + '"' + (n[0] === current ? ' aria-current="page"' : '') + '>' + n[1] + '</button>';
+  }).join('');
+  $('main').innerHTML = !S.ready && NEEDS_REST[S.view]
+    ? '<div class="head"><h1>' + esc((NAV.filter(function (n) { return n[0] === S.view; })[0] || ['', ''])[1]) + '</h1></div>' + notReadyHtml()
+    : VIEWS[S.view]();
+  // 「入力」の画面のほかは、残りのデータを使う。まだ読んでいなければ（スマホ）、ここで読み始める
+  if (!S.ready && !S.restFailed && S.view !== 'home') ensureRest();
+  // いちばん上に Tips と、入力しかけの下書き。見出しの右に「使い方」
+  if (S.D.tips && S.D.tips.length) $('main').insertAdjacentHTML('afterbegin', tipsBarHtml());
+  $('main').insertAdjacentHTML('afterbegin', draftBarHtml());
+  var headEl = $('main').querySelector('.head');
+  if (headEl) headEl.insertAdjacentHTML('beforeend', helpButtonHtml(S.view));
+  // タブが多くて横に流れるので、開いているタブが見える位置まで寄せる
+  var activeTab = document.querySelector('.tabs [aria-selected="true"]');
+  if (activeTab) activeTab.parentNode.scrollLeft = Math.max(0, activeTab.offsetLeft - 48);
+  if (S.ready && S.alertsStale && !S.alertsLoading && (S.view === 'customers' || S.view === 'customer')) loadAlerts();
+  if (S.view === 'customer' && S.sub === 'credentials') loadCredentials();
+  if (S.ready && S.view === 'customer' && (S.sub === 'activities' || S.sub === 'year')) loadCustomerActivities();
+  if (S.ready && S.view === 'activities') loadActivityRange();
+  if (S.view === 'settings' && !S.staff) loadStaff();
+  if (S.view === 'settings' && S.D && S.D.me.isAdmin && S.release === undefined && !S.releaseLoading) loadRelease();
+  if (S.view === 'audit' && !S.audit) loadAudit(200);
+  if (S.view === 'customer' && S.sub === 'files') loadAttachments();
+  if (S.view === 'customer' && S.sub === 'layout') loadLayouts();
+  if (S.view === 'customer' && S.sub === 'report') loadReport();
+  if (S.view === 'mmaint' && S.ready && S.mm.dev) mmLoadDiag(S.mm.dev);
+  var pqBack = pqKey && $('pq_' + pqKey);
+  if (pqBack && !$('modals').children.length) { try { pqBack.focus(); pqBack.setSelectionRange(pqPos, pqPos); } catch (e) { /* そのまま */ } }
+}
+/** 記録を変えたあとは、要対応が変わっているかもしれないので取り直す（ダッシュボードなどを開いたときに） */
+function loadAlerts() {
+  S.alertsLoading = true;
+  call('getAlerts', {}, true).then(function (r) {
+    S.alerts = r.alerts; S.alertsStale = false; S.alertsLoading = false;
+    reindex();
+    if (!$('modals').children.length && (S.view === 'customers' || S.view === 'customer')) render();
+  }).catch(function () { S.alertsLoading = false; });
+}
+function setAlerts(list) { S.alerts = list; S.alertsStale = false; reindex(); render(); }
+function openAlerts() { return S.alerts.filter(function (a) { return !a.resolved; }); }
+// PC管理（と、その顧客の一覧の件数）に出す要対応。レンタルの返却・修理の長期化・対応の保留は、
+// レンタル・修理履歴・対応履歴の画面で見るので、PC管理には出さない（v0.27.0）。顧客の画面では全部出す
+var NOT_ON_PC = { rental: 1, repair: 1, activity: 1 };
+function isPcAlert(a) { return !NOT_ON_PC[a.category]; }
+function pcAlerts() { return openAlerts().filter(isPcAlert); }
+
+/**
+ * 要対応の一覧。customerId を渡すと、その顧客のぶんだけ（顧客の列は出さない）。
+ */
+function alertsHtml(customerId) {
+  var mine = S.alerts.filter(function (a) { return customerId ? a.customerId === customerId : isPcAlert(a); });
+  var open = mine.filter(function (a) { return !a.resolved; });
+  var done = mine.filter(function (a) { return a.resolved; });
+  if (customerId && !mine.length) return '';
+  var showDone = q('alert.done') === '1';
+  var cat = customerId ? '' : q('alert.cat');
+  var counts = {};
+  open.forEach(function (a) { counts[a.category] = (counts[a.category] || 0) + 1; });
+  // 選んでいた種類が、もう1件も無い（対応済みにした・出さない種類にした）ときは、「すべて」に戻す
+  if (cat && !counts[cat] && !(showDone && done.some(function (a) { return a.category === cat; }))) cat = S.q['alert.cat'] = '';
+  var chips = customerId ? '' : S.D.alertCategories.filter(function (c) { return counts[c[0]]; }).map(function (c) {
+    return '<button type="button" data-act="alertCat" data-cat="' + c[0] + '" aria-pressed="' + (cat === c[0]) + '">' + esc(c[1]) + ' ' + counts[c[0]] + '</button>';
+  }).join('');
+  var rows = (showDone ? open.concat(done) : open).filter(function (a) { return !cat || a.category === cat; });
+  // PC管理では、多いときは最初の10件だけ（顧客の一覧が下へ押し出されないように）。赤いもの・期限切れが先に並んでいる
+  var ALERT_SHORT = 5, total = rows.length, short = !customerId && total > ALERT_SHORT && q('alert.all') !== '1';
+  if (short) rows = rows.slice(0, ALERT_SHORT);
+  var cols = [
+    { label: '種類', cls: 'nowrap', html: function (a) { return pill(a.label, a.resolved ? '' : a.level); } },
+    { label: '内容', cls: 'title', html: function (a) {
+      return (customerId ? '' : '<span class="acust">' + esc(custName(a.customerId)) + '</span>') + esc(a.title) + '<span class="minor">' + esc(a.detail) + (a.resolved ? '　対応済み（' + esc(a.resolvedBy) + ' ' + esc(String(a.resolvedAt).slice(0, 10)) + '）' : '') + '</span>';
+    } },
+    { label: '', cls: 'nowrap', html: function (a) {
+      return a.resolved ? '<button type="button" class="btn small" data-act="unresolveAlert" data-key="' + esc(a.key) + '">戻す</button>'
+        : '<button type="button" class="btn small" data-act="resolveAlert" data-key="' + esc(a.key) + '">対応済みにする</button>';
+    } }
+  ];
+  return '<section class="panel" id="alertPanel"><h2><span class="grow">要対応 ' + open.length + '件</span>' +
+    (done.length ? '<button type="button" class="btn small" data-act="alertDone">' + (showDone ? '対応済みを隠す' : '対応済みも出す（' + done.length + '）') + '</button>' : '') + '</h2>' +
+    (chips ? '<div class="pad chipset small" style="padding-bottom:4px"><button type="button" data-act="alertCat" data-cat="" aria-pressed="' + (!cat) + '">すべて ' + open.length + '</button>' + chips + '</div>' : '') +
+    tableHtml(customerId ? 'cAlerts' : 'alerts', cols, rows, { act: 'openAlert', id: function (a) { return a.key; }, empty: '要対応はありません。' }) +
+    (!customerId && total > ALERT_SHORT ? '<p class="more"><button type="button" class="btn small" data-act="alertAll">' + (short ? '残りの' + (total - ALERT_SHORT) + '件も見る' : '最初の' + ALERT_SHORT + '件だけにする') + '</button></p>' : '') + '</section>';
+}
+
+/** 印刷に、絞り込みの条件を書き添える */
+function printFilterNote(name) {
+  var parts = [];
+  if (q(name + '.cust')) parts.push('顧客：' + custName(q(name + '.cust')));
+  if (q(name + '.staff')) parts.push('担当：' + q(name + '.staff'));
+  if (q(name + '.status')) parts.push('ステータス：' + (q(name + '.status') === 'open' ? '完了していないもの' : q(name + '.status')));
+  if (q(name + '.kind')) parts.push('種別：' + q(name + '.kind'));
+  if (q(name + '.inc')) parts.push('区分：' + q(name + '.inc'));
+  if (q(name + '.text')) parts.push('言葉：' + q(name + '.text'));
+  return parts.length ? '<p class="pnote">絞り込み　' + esc(parts.join('／')) + '</p>' : '';
+}
+function refreshList() {
+  var el = $('list');
+  if (el && LISTS[S.view]) el.innerHTML = LISTS[S.view]();
+  var found = $('found');
+  if (found && S.view === 'customers') found.innerHTML = foundHtml();
+  var chips = $('custChips');
+  if (chips && S.view === 'customers') chips.innerHTML = custChipsHtml();
+  rememberView();
+}
+function q(name, fallback) { return S.q[name] === undefined ? (fallback === undefined ? '' : fallback) : S.q[name]; }
+
+// ===========================================================================
+// 表
+// ===========================================================================
+/**
+ * cols: [{label, html(row)→エスケープ済みのHTML, key(row)→並べ替えの値, cls}]
+ * opt:  {act, id(row), empty}
+ */
+function tableHtml(tableId, cols, rows, opt) {
+  opt = opt || {};
+  var st = S.sort[tableId];
+  if (st && cols[st.i] && cols[st.i].key) {
+    var key = cols[st.i].key;
+    rows = rows.slice().sort(function (a, b) { return cmp(key(a), key(b)) * st.dir; });
+  }
+  if (!rows.length) return '<p class="empty">' + esc(opt.empty || '該当するものがありません。') + '</p>';
+  // 顧客ごとにまとめる：顧客の順に寄せて（中の並びはそのまま）、顧客の見出しの行をはさむ
+  var grouping = GROUP_Q[tableId] && q(GROUP_Q[tableId]) === '1', counts = {};
+  if (grouping) {
+    var tagged = rows.map(function (r, i) { var g = groupOf(tableId, r); counts[g.key] = (counts[g.key] || 0) + 1; return { r: r, g: g, i: i }; });
+    tagged.sort(function (a, b) { return cmp(fold(a.g.sort), fold(b.g.sort)) || cmp(a.g.key, b.g.key) || a.i - b.i; });
+    rows = tagged.map(function (x) { return x.r; });
+  }
+  var shown = rows.slice(0, ROW_LIMIT);
+  // 見出しの件数は、出している行で数える（多くて先頭だけ出すときに、見出しと行の数が合うように。v0.38.0）
+  if (grouping && shown.length < rows.length) { counts = {}; shown.forEach(function (r) { var g = groupOf(tableId, r); counts[g.key] = (counts[g.key] || 0) + 1; }); }
+  var head = cols.map(function (c, i) {
+    var mark = st && st.i === i ? (st.dir > 0 ? ' ▲' : ' ▼') : '';
+    var inner = c.key ? '<button type="button" class="th" data-act="sort" data-table="' + esc(tableId) + '" data-i="' + i + '">' + esc(c.label) + mark + '</button>' : esc(c.label);
+    return '<th>' + inner + '</th>';
+  }).join('');
+  var lastGroup = null;
+  var body = shown.map(function (r) {
+    var lead = '';
+    if (grouping) {
+      var g = groupOf(tableId, r);
+      if (g.key !== lastGroup) { lastGroup = g.key; lead = '<tr class="grp"><td colspan="' + cols.length + '">' + esc(g.label) + '<span>' + counts[g.key] + '件</span></td></tr>'; }
+    }
+    // 保存の返事を待っている行（_pending）は、薄く出して、押せないようにする
+    var attr = r._pending ? ' class="pending" title="保存しています…"'
+      : opt.act ? ' class="click" tabindex="0" data-act="' + esc(opt.act) + '" data-id="' + esc(opt.id(r)) + '"' : '';
+    return lead + '<tr' + attr + '>' + cols.map(function (c) {
+      return '<td' + (c.cls ? ' class="' + c.cls + '"' : '') + (c.ml ? ' data-ml="' + esc(c.ml) + '"' : '') + '>' + c.html(r) + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
+  return '<div class="scroll"><table class="cards"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    (rows.length > shown.length ? '<p class="more">' + rows.length + '件のうち、先頭の' + shown.length + '件を出しています。条件を足して絞り込んでください。</p>' : '');
+}
+/**
+ * 探すときの形にそろえる：カタカナ→ひらがな、全角の英数・半角カナ→ふつうの形、大文字→小文字。
+ * 「ぷりんたー」で「プリンター」が、「ｅｓｅｔ」で「ESET」が見つかる。
+ * 漢字の読みは分からないので、顧客・利用者は「ふりがな」の欄を一緒に探す。
+ */
+function fold(v) {
+  var t = String(v === null || v === undefined ? '' : v);
+  if (t.normalize) t = t.normalize('NFKC');
+  return t.replace(/[\u30a1-\u30f6]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0x60); }).toLowerCase();
+}
+/** 顧客の名前とふりがな（探すとき用） */
+function custWords(id) { var c = IDX.cust[id]; return c ? c['顧客名'] + ' ' + (c['ふりがな'] || '') : (id || ''); }
+/** 機器の利用者・ふりがな・機種（探すとき用） */
+function devWords(id) { var d = IDX.dev[id]; return d ? [d['利用者'], d['ふりがな'], d['機種名'], d['シリアル']].join(' ') : ''; }
+function textMatch(words, parts) {
+  if (!words) return true;
+  var hay = fold(parts.join(' '));
+  return fold(words).split(/\s+/).every(function (w) { return !w || hay.indexOf(w) !== -1; });
+}
+function optionsHtml(list, selected, blankLabel) {
+  var html = blankLabel === undefined ? '' : '<option value="">' + esc(blankLabel) + '</option>';
+  return html + list.map(function (o) {
+    var value = Array.isArray(o) ? o[0] : o, label = Array.isArray(o) ? o[1] : o;
+    return '<option value="' + esc(value) + '"' + (String(value) === String(selected) ? ' selected' : '') + '>' + esc(label) + '</option>';
+  }).join('');
+}
+function activeOptions(category, current) {
+  var list = (S.D.options[category] || []).filter(function (o) { return o.active; }).map(function (o) { return o.value; });
+  if (current && list.indexOf(current) === -1) list.push(current);
+  return list;
+}
+
+// 列の定義（一覧と、顧客の詳細の両方で使う）
+var COL = {
+  devCustomer: { label: '顧客', html: function (d) { return esc(custName(d['顧客ID'])); }, key: function (d) { return custName(d['顧客ID']); }, cls: 'cname' },
+  devKind: { label: '種類', html: function (d) { return esc(d['種類']); }, key: function (d) { return d['種類']; }, cls: 'nowrap' },
+  devUser: { label: '利用者', html: function (d) { return esc(d['利用者']) + photoMark('device', d['機器ID']) + (d['部署'] ? '<span class="minor">' + esc(d['部署']) + '</span>' : ''); }, key: function (d) { return d['ふりがな'] || d['利用者']; }, cls: 'title strong' },
+  devModel: { label: 'メーカー・機種', html: function (d) { return esc(d['機種名']) + (d['メーカー'] ? '<span class="minor">' + esc(d['メーカー']) + '</span>' : ''); }, key: function (d) { return d['メーカー'] + d['機種名']; }, cls: 'title' },
+  devSerial: { label: 'シリアル', html: function (d) { var g = IDX.diag[d['機器ID']]; return esc(d['シリアル']) + (g && g['コンピューター名'] ? '<span class="minor">' + esc(g['コンピューター名']) + '</span>' : ''); }, key: function (d) { return d['シリアル']; }, ml: 'S/N' },
+  devPlace: { label: '設置場所', html: function (d) { return esc(d['設置場所']); }, key: function (d) { return d['設置場所']; }, ml: '場所' },
+  devWarranty: { label: '保証期限', html: function (d) { return expiryHtml(d['保証期限'], S.D.warrantyWarnDays); }, key: function (d) { return d['保証期限'] || '9999'; }, cls: 'nowrap', ml: '保証' },
+  devUpd: { label: '更新', ml: '更新', cls: 'dupd', html: function (d) { return devUpdHtml(d); }, key: function (d) { return devStamp(d); } },
+  devState: { label: '状況', html: function (d) { return d['状況'] === '使用中' ? pill('使用中', 'ok') : pill(d['状況']); }, key: function (d) { return d['状況']; }, cls: 'nowrap' },
+
+  actDate: { label: '受付日', html: function (a) { return esc(a['受付日']) + (a['ピン留め'] === 'はい' ? ' ' + pill('ピン', 'brand') : ''); }, key: function (a) { return a['受付日'] + a['対応ID']; }, cls: 'nowrap' },
+  actCustomer: { label: '顧客', html: function (a) { return esc(custName(a['顧客ID'])); }, key: function (a) { return custName(a['顧客ID']); }, cls: 'cname' },
+  actKind: { label: '種別', html: function (a) { return esc(a['対応種別']) + (a['インシデント種別'] ? '<span class="minor">' + esc(a['インシデント種別']) + '</span>' : ''); }, key: function (a) { return a['対応種別']; }, cls: 'nowrap' },
+  actBody: { label: '内容', html: function (a) { return '<span>' + esc(a['内容']) + '</span>' + photoMark('activity', a['対応ID']) + (a['機器ID'] ? '<span class="minor">' + esc(devLabel(a['機器ID'])) + '</span>' : ''); }, cls: 'clamp' },
+  actStatus: { label: 'ステータス', html: function (a) { return statusPill(a['ステータス']); }, key: function (a) { return a['ステータス']; }, cls: 'nowrap' },
+  actStaff: { label: 'スタッフ', html: function (a) { return esc(a['受付スタッフ']); }, key: function (a) { return a['受付スタッフ']; }, cls: 'nowrap', ml: '受付' },
+
+  repDate: { label: '受付日', html: function (r) { return esc(r['受付日']); }, key: function (r) { return r['受付日'] + r['修理ID']; }, cls: 'nowrap' },
+  repCustomer: { label: '顧客', html: function (r) { return esc(custName(r['顧客ID'])); }, key: function (r) { return custName(r['顧客ID']); }, cls: 'cname' },
+  repTitle: { label: '件名', html: function (r) { return esc(r['件名']) + photoMark('repair', r['修理ID']) + (r['型番'] ? '<span class="minor">' + esc(r['型番']) + '</span>' : ''); }, key: function (r) { return r['件名']; }, cls: 'title' },
+  repKind: { label: '種別', html: function (r) { return esc(r['種別']); }, key: function (r) { return r['種別']; }, cls: 'nowrap' },
+  repItems: { label: '預かり品', html: function (r) { return esc(r['預かり品']); }, ml: '預かり' },
+  repStatus: { label: 'ステータス', html: function (r) { return statusPill(r['ステータス']); }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
+  repDone: { label: '完了日', html: function (r) { return r['完了日'] ? esc(r['完了日']) : DASH; }, key: function (r) { return r['完了日']; }, cls: 'nowrap', ml: '完了' },
+
+  licCustomer: { label: '顧客', html: function (l) { return esc(custName(l['顧客ID'])); }, key: function (l) { return custName(l['顧客ID']); }, cls: 'cname' },
+  licName: { label: '製品名', html: function (l) { return esc(l['製品名']) + photoMark('license', l['ライセンスID']) + (l['契約期間'] ? '<span class="minor">' + esc(l['契約期間']) + '</span>' : ''); }, key: function (l) { return l['製品名']; }, cls: 'title' },
+  licUse: { label: '割当 / 数量', html: function (l) { return (IDX.alloc[l['ライセンスID']] || []).length + ' / ' + (l['数量'] === '' ? '—' : esc(l['数量'])); }, cls: 'num', ml: '割当' },
+  licExpiry: { label: '有効期限', html: function (l) { return expiryHtml(l['有効期限'], S.D.licenseWarnDays); }, key: function (l) { return l['有効期限'] || '9999'; }, cls: 'nowrap', ml: '期限' },
+  mntDate: { label: '実施日', html: function (m) { return esc(m['実施日']); }, key: function (m) { return m['実施日'] + m['実施ID']; }, cls: 'nowrap' },
+  mntKind: { label: '種別', html: function (m) { return m['種別'] === S.D.maintKindRegular ? pill(m['種別'], 'brand') : pill(m['種別']); }, key: function (m) { return m['種別']; }, cls: 'nowrap' },
+  mntBody: { label: '内容', html: function (m) { return '<span>' + esc(m['内容']) + '</span>' + (m['機器ID'] ? '<span class="minor">' + esc(devLabel(m['機器ID'])) + '</span>' : ''); }, cls: 'clamp' },
+  mntStaff: { label: '担当', html: function (m) { return esc(m['担当スタッフ']); }, key: function (m) { return m['担当スタッフ']; }, cls: 'nowrap', ml: '担当' },
+  memoBody: { label: 'メモ', html: function (m) { return (m['ピン留め'] === 'はい' ? pill('ピン', 'brand') + ' ' : '') + '<span>' + esc(m['本文']) + '</span>'; }, cls: 'clamp' },
+  memoCustomer: { label: '顧客', html: function (m) { return m['顧客ID'] ? esc(custName(m['顧客ID'])) : '<span class="sub">全体</span>'; }, key: function (m) { return custName(m['顧客ID']); }, cls: 'cname' },
+  memoBy: { label: '書いた人', html: function (m) { return esc(m['作成者']) + '<span class="minor">' + esc(String(m['更新日時'] || '').slice(0, 10)) + '</span>'; }, key: function (m) { return m['更新日時']; }, cls: 'nowrap' },
+  licAct: { label: '', html: function (l) { return '<button type="button" class="btn small" data-act="openAlloc" data-id="' + esc(l['ライセンスID']) + '">割当</button>'; }, cls: 'nowrap' }
+};
+
+// ===========================================================================
+// 各画面
+// ===========================================================================
+var VIEWS = {}, LISTS = {};
+
+// ---- 日付と期間の小道具（'YYYY-MM-DD' の文字のまま扱う。時差で1日ずれないよう UTC で計算する） ----
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function ymdUtc(s) { var p = String(s).split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+function utcYmd(t) { var d = new Date(t); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
+function addDays(s, n) { return utcYmd(ymdUtc(s) + n * 86400000); }
+function dowOf(s) { return new Date(ymdUtc(s)).getUTCDay(); }
+var DOW = ['日', '月', '火', '水', '木', '金', '土'];
+function mondayOf(s) { return addDays(s, -((dowOf(s) + 6) % 7)); }
+function addMonths(ym, n) { var p = ym.split('-'), t = (+p[0]) * 12 + (+p[1] - 1) + n; return Math.floor(t / 12) + '-' + pad2(t % 12 + 1); }
+function monthEnd(ym) { var p = ym.split('-'); return utcYmd(Date.UTC(+p[0], +p[1], 0)); }
+function isYmd(v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v)) && utcYmd(ymdUtc(v)) === v; }
+function md(s) { return Number(s.slice(5, 7)) + '/' + Number(s.slice(8, 10)); }
+function mdw(s) { return md(s) + '（' + DOW[dowOf(s)] + '）'; }
+
+/**
+ * 対応履歴・修理履歴で使う「見る期間」。画面ごとに1つ持つ（S.per.act / S.per.rep）。
+ *   mode: week（月曜はじまり）／ month ／ range（日付で指定）／ all（期間を問わない）
+ */
+function perState(name) {
+  if (!S.per[name]) {
+    var today = S.D.today;
+    S.per[name] = { mode: 'week', week: mondayOf(today), month: today.slice(0, 7), from: addDays(today, -29), to: today };
+  }
+  return S.per[name];
+}
+function perRange(name) {
+  var p = perState(name), today = S.D.today, out = { mode: p.mode, from: '', to: '', prevFrom: '', prevTo: '', label: 'すべての期間', tag: '', prevWord: '' };
+  if (p.mode === 'week') {
+    out.from = p.week; out.to = addDays(p.week, 6); out.prevFrom = addDays(p.week, -7); out.prevTo = addDays(p.week, -1);
+    out.label = mdw(out.from) + '〜' + mdw(out.to);
+    out.tag = p.week === mondayOf(today) ? '今週' : p.week === addDays(mondayOf(today), -7) ? '先週' : '';
+    out.prevWord = '前の週';
+  } else if (p.mode === 'month') {
+    out.from = p.month + '-01'; out.to = monthEnd(p.month);
+    var pm = addMonths(p.month, -1); out.prevFrom = pm + '-01'; out.prevTo = monthEnd(pm);
+    out.label = Number(p.month.slice(0, 4)) + '年' + Number(p.month.slice(5, 7)) + '月';
+    out.tag = p.month === today.slice(0, 7) ? '今月' : p.month === addMonths(today.slice(0, 7), -1) ? '先月' : '';
+    out.prevWord = '前の月';
+  } else if (p.mode === 'range') {
+    out.from = p.from <= p.to ? p.from : p.to; out.to = p.from <= p.to ? p.to : p.from;
+    var n = Math.round((ymdUtc(out.to) - ymdUtc(out.from)) / 86400000) + 1;
+    out.prevTo = addDays(out.from, -1); out.prevFrom = addDays(out.from, -n);
+    out.label = out.from + '〜' + out.to + '（' + n + '日間）';
+    out.prevWord = '前の' + n + '日間';
+  }
+  out.title = (out.tag ? out.tag + '　' : '') + out.label;
+  return out;
+}
+function inRange(ymd, from, to) { return !!ymd && (!from || ymd >= from) && (!to || ymd <= to); }
+/** 期間を選ぶ帯。name は 'act' か 'rep' */
+function periodBarHtml(name) {
+  var p = perState(name), r = perRange(name);
+  var seg = [['week', '週ごと'], ['month', '月ごと'], ['range', '期間指定'], ['all', 'すべて']].map(function (m) {
+    return '<button type="button" data-act="perMode" data-per="' + name + '" data-mode="' + m[0] + '" aria-pressed="' + (p.mode === m[0]) + '">' + m[1] + '</button>';
+  }).join('');
+  var btn = function (act, label, extra) { return '<button type="button" class="btn small" data-act="' + act + '" data-per="' + name + '"' + (extra || '') + '>' + label + '</button>'; };
+  var jump = function (to, label, on) { return '<button type="button" class="btn small' + (on ? ' on' : '') + '" data-act="perJump" data-per="' + name + '" data-to="' + to + '"' + (on ? ' aria-pressed="true"' : '') + '>' + label + '</button>'; };
+  var body = '';
+  if (p.mode === 'week') {
+    body = btn('perShift', '← 前の週', ' data-d="-1"') + '<b class="per-label" id="perLabel_' + name + '">' + esc(r.title) + '</b>' + btn('perShift', '次の週 →', ' data-d="1"') +
+      '<span class="sep"></span>' + jump('lastweek', '先週', r.tag === '先週') + jump('thisweek', '今週', r.tag === '今週');
+  } else if (p.mode === 'month') {
+    body = btn('perShift', '← 前の月', ' data-d="-1"') + '<input type="month" id="perMonth_' + name + '" data-permonth="' + name + '" value="' + esc(p.month) + '" aria-label="見る月">' + btn('perShift', '次の月 →', ' data-d="1"') +
+      '<span class="sep"></span>' + jump('lastmonth', '先月', r.tag === '先月') + jump('thismonth', '今月', r.tag === '今月');
+  } else if (p.mode === 'range') {
+    body = '<input type="date" id="perFrom_' + name + '" data-perfrom="' + name + '" value="' + esc(p.from) + '" aria-label="はじめの日"><span>〜</span>' +
+      '<input type="date" id="perTo_' + name + '" data-perto="' + name + '" value="' + esc(p.to) + '" aria-label="おわりの日">' +
+      '<span class="sep"></span>' + jump('d30', '直近30日') + jump('d90', '直近90日') + jump('year', '今年');
+  } else {
+    body = '<span class="note">期間を問わず、全部から探します。</span>';
+  }
+  return '<div class="period" id="period_' + name + '"><div class="chipset small">' + seg + '</div><div class="per-nav">' + body + '</div></div>';
+}
+/** 縦の棒グラフ。items: [{label, sub, value, value2}]。value2 があれば2本ならべる（凡例つき） */
+function vbarsHtml(items, opt) {
+  opt = opt || {};
+  var max = items.reduce(function (m, x) { return Math.max(m, x.value, x.value2 || 0); }, 0) || 1;
+  var two = opt.legend && opt.legend.length === 2;
+  var dense = items.length > 16;
+  var bar = function (v, cls, name, x) {
+    var h = v ? Math.max(4, Math.round(v / max * 100)) : 0;
+    return '<div class="vb' + (cls ? ' ' + cls : '') + '" title="' + esc((x.tip || x.label) + (name ? '　' + name : '') + '：' + v + '件') + '">' +
+      '<em' + (v ? '' : ' class="zero"') + '>' + (v || (dense ? '' : 0)) + '</em><i style="height:' + h + '%"' + (v ? '' : ' class="zero"') + '></i></div>';
+  };
+  return (two ? '<div class="legend"><span><i class="k1"></i>' + esc(opt.legend[0]) + '</span><span><i class="k2"></i>' + esc(opt.legend[1]) + '</span></div>' : '') +
+    '<div class="vbars' + (dense ? ' dense' : '') + '">' + items.map(function (x) {
+      return '<div class="vcol"><div class="vpair">' + bar(x.value, '', two ? opt.legend[0] : '', x) + (two ? bar(x.value2 || 0, 's2', opt.legend[1], x) : '') + '</div>' +
+        '<span class="vlab">' + esc(x.label) + (x.sub ? '<small>' + esc(x.sub) + '</small>' : '') + '</span></div>';
+    }).join('') + '</div>';
+}
+/** 期間を、グラフの棒の単位（日ごと。長いときは月ごと）に分ける */
+function periodBuckets(from, to) {
+  var days = Math.round((ymdUtc(to) - ymdUtc(from)) / 86400000) + 1, out = [];
+  if (days <= 45) {
+    for (var i = 0; i < days; i++) {
+      var d = addDays(from, i);
+      out.push({ key: d, label: days <= 10 ? DOW[dowOf(d)] : String(Number(d.slice(8, 10))), sub: days <= 10 ? md(d) : '', tip: mdw(d) });
+    }
+    return { unit: 'day', list: out };
+  }
+  for (var m = from.slice(0, 7); m <= to.slice(0, 7) && out.length < 60; m = addMonths(m, 1)) out.push({ key: m, label: Number(m.slice(5, 7)) + '月', sub: m.slice(5, 7) === '01' || !out.length ? m.slice(0, 4) : '', tip: m });
+  return { unit: 'month', list: out };
+}
+/** 直近 n か月（今月を含む）の 'YYYY-MM' を古い順に */
+function lastMonths(n) {
+  var cur = S.D.today.slice(0, 7), out = [];
+  for (var i = n - 1; i >= 0; i--) out.push(addMonths(cur, -i));
+  return out;
+}
+function monthItems(months, countOf) {
+  return months.map(function (m, i) { return { label: Number(m.slice(5, 7)) + '月', sub: i === 0 || m.slice(5, 7) === '01' ? m.slice(0, 4) : '', tip: m, value: countOf(m) }; });
+}
+function chipFilterHtml(qName, counts, total, current) {
+  var keys = Object.keys(counts).sort(function (a, b) { return counts[b] - counts[a] || cmp(a, b); });
+  if (!keys.length) return '<span class="note">この期間にはありません。</span>';
+  return '<div class="chipset small">' + '<button type="button" data-act="qChip" data-q="' + qName + '" data-v="" aria-pressed="' + (!current) + '">すべて ' + total + '</button>' +
+    keys.map(function (k) { return '<button type="button" data-act="qChip" data-q="' + qName + '" data-v="' + esc(k) + '" aria-pressed="' + (current === k) + '">' + esc(k) + ' ' + counts[k] + '</button>'; }).join('') + '</div>';
+}
+function statTile(value, unit, label, sub, cls) {
+  return '<div class="tile stat' + (cls ? ' ' + cls : '') + '"><span>' + esc(label) + '</span><b>' + value + (unit ? '<small>' + unit + '</small>' : '') + '</b>' + (sub ? '<span class="sub2">' + sub + '</span>' : '') + '</div>';
+}
+
+// ---- PC管理（前のダッシュボードの最初の画面にあたる。全社の状況と、顧客の一覧） ----
+function foundHtml() {
+  var text = q('home.find').trim();
+  if (!text) return '';
+  var rows = S.D.devices.filter(function (d) {
+    var g = IDX.diag[d['機器ID']] || {};
+    return textMatch(text, [d['利用者'], d['ふりがな'], d['機種名'], d['メーカー'], d['シリアル'], d['設置場所'], d['部署'], g['コンピューター名'], custWords(d['顧客ID']), d['機器ID']]);
+  });
+  return '<section class="panel" id="foundPanel"><h2><span class="grow">機器の検索結果 ' + rows.length + '台</span><button type="button" class="btn small" data-act="clearFind">閉じる</button></h2>' +
+    tableHtml('found', [COL.devCustomer, COL.devUser, COL.devModel, COL.devSerial, COL.devPlace, COL.devState], rows.slice(0, 50),
+      { act: 'editRecord:device', id: function (d) { return d['機器ID']; }, empty: '当てはまる機器がありません。' }) +
+    (rows.length > 50 ? '<p class="more">' + rows.length + '台のうち、先頭の50台を出しています。言葉を足して絞り込んでください。</p>' : '') + '</section>';
+}
+function warrantyPanelHtml() {
+  var D = S.D;
+  var warr = D.devices.filter(function (d) { var n = daysUntil(d['保証期限']); return d['状況'] !== '廃棄' && n !== null && n >= 0 && n <= D.warrantyWarnDays; })
+    .sort(function (a, b) { return cmp(a['保証期限'], b['保証期限']); });
+  if (!warr.length) return '';
+  return '<section class="panel" id="warrPanel"><h2>保証がもうすぐ切れる機器（' + D.warrantyWarnDays + '日以内）</h2>' +
+    tableHtml('dashWarr', [COL.devCustomer, COL.devUser, COL.devModel, COL.devWarranty], warr, { act: 'editRecord:device', id: function (d) { return d['機器ID']; } }) + '</section>';
+}
+/** サーバーの控え（キャッシュ）から読めた部品の数。全部が控えからなら、シートを読まずに済んでいる */
+function cacheNoteHtml() {
+  var t = S.timing, a = t.coreCache, b = t.restCache;
+  if (!a || !b) return '';
+  var hit = (a.hit || 0) + (b.hit || 0), all = hit + (a.miss || 0) + (b.miss || 0);
+  if (!all) return '';
+  return '<span id="cacheNote" title="サーバーの控えから読めた数／全部の数。数が大きいほど速い">・控え ' + hit + '/' + all + '</span>';
+}
+function timingHtml() {
+  var t = S.timing, sec = function (ms) { return (Math.round(ms / 100) / 10).toFixed(1) + '秒'; };
+  if (!t.first) return '';
+  return '<p class="timing" id="timing">読み込み：最初の表示まで ' + sec(t.first) + (t.coreMs !== undefined ? '（うちサーバー ' + sec(t.coreMs) + '）' : '') +
+    (t.all ? '／全部そろうまで ' + sec(t.all) + (t.restMs !== undefined ? '（うちサーバー ' + sec(t.restMs) + '）' : '') : '') +
+    (t.save ? '／最後の保存 ' + sec(t.save) : '') + cacheNoteHtml() +
+    (S.ready ? '<button type="button" id="refreshAll" data-act="refreshAll" title="スプレッドシートを手で直したあとなど、画面が古いときに押す">最新を読み込む</button>' : '') + '</p>';
+}
+// ===========================================================================
+// 入力の画面（スマホで最初に出る）。顧客と機器だけで出せるので、一覧のデータを待たない
+// ===========================================================================
+var HOME_BTNS = [
+  ['activity', '対応を記録', '訪問・リモート・電話', true], ['repair', '修理を受け付け', '預かった機器と状況'],
+  ['license', 'ライセンスを追加', '製品名・数量・期限'],
+  ['device', '機器を追加', 'PC・プリンターを台帳に'], ['memo', 'メモを書く', '社内の連絡']
+];
+VIEWS.home = function () {
+  return '<div class="head"><h1>入力</h1><span class="sub">' + esc(S.D.me.name) + '</span></div>' +
+    '<button type="button" class="hbtn primary mmstart" id="mmStart" data-act="mmStart"><b>保守をはじめる</b><span>収集ツールの情報を、PCごとに確かめて記録</span></button>' +
+    '<div class="hgrid" id="homeBtns">' + HOME_BTNS.map(function (b) {
+      return '<button type="button" class="hbtn' + (b[3] ? ' primary' : '') + '" data-act="quickNew" data-key="' + b[0] + '"><b>' + b[1] + '</b><span>' + b[2] + '</span></button>';
+    }).join('') + '</div>' +
+    '<section class="panel" id="homeFind"><h2>探して直す</h2><div class="hpad">' +
+      '<input type="search" id="homeQ" data-homeq="1" autocomplete="off" placeholder="機器・ライセンスを探す（利用者・シリアル・顧客名）" value="' + esc(S.homeQ || '') + '">' +
+      '<div id="homeHits">' + homeHitsHtml() + '</div></div></section>' +
+    '<div id="homeRecent">' + homeRecentHtml() + '</div>';
+};
+/** 「探して直す」の結果。機器は最初から、ライセンスは残りのデータが届いてから */
+function homeHitsHtml() {
+  var text = String(S.homeQ || '').trim();
+  if (!text) return '<p class="note">機器は、利用者・ふりがな・機種名・シリアル・設置場所・顧客名で探せます。押すと、その機器の編集が開きます。</p>';
+  var devs = S.D.devices.filter(function (d) {
+    var g = IDX.diag[d['機器ID']] || {};
+    return !d._pending && textMatch(text, [d['利用者'], d['ふりがな'], d['機種名'], d['メーカー'], d['シリアル'], d['設置場所'], d['部署'], g['コンピューター名'], custWords(d['顧客ID']), d['機器ID']]);
+  });
+  var html = '<div class="hits" id="homeDevHits"><div class="cap">機器 ' + devs.length + '台' + (devs.length > 20 ? '（先頭の20台。言葉を足すと絞れます）' : '') + '</div>' +
+    devs.slice(0, 20).map(function (d) {
+      return '<button type="button" data-act="editRecord:device" data-id="' + esc(d['機器ID']) + '"><b>' + esc([d['利用者'], d['機種名']].filter(function (x) { return x; }).join(' / ') || d['機器ID']) + '</b>' +
+        '<span>' + esc([custName(d['顧客ID']), d['種類'], d['設置場所'], d['シリアル'], d['状況'] !== '使用中' ? d['状況'] : ''].filter(function (x) { return x; }).join('・')) + '</span></button>';
+    }).join('') + '</div>';
+  if (!S.ready) {
+    html += '<p class="note" id="homeLicWait">' + (S.restFailed ? 'ライセンスを読み込めませんでした。<button type="button" class="btn small" data-act="retryRest">もう一度読み込む</button>' : 'ライセンスを読み込んでいます…') + '</p>';
+  } else {
+    var lics = S.D.licenses.filter(function (l) { return !l._pending && textMatch(text, [l['製品名'], l['契約期間'], custWords(l['顧客ID']), l['ライセンスID']]); });
+    html += '<div class="hits" id="homeLicHits"><div class="cap">ライセンス ' + lics.length + '件' + (lics.length > 20 ? '（先頭の20件）' : '') + '</div>' +
+      lics.slice(0, 20).map(function (l) {
+        return '<button type="button" data-act="editRecord:license" data-id="' + esc(l['ライセンスID']) + '"><b>' + esc(l['製品名']) + '</b>' +
+          '<span>' + esc([custName(l['顧客ID']), l['数量'] !== '' ? '数量 ' + l['数量'] : '', l['有効期限'] ? '期限 ' + l['有効期限'] : ''].filter(function (x) { return x; }).join('・')) + '</span></button>';
+      }).join('') + '</div>';
+  }
+  return html + '<div><button type="button" class="btn small" data-act="homeClear">検索を消す</button></div>';
+}
+function drawHomeHits() {
+  var box = $('homeHits');
+  if (!box || S.view !== 'home') return;
+  box.innerHTML = homeHitsHtml();
+  // ライセンスは、探しはじめたときに読みにいく
+  if (String(S.homeQ || '').trim() && !S.ready && !S.restFailed) ensureRest();
+}
+/** この画面を開いてから保存したもの（押すと、開き直して直せる） */
+function noteSaved(key, rec) {
+  var schema = S.D && S.D.schema[key];
+  if (!schema || !rec || key === 'credential') return;
+  var id = rec[schema.idField];
+  S.recent = [{ key: key, id: id }].concat((S.recent || []).filter(function (x) { return !(x.key === key && x.id === id); })).slice(0, 5);
+  var box = $('homeRecent');
+  if (box && S.view === 'home') box.innerHTML = homeRecentHtml();
+}
+function recordTitle(key, r) {
+  var text = r['内容'] || r['件名'] || r['製品名'] || r['本文'] || r['タイトル'] || [r['利用者'], r['機種名']].filter(function (x) { return x; }).join(' / ') || r['顧客名'] || r['名称'] || '';
+  return String(text).replace(/\s+/g, ' ').slice(0, 40);
+}
+function homeRecentHtml() {
+  var rows = (S.recent || []).map(function (x) { var r = findRecord(x.key, x.id); return r ? [x, r] : null; }).filter(function (x) { return x; });
+  if (!rows.length) return '';
+  return '<section class="panel" id="homeRecentPanel"><h2>さっき入れたもの</h2><div class="hpad"><div class="hits">' + rows.map(function (p) {
+    var x = p[0], r = p[1];
+    return '<button type="button" data-act="editRecord:' + x.key + '" data-id="' + esc(x.id) + '"><b>' + esc(S.D.schema[x.key].label) + '　' + esc(recordTitle(x.key, r) || x.id) + '</b>' +
+      '<span>' + esc([r['顧客ID'] ? custName(r['顧客ID']) : '', r['受付日'] || r['実施日'] || '', r['ステータス'] || ''].filter(function (v) { return v; }).join('・')) + '</span></button>';
+  }).join('') + '</div></div></section>';
+}
+
+// ===========================================================================
+// ミーティング（毎週の会議用・試作 v0.22.0）
+//   会議で話す順に、上から1画面に並べる。大きい文字。「印刷・PDFにする」で資料にもなる。
+//   ① 週のまとめ ② その週の対応履歴 ★先月のまとめ（月初の回。PCの健康チェックつき）③ その週の修理履歴 ④ 今月の定期保守 ⑤ この先2週間 ⑥ 前回決まったこと ⑦ 議題メモ（v0.26.0 で困りごとは廃止）
+// ===========================================================================
+var MTG_STALE_DAYS = 7, MTG_AHEAD_DAYS = 14;
+function mtgState() { S.mtg = S.mtg || { off: -1, memos: {}, monthly: null }; return S.mtg; }
+
+// ---- v0.24.0：月初の「先月のまとめ」・前回決まったこと（困りごとは v0.26.0 で廃止、代わりに健康チェック） ----
+var MTG_MEMO_RE = /^【ミーティング (\d{4}-\d{2}-\d{2})〜(\d{4}-\d{2}-\d{2})】\n?/;
+var HEALTH_MAX = 30, HEALTH_TTL_MS = 5 * 60 * 1000;
+/** 会議をする週（表示中の週の次の週）の月曜 */
+function mtgMeetingMonday() { return mtgWeek(mtgState().off + 1).from; }
+/** その月曜が 1〜7日なら「月初の回」 */
+function mtgIsMonthStart() { return Number(mtgMeetingMonday().slice(8, 10)) <= 7; }
+/** 「先月のまとめ」を出すか。ボタンで決めたらそれに従う。決めていなければ月初の回だけ */
+function mtgShowMonthly() { var m = mtgState().monthly; return m === null || m === undefined ? mtgIsMonthStart() : !!m; }
+function prevMonthOf(ym) { var y = +ym.slice(0, 4), m = +ym.slice(5, 7) - 1; if (m < 1) { m = 12; y--; } return y + '-' + (m < 10 ? '0' : '') + m; }
+function nextMonthOf(ym) { var y = +ym.slice(0, 4), m = +ym.slice(5, 7) + 1; if (m > 12) { m = 1; y++; } return y + '-' + (m < 10 ? '0' : '') + m; }
+
+/** A. 先月のまとめ：顧客ごとの対応・修理・保守の回数、定期保守をやれていない顧客、今月・来月に期限が来るもの */
+function mtgMonthlyHtml() {
+  var D = S.D, meetM = mtgMeetingMonday().slice(0, 7), ym = prevMonthOf(meetM), next = nextMonthOf(meetM);
+  var inM = function (v) { return String(v || '').slice(0, 7) === ym; };
+  // 顧客ごとの数は、1回ずつ数えておく（顧客×行の総当たりにしない）
+  var by = {}, at = function (id) { return by[id] = by[id] || { a: 0, r: 0, m: 0, reg: false }; };
+  D.activities.forEach(function (r) { if (inM(r['受付日'])) at(r['顧客ID']).a++; });
+  D.repairs.forEach(function (r) { if (inM(r['受付日'])) at(r['顧客ID']).r++; });
+  D.maintenances.forEach(function (r) { if (inM(r['実施日'])) { var x = at(r['顧客ID']); x.m++; x.reg = true; } });      // 種別は問わない（移行データの表記ゆれ対策。v0.38.0）
+  var rows = D.customers.filter(function (c) { return c['状態'] === '有効'; }).map(function (c) {
+    var x = by[c['顧客ID']] || { a: 0, r: 0, m: 0, reg: false };
+    return { c: c, a: x.a, r: x.r, m: x.m, reg: c['保守契約'] === D.maintKindRegular, regDone: x.reg };
+  });
+  var tot = rows.reduce(function (t, x) { t.a += x.a; t.r += x.r; t.m += x.m; return t; }, { a: 0, r: 0, m: 0 });
+  var missed = rows.filter(function (x) { return x.reg && !x.regDone; });
+  var shown = rows.filter(function (x) { return x.a || x.r || x.m || x.reg; })
+    .sort(function (a, b) { return (b.a + b.r + b.m) - (a.a + a.r + a.m) || cmp(a.c['ふりがな'] || a.c['顧客名'], b.c['ふりがな'] || b.c['顧客名']); });
+  var due = [];
+  var inDue = function (v) { v = String(v || '').slice(0, 7); return v === meetM || v === next; };
+  D.licenses.forEach(function (l) { if (inDue(l['有効期限'])) due.push({ d: l['有効期限'], kind: 'ライセンス', cust: l['顧客ID'], text: l['製品名'], key: 'license', id: l['ライセンスID'] }); });
+  D.devices.forEach(function (dv) { if (dv['状況'] !== '廃棄' && inDue(dv['保証期限'])) due.push({ d: dv['保証期限'], kind: '保証', cust: dv['顧客ID'], text: devLabel(dv['機器ID']), key: 'device', id: dv['機器ID'] }); });
+  due.sort(function (a, b) { return cmp(a.d, b.d); });
+  // 対応履歴をはじめに一部しか読んでいないとき、その月まで届いていなければ断り書き
+  var actAfter = actLoadedAfter();
+  var partial = !!actAfter && actAfter >= ym + '-01';
+  var mLabel = Number(ym.slice(5)) + '月';
+  return '<section class="panel mtg mmonth" id="mtgMonthly"><h2><span class="grow">★ 先月（' + mLabel + '）のまとめ</span><span class="sub">月初の回に出ます</span></h2><div class="pad">' +
+    '<div class="mtiles">' +
+      '<div class="mtile"><span class="ml">対応</span><b>' + tot.a + '<small>件</small></b></div>' +
+      '<div class="mtile"><span class="ml">修理の受付</span><b>' + tot.r + '<small>件</small></b></div>' +
+      '<div class="mtile"><span class="ml">保守の実施</span><b>' + tot.m + '<small>件</small></b></div>' +
+      '<div class="mtile' + (missed.length ? ' warn' : '') + '"><span class="ml">定期保守をやれていない</span><b>' + missed.length + '<small>社</small></b>' +
+        '<span class="ms">' + (missed.length ? missed.map(function (x) { return esc(x.c['顧客名']); }).join('・') : '全社できました') + '</span></div>' +
+    '</div>' +
+    (partial ? '<p class="note">対応履歴を一部しか読み込んでいないため、対応の数は少なく出ている場合があります。</p>' : '') +
+    '<div class="mtg2"><div><h3 class="mh3">顧客ごと</h3>' +
+      (shown.length ? '<table class="mtbl"><thead><tr><th>顧客</th><th class="num">対応</th><th class="num">修理</th><th class="num">保守</th><th>定期保守</th></tr></thead><tbody>' + shown.map(function (x) {
+        return '<tr data-act="openCustomer" data-id="' + esc(x.c['顧客ID']) + '"><td>' + esc(x.c['顧客名']) + '</td><td class="num">' + x.a + '</td><td class="num">' + x.r + '</td><td class="num">' + x.m + '</td><td>' +
+          (x.reg ? (x.regDone ? pill('済み', 'ok') : pill('まだ', 'danger')) : '<span class="sub">—</span>') + '</td></tr>';
+      }).join('') + '</tbody></table>' : '<p class="mempty">' + mLabel + 'の記録はありません。</p>') + '</div>' +
+      '<div><h3 class="mh3">今月・来月に期限が来るもの</h3>' +
+      (due.length ? '<table class="mtbl"><thead><tr><th>期限</th><th>種類</th><th>顧客</th><th>内容</th></tr></thead><tbody>' + due.slice(0, 20).map(function (x) {
+        return '<tr data-act="editRecord:' + x.key + '" data-id="' + esc(x.id) + '"><td class="nowrap">' + esc(md(x.d)) + '</td><td class="nowrap">' + esc(x.kind) + '</td><td>' + esc(custName(x.cust)) + '</td><td class="clamp" title="' + esc(x.text) + '"><span>' + esc(x.text) + '</span></td></tr>';
+      }).join('') + '</tbody></table>' + (due.length > 20 ? '<p class="note">ほか ' + (due.length - 20) + '件</p>' : '') : '<p class="mempty">ありません。</p>') + '</div></div>' +
+    '<h3 class="mh3">PCの健康チェック<span class="sub">（収集ツールの最新の値。気をつけたいPCだけ）</span></h3><div id="mtgHealth">' + mtgHealthHtml() + '</div>' +
+    '</div></section>';
+}
+
+/** ③ その週の修理履歴（v0.27.0）：その週に受け付けた修理と、その週に完了した修理。終わっていないものを上に */
+function mtgRepairsHtml(w, st) {
+  var D = S.D, MAX = 30;
+  var list = D.repairs.filter(function (r) { return inWeek(r['受付日'], w) || (!isOpenRepair(r) && inWeek(r['完了日'], w)); })
+    .sort(function (a, b) { return (isOpenRepair(b) - isOpenRepair(a)) || cmp(String(a['受付日']), String(b['受付日'])) || cmp(a['修理ID'], b['修理ID']); });
+  var got = list.filter(function (r) { return inWeek(r['受付日'], w); }).length, done = list.filter(function (r) { return !isOpenRepair(r) && inWeek(r['完了日'], w); }).length;
+  var label = st.off === -1 ? '先週' : st.off === 0 ? '今週' : 'この週';
+  return '<section class="panel mtg" id="mtgRepairs"><h2><span class="grow">③ ' + label + 'の修理履歴</span>' + pill('受付 ' + got, '') + pill('完了 ' + done, done ? 'ok' : '') + '</h2><div class="pad">' +
+    (list.length ? '<table class="mtbl"><thead><tr><th>受付日</th><th>顧客</th><th>件名</th><th>種別</th><th>担当</th><th>状態</th><th>完了日</th></tr></thead><tbody>' + list.slice(0, MAX).map(function (r) {
+      return '<tr class="' + (isOpenRepair(r) ? 'mopen' : '') + '" data-act="editRecord:repair" data-id="' + esc(r['修理ID']) + '"><td class="nowrap">' + esc(mdw(String(r['受付日']).slice(0, 10))) + '</td><td>' + esc(custName(r['顧客ID'])) + '</td><td class="clamp" title="' + esc(r['件名']) + '"><span>' + esc(r['件名']) + '</span>' +
+        (r['型番'] ? '<span class="minor">' + esc(r['型番']) + '</span>' : '') + '</td><td class="nowrap">' + esc(r['種別'] || '') + '</td><td class="nowrap">' + esc(r['担当スタッフ'] || '') + '</td><td>' + statusPill(r['ステータス']) + '</td><td class="nowrap">' + (r['完了日'] ? esc(md(String(r['完了日']).slice(0, 10))) : '—') + '</td></tr>';
+    }).join('') + '</tbody></table>' + (list.length > MAX ? '<p class="note">ほか ' + (list.length - MAX) + '件（修理履歴の画面で見られます）</p>' : '')
+      : '<p class="mempty">この週に受け付けた・完了した修理はありません。</p>') + '</div></section>';
+}
+
+/** PCの健康チェック（v0.26.0）。サーバーで判定した結果を出す。古ければ（5分）読み直す */
+function mtgHealthHtml() {
+  var h = S.health;
+  // 失敗したあとは自分から読み直さない（「もう一度」で読み直す。呼び続けてGASの回数を使わないように）
+  if (!S.healthFailed && (!h || Date.now() - h.at > HEALTH_TTL_MS)) loadHealth();
+  if (!h) return '<p class="note">' + (S.healthFailed ? '読み込めませんでした。<button type="button" class="btn small" data-act="reloadHealth">もう一度</button>' : '読み込んでいます…') + '</p>';
+  var r = h.r, items = r.items.filter(function (x) { return IDX.dev[x.deviceId]; });
+  var head = '<p class="note">使用中のPC ' + r.checked + '台を確認：気をつけたいPC <b>' + items.length + '台</b>' +
+    '（Cドライブ空き ' + r.freeMin + 'GB未満・' + r.staleDays + '日以上届いていない、などで判定。設定で変えられます）</p>';
+  if (!items.length) return head + '<p class="mempty">気をつけたいPCはありません。</p>';
+  return head + '<table class="mtbl mhealth"><thead><tr><th>顧客</th><th>PC</th><th>気になること</th><th>届いた日</th><th></th></tr></thead><tbody>' + items.slice(0, HEALTH_MAX).map(function (x) {
+    return '<tr data-act="editRecord:device" data-id="' + esc(x.deviceId) + '"><td>' + esc(custName(x.customerId)) + '</td><td>' + esc(devLabel(x.deviceId) || x.deviceId) + '</td><td>' +
+      x.issues.map(function (i) { return pill(i.text, i.level); }).join(' ') + '</td><td class="nowrap">' + esc(md(String(x.at).slice(0, 10))) + '</td><td class="nowrap">' +
+      (x.reportId ? '<button type="button" class="btn small" data-act="openDiagReport" data-id="' + esc(x.reportId) + '">レポート</button>' : '') + '</td></tr>';
+  }).join('') + '</tbody></table>' + (items.length > HEALTH_MAX ? '<p class="note">ほか ' + (items.length - HEALTH_MAX) + '台</p>' : '');
+}
+var healthLoading = false;
+function loadHealth() {
+  if (healthLoading) return;
+  healthLoading = true;
+  call('getHealthCheck', {}).then(function (r) {
+    healthLoading = false; S.healthFailed = false; S.health = { at: Date.now(), r: r };
+    var box = $('mtgHealth'); if (box) box.innerHTML = mtgHealthHtml();
+  }).catch(function () {
+    healthLoading = false; S.healthFailed = true;
+    var box = $('mtgHealth'); if (box) box.innerHTML = mtgHealthHtml();
+  });
+}
+
+/** D. 前回決まったこと：表示中の週より前の、いちばん新しいミーティングのメモ（読むだけ） */
+function mtgLastDecisionsHtml(w) {
+  var best = null;
+  S.D.memos.forEach(function (m) {
+    var g = MTG_MEMO_RE.exec(String(m['本文'] || ''));
+    if (!g || g[1] >= w.from) return;
+    if (!best || g[1] > best.from) best = { from: g[1], to: g[2], list: [m] };
+    else if (g[1] === best.from) best.list.push(m);
+  });
+  return '<section class="panel mtg" id="mtgLast"><h2><span class="grow">⑥ 前回決まったこと</span>' + (best ? '<span class="sub">' + esc(mdw(best.from) + '〜' + mdw(best.to)) + 'の回</span>' : '') + '</h2><div class="pad">' +
+    (best ? best.list.map(function (m) {
+      return '<div class="mlast" data-act="editRecord:memo" data-id="' + esc(m['メモID']) + '">' + esc(String(m['本文']).replace(MTG_MEMO_RE, '')).replace(/\n/g, '<br>') +
+        '<span class="minor">' + esc(m['作成者'] || '') + '</span></div>';
+    }).join('') + '<p class="note">押すとメモが開きます。済んだことは今週のメモに「済み」と書いておくと、次の回にわかります。</p>'
+      : '<p class="mempty">前回のミーティングのメモはまだありません。⑦で「社内メモに残す」と、次の回にここへ出ます。</p>') + '</div></section>';
+}
+function mtgMemoKey() { return mtgWeek(mtgState().off).from; }
+function mtgWeek(off) {
+  var from = addDays(mondayOf(S.D.today), off * 7);
+  return { from: from, to: addDays(from, 6) };
+}
+function inWeek(d, w) { d = String(d || '').slice(0, 10); return d >= w.from && d <= w.to; }
+function mtgCounts(w) {
+  var D = S.D;
+  var acts = D.activities.filter(function (a) { return inWeek(a['受付日'], w); });
+  return {
+    acts: acts.length,
+    actsDone: acts.filter(function (a) { return !isOpenActivity(a); }).length,
+    repIn: D.repairs.filter(function (r) { return inWeek(r['受付日'], w); }).length,
+    repDone: D.repairs.filter(function (r) { return !isOpenRepair(r) && inWeek(r['完了日'], w); }).length,
+    maint: D.maintenances.filter(function (m) { return inWeek(m['実施日'], w); }).length
+  };
+}
+function mtgDelta(now, before) {
+  var d = now - before;
+  if (!d) return '<span class="mdelta same">前の週と同じ</span>';
+  return '<span class="mdelta ' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '↑' : '↓') + Math.abs(d) + '件<small>（前の週 ' + before + '）</small></span>';
+}
+function mtgTile(label, now, before, sub, series) {
+  return '<div class="mtile"><span class="ml">' + esc(label) + '</span><b>' + now + '<small>件</small></b>' + (before === null ? '' : mtgDelta(now, before)) +
+    (series ? '<span class="mspark">' + sparkSvg(series, label + '（' + SPARK_WEEKS + '週）') + '<small>' + SPARK_WEEKS + '週の推移</small></span>' : '') +
+    (sub ? '<span class="ms">' + sub + '</span>' : '') + '</div>';
+}
+// 小さい推移グラフ（v0.22.0）。values は古い→新しい。最後の点を強調
+function sparkSvg(values, title) {
+  var n = values.length, W = 96, H = 26;
+  var mx = Math.max.apply(null, values.filter(function (v) { return v !== null; }).concat([1]));
+  if (n < 2) return '';
+  var pt = function (v, i) { return [(i * (W - 4) / (n - 1) + 2).toFixed(1), (H - 3 - v / mx * (H - 6)).toFixed(1)]; };
+  var pts = values.map(function (v, i) { return v === null ? null : pt(v, i); }).filter(function (p) { return p; });
+  if (!pts.length) return '';
+  var last = pts[pts.length - 1];
+  values = values.map(function (v) { return v === null ? '－' : v; });
+  return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="' + esc(title || '推移') + '"><title>' + esc((title || '') + '：' + values.join('→')) + '</title>' +
+    '<polyline fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" points="' + pts.map(function (p) { return p.join(','); }).join(' ') + '"/>' +
+    '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.6" fill="currentColor"/></svg>';
+}
+/** 週ごとの件数（endOff の週まで n 週ぶん、古い→新しい）。1回なめるだけで数える。
+ *  対応履歴を一部しか読んでいない古い週は null（線を引かない） */
+function weekSeries(endOff, n) {
+  var D = S.D, start = mtgWeek(endOff - n + 1).from, s0 = ymdUtc(start), end = mtgWeek(endOff).to;
+  var mk = function () { var a = []; for (var i = 0; i < n; i++) a.push(0); return a; };
+  var o = { acts: mk(), repIn: mk(), repDone: mk(), maint: mk() };
+  var put = function (arr, d) { d = String(d || '').slice(0, 10); if (d.length === 10 && d >= start && d <= end) arr[Math.floor((ymdUtc(d) - s0) / 604800000)]++; };
+  D.activities.forEach(function (a) { put(o.acts, a['受付日']); });
+  D.repairs.forEach(function (r) { put(o.repIn, r['受付日']); if (!isOpenRepair(r)) put(o.repDone, r['完了日']); });
+  D.maintenances.forEach(function (m) { put(o.maint, m['実施日']); });
+  var after = actLoadedAfter();
+  if (after) for (var i = 0; i < n; i++) if (mtgWeek(endOff - n + 1 + i).from <= after) o.acts[i] = null;
+  return o;
+}
+/** その週の対応履歴を、ぜんぶ読み込めているか */
+function actsComplete(w) { var after = actLoadedAfter(); return !after || w.from > after; }
+var SPARK_WEEKS = 8;
+function mtgDays(ymd) { return Math.round((ymdUtc(S.D.today) - ymdUtc(String(ymd).slice(0, 10))) / 86400000); }
+VIEWS.meeting = function () {
+  var D = S.D, st = mtgState(), w = mtgWeek(st.off), pw = mtgWeek(st.off - 1);
+  var title = (st.off === -1 ? '先週' : st.off === 0 ? '今週' : '') + '　' + mdw(w.from) + '〜' + mdw(w.to);
+  var head = '<div class="head"><h1>ミーティング</h1>' +
+      '<button type="button" class="btn" data-act="mtgWeek" data-d="-1">← 前の週</button><span class="mweek">' + esc(title) + '</span>' +
+      '<button type="button" class="btn" data-act="mtgWeek" data-d="1"' + (st.off >= 0 ? ' disabled' : '') + '>次の週 →</button>' +
+      '<button type="button" class="btn" data-act="mtgMonthly" aria-pressed="' + mtgShowMonthly() + '">先月のまとめ</button>' +
+      '<button type="button" class="btn" data-act="mtgFull">全画面</button><button type="button" class="btn" data-act="mtgPrint">印刷・PDFにする</button></div>';
+  if (!S.ready) return head + notReadyHtml();
+  var c = mtgCounts(w), p = mtgCounts(pw);
+  var openActs = D.activities.filter(isOpenActivity).length;
+  var weeks = weekSeries(st.off, SPARK_WEEKS);
+  var ser = function (k) { return weeks[k]; };
+  // 対応履歴を一部しか読んでいない古い週は、数が少なく出るので断り書きを付ける
+  var partial = !actsComplete(w), pPartial = !actsComplete(pw);
+
+  // ① まとめ
+  var sum = '<section class="panel mtg"><h2><span class="grow">① 週のまとめ</span><span class="sub">' + esc(title) + '</span></h2><div class="pad"><div class="mtiles">' +
+    mtgTile('受けた対応', c.acts, pPartial ? null : p.acts, partial ? 'この週は読み込んだ分だけの数です' : 'うち完了 ' + c.actsDone + '件', ser('acts')) +
+    mtgTile('受けた修理', c.repIn, p.repIn, '', ser('repIn')) +
+    mtgTile('完了した修理', c.repDone, p.repDone, '', ser('repDone')) +
+    mtgTile('保守の実施', c.maint, p.maint, '', ser('maint')) +
+    '</div></div></section>';
+
+  // ② その週の対応履歴（v0.23.0。前は「7日以上止まっている持ち越し」）
+  //   その週に受けた対応を日付順に。終わっていないものは色を付けて上に。週より前からの未完了は件数だけ下に添える
+  var wActs = D.activities.filter(function (a) { return inWeek(a['受付日'], w); })
+    .sort(function (a, b) { return (isOpenActivity(b) - isOpenActivity(a)) || cmp(String(a['受付日']), String(b['受付日'])) || cmp(a['対応ID'], b['対応ID']); });
+  var wOpen = wActs.filter(isOpenActivity).length;
+  var olderActs = D.activities.filter(function (a) { return isOpenActivity(a) && String(a['受付日']).slice(0, 10) < w.from; }).length;
+  var olderReps = D.repairs.filter(function (r) { return isOpenRepair(r) && String(r['受付日']).slice(0, 10) < w.from; }).length;
+  var MTG_ACT_MAX = 30;
+  var staleHtml = '<section class="panel mtg"><h2><span class="grow">② ' + esc(st.off === -1 ? '先週' : st.off === 0 ? '今週' : 'この週') + 'の対応履歴</span>' +
+    pill(wActs.length + '件', '') + (wOpen ? pill('未完了 ' + wOpen, 'warn') : '') + '</h2><div class="pad">' +
+    (wActs.length ? '<table class="mtbl"><thead><tr><th>受付日</th><th>顧客</th><th>内容</th><th>種別</th><th>担当</th><th>状態</th></tr></thead><tbody>' + wActs.slice(0, MTG_ACT_MAX).map(function (a) {
+      return '<tr class="' + (isOpenActivity(a) ? 'mopen' : '') + '" data-act="editRecord:activity" data-id="' + esc(a['対応ID']) + '"><td class="nowrap">' + esc(mdw(String(a['受付日']).slice(0, 10))) + '</td><td>' + esc(custName(a['顧客ID'])) + '</td><td class="clamp" title="' + esc(a['内容']) + '"><span>' + esc(a['内容']) + '</span></td><td class="nowrap">' + esc(a['対応種別'] || '') + '</td><td class="nowrap">' + esc(a['受付スタッフ'] || '') + '</td><td>' + statusPill(a['ステータス']) + '</td></tr>';
+    }).join('') + '</tbody></table>' + (wActs.length > MTG_ACT_MAX ? '<p class="note">ほか ' + (wActs.length - MTG_ACT_MAX) + '件（対応履歴の画面で見られます）</p>' : '')
+      : '<p class="mempty">この週に受けた対応はありません。</p>') +
+    (olderActs || olderReps ? '<p class="mcarry">この週より前からの未完了：対応 <b>' + olderActs + '</b>件・修理 <b>' + olderReps + '</b>件<button type="button" class="btn small" data-act="tileOpenActs">対応を見る</button><button type="button" class="btn small" data-act="tileOpenReps">修理を見る</button></p>' : '') +
+    '</div></section>';
+
+  // ③ 今月の定期保守
+  var month = D.today.slice(0, 7);
+  var regular = D.customers.filter(function (cu) { return cu['状態'] === '有効' && cu['保守契約'] === D.maintKindRegular; });
+  var doneMap = {};
+  D.maintenances.forEach(function (m) { if (String(m['実施日']).slice(0, 7) === month) doneMap[m['顧客ID']] = m['実施日']; });
+  var doneN = regular.filter(function (cu) { return doneMap[cu['顧客ID']]; }).length;
+  var pct = regular.length ? Math.round(doneN / regular.length * 100) : 0;
+  var maintHtml = '<section class="panel mtg"><h2><span class="grow">④ 今月（' + Number(month.slice(5)) + '月）の定期保守</span><span class="sub">' + doneN + '社 / ' + regular.length + '社 済み</span></h2><div class="pad">' +
+    '<div class="mprog"><i style="width:' + pct + '%"></i><span>' + pct + '%</span></div>' +
+    '<div class="mchips">' + regular.map(function (cu) {
+      var d = doneMap[cu['顧客ID']];
+      return '<span class="mchip ' + (d ? 'done' : 'todo') + '">' + (d ? '✓ ' : '') + esc(cu['顧客名']) + (d ? '<small>' + esc(md(d)) + '</small>' : '<small>まだ</small>') + '</span>';
+    }).join('') + '</div></div></section>';
+
+  // ④ この先に気をつけること
+  var until = addDays(D.today, MTG_AHEAD_DAYS), soon = [];
+  var dueIn = function (ymd) { return ymd ? Math.round((ymdUtc(ymd) - ymdUtc(D.today)) / 86400000) : null; };
+  D.licenses.forEach(function (l) { if (l['有効期限'] && l['有効期限'] <= until && l['有効期限'] >= addDays(D.today, -30)) soon.push({ d: l['有効期限'], kind: 'ライセンス期限', cust: l['顧客ID'], text: l['製品名'], key: 'license', id: l['ライセンスID'] }); });
+  D.devices.forEach(function (dv) { if (dv['状況'] !== '廃棄' && dv['保証期限'] && dv['保証期限'] >= D.today && dv['保証期限'] <= until) soon.push({ d: dv['保証期限'], kind: '保証期限', cust: dv['顧客ID'], text: devLabel(dv['機器ID']), key: 'device', id: dv['機器ID'] }); });
+  D.loans.forEach(function (ln) { if (!ln['返却日'] && ln['返却予定日'] && ln['返却予定日'] <= until) soon.push({ d: ln['返却予定日'], kind: 'レンタルの返却', cust: ln['顧客ID'], text: (IDX.rental[ln['レンタルID']] || {})['名称'] || ln['レンタルID'], key: 'loan', id: ln['貸出ID'] }); });
+  (D.diagnostics || []).forEach(function (g) { if (Number(g['イベント重大']) > 0 && IDX.dev[g['機器ID']] && mtgDays(g['受信日時']) <= 7) soon.push({ d: String(g['受信日時']).slice(0, 10), kind: '重大イベント', cust: IDX.dev[g['機器ID']]['顧客ID'], text: devLabel(g['機器ID']) + '（' + g['イベント重大'] + '件）', key: 'device', id: g['機器ID'], past: true }); });
+  soon.sort(function (a, b) { return cmp(a.d, b.d); });
+  var soonHtml = '<section class="panel mtg"><h2><span class="grow">⑤ この先' + MTG_AHEAD_DAYS + '日に気をつけること</span>' + pill(soon.length + '件', soon.length ? 'warn' : 'ok') + '</h2><div class="pad">' +
+    (soon.length ? '<table class="mtbl"><thead><tr><th>いつ</th><th>種類</th><th>顧客</th><th>内容</th></tr></thead><tbody>' + soon.slice(0, 15).map(function (x) {
+      var n = dueIn(x.d);
+      var when = x.past ? esc(md(x.d)) + ' 受信' : n < 0 ? pill('切れて' + (-n) + '日', 'danger') : n === 0 ? pill('今日', 'danger') : pill('あと' + n + '日', n <= 7 ? 'warn' : '');
+      return '<tr data-act="editRecord:' + x.key + '" data-id="' + esc(x.id) + '"><td class="nowrap">' + when + '</td><td class="nowrap">' + esc(x.kind) + '</td><td>' + esc(custName(x.cust)) + '</td><td class="clamp" title="' + esc(x.text) + '"><span>' + esc(x.text) + '</span></td></tr>';
+    }).join('') + '</tbody></table>' : '<p class="mempty">この先' + MTG_AHEAD_DAYS + '日に気をつけることはありません。</p>') + '</div></section>';
+
+  // ⑥ 議題メモ
+  var memoHtml = '<section class="panel mtg noprint-edit"><h2><span class="grow">⑦ 今週の議題・決まったこと</span></h2><div class="pad">' +
+    '<textarea id="mtgMemo" data-mtgmemo="1" rows="5" maxlength="3000" placeholder="例：A社のPC入れ替えは来月。B社の修理は部品待ち。">' + esc(st.memos[w.from] || '') + '</textarea>' +
+    '<div class="row"><span class="note grow">「社内メモに残す」で、この週のメモとして保存します（あとで社内メモから見られます）。</span><button type="button" class="btn primary" data-act="mtgSaveMemo">社内メモに残す</button></div></div></section>';
+
+  return head + '<div class="mtggrid">' + sum + staleHtml + mtgRepairsHtml(w, st) + (mtgShowMonthly() ? mtgMonthlyHtml() : '') +
+    '<div class="mtg2">' + maintHtml + soonHtml + '</div>' + mtgLastDecisionsHtml(w) + memoHtml + '</div>';
+};
+
+</script>
