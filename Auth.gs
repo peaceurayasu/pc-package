@@ -501,10 +501,6 @@ function saveMyView(params) {
 }
 
 /**
- * ログアウト。この端末の「ログインしたまま」も取り消す。
- * @param {{token:string, remember:string=}} params
- */
-/**
  * 読み直したとき：URLの券から、ログインを戻す。最初の画面のデータと、新しい券も返す。
  * @param {{ticket:string}} params
  */
@@ -555,6 +551,10 @@ function renewResume(params) {
   });
 }
 
+/**
+ * ログアウト。この端末の「ログインしたまま」と、読み直し用の券も取り消す。
+ * @param {{token:string, remember:string=, ticket:string=}} params
+ */
 function logout(params) {
   return api_(function () {
     const token = params && params.token;

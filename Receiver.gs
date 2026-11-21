@@ -292,7 +292,7 @@ function getHealthCheck(params) {
     const opt = {
       today: todayYmd_(),
       freeMin: settingInt_(settings, 'Cドライブ空きの下限GB', 20, 100000),
-      staleDays: settingInt_(settings, '収集ツール未受信の日数', 30, 3650)
+      staleDays: settingInt_(settings, '収集ツール未受信の日数', 45, 3650)
     };
     const live = {};
     readTable_(SHEET_CUSTOMERS).rows.forEach(function (c) { if (c['状態'] === '有効') live[String(c['顧客ID'])] = true; });

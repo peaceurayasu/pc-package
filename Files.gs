@@ -313,7 +313,7 @@ function getPhoto(params) {
     const p = params || {};
     requireSession_(p.token);
     const row = attachById_(p.id);
-    if (!row || !row['対象区分']) throw appError_('notfound', 'その写真が見つかりません。');
+    if (!row || !row['対象区分'] || row['対象区分'] === REPORT_TARGET_LABEL) throw appError_('notfound', 'その写真が見つかりません。');
     let blob;
     try { blob = DriveApp.getFileById(row['DriveファイルID']).getBlob(); } catch (e) { throw appError_('notfound', '写真のファイルがドライブから見つかりません。'); }
     const mime = row['種類'] === 'application/pdf' ? 'application/pdf' : 'image/jpeg';
