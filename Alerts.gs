@@ -454,6 +454,12 @@ function runDailyAlerts(e) {
   } catch (err) {
     console.error('配信フォルダーの確認でエラー: ' + (err && err.stack ? err.stack : err));
   }
+  // 古い変更履歴を、保管用のスプレッドシートへ移す（v0.40.0）
+  try {
+    archiveAuditLog_();
+  } catch (err) {
+    console.error('古い変更履歴の保管でエラー: ' + (err && err.stack ? err.stack : err));
+  }
   // 古い Windows情報を片づける（v0.34.0）
   try {
     tidyWinInfo_();

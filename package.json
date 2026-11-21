@@ -3,7 +3,9 @@
   "private": true,
   "description": "PC管理パッケージ（Google Apps Script）",
   "scripts": {
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run lint && npm test"
   },
   "devDependencies": {
     "eslint": "^10.1.0"

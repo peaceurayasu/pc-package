@@ -410,8 +410,26 @@ function getAuditLog(params) {
     requireSession_(p.token, true);
     const n = parseInt(p.limit, 10);
     const limit = isFinite(n) && n > 0 ? Math.min(n, AUDIT_VIEW_MAX) : 200;
-    const rows = readTable_(SHEET_AUDIT).rows;
-    return { total: rows.length, logs: rows.slice(-limit).reverse().map(function (r) { return publicRecord_(r); }) };
+    // 新しい行（下のほう）だけを読む（v0.40.0。何年ぶんもの履歴を、開くたびに丸ごと読まない）
+    const head = tableHead_(SHEET_AUDIT);
+    const lastRow = head.sheet.getLastRow();
+    const types = typeMap_(SHEET_AUDIT);
+    const logs = [];
+    if (lastRow >= 2 && head.headers.length) {
+      const start = Math.max(2, lastRow - limit + 1);
+      head.sheet.getRange(start, 1, lastRow - start + 1, head.headers.length).getValues().forEach(function (r) {
+        const obj = {};
+        let empty = true;
+        head.headers.forEach(function (h, j) {
+          if (!h || types[h] === undefined) return;
+          const v = fromCell_(types[h], r[j]);
+          if (v !== '') empty = false;
+          obj[h] = v;
+        });
+        if (!empty) logs.push(obj);
+      });
+    }
+    return { total: Math.max(0, lastRow - 1), logs: logs.reverse(), archiveUrl: auditArchiveUrl_() };
   });
 }
 
