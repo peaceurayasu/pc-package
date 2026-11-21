@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<base target="_top">
+<style>
+/* 配置の考え方：見出し（お客様の名前）→ 切り替え → 1つの表。読むだけの画面なので操作は切り替えだけ。 */
+:root {
+  --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
+  --brand: #17508f; --brand-soft: #e6eef8;
+  --ok: #17703f; --ok-soft: #e3f3ea; --warn: #9a5b00; --warn-soft: #fbf0d9; --danger: #b3261e; --danger-soft: #fbe6e4;
+  --idle: #4a5562; --idle-soft: #e9edf1;
+  --font: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.65 var(--font); -webkit-text-size-adjust: 100%; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 24px 16px 56px; display: flex; flex-direction: column; gap: 16px; }
+header .provider { color: var(--muted); font-size: 13px; }
+header img.logo { max-height: 48px; max-width: 220px; object-fit: contain; display: block; margin-bottom: 6px; }
+header h1 { margin: 2px 0 0; font-size: 22px; line-height: 1.35; }
+header .date { color: var(--muted); font-size: 13px; }
+.notice { display: flex; flex-direction: column; gap: 6px; }
+.notice p { margin: 0; padding: 9px 12px; border-radius: 6px; }
+.notice .danger { background: var(--danger-soft); color: var(--danger); }
+.notice .warn { background: var(--warn-soft); color: var(--warn); }
+.tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; background: none; padding: 10px 14px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--brand); border-bottom-color: var(--brand); font-weight: 700; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; background: #f8fafc; }
+tbody tr:last-child td { border-bottom: 0; }
+td.nowrap { white-space: nowrap; }
+td .minor { color: var(--muted); font-size: 12px; display: block; }
+td.body { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 220px; }
+.pill { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--idle-soft); color: var(--idle); }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.danger { background: var(--danger-soft); color: var(--danger); }
+.pill.brand { background: var(--brand-soft); color: var(--brand); }
+.empty { color: var(--muted); padding: 20px 16px; margin: 0; }
+.state { text-align: center; padding: 64px 16px; color: var(--muted); }
+.state h1 { color: var(--ink); font-size: 20px; margin: 0 0 8px; }
+.notice .info { background: var(--brand-soft); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice .info.important { background: var(--danger-soft); color: var(--danger); font-weight: 600; }
+.notice .info small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.pad { padding: 14px 16px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chipset { display: flex; flex-wrap: wrap; gap: 6px; }
+.chipset button { border: 1px solid #c3ccd6; background: var(--panel); border-radius: 999px; padding: 5px 14px; min-height: 36px; }
+.chipset button[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 7px 14px; min-height: 38px; }
+select { font: inherit; border: 1px solid #c3ccd6; border-radius: 6px; padding: 7px 10px; background: var(--panel); min-height: 38px; }
+/* レイアウト図（管理画面と同じ描き方） */
+.lay-canvas { position: relative; width: 100%; aspect-ratio: 4 / 3; border: 1px solid #c3ccd6; background: #fff; overflow: hidden; container-type: inline-size; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.lay-canvas > img.lay-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+.lay-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.lay-el { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center; text-align: center; color: #18222d; line-height: 1.25; font-size: 1.3cqw; }
+.lay-el.t-rect { border: 0.22cqw solid #5b6876; }
+.lay-el.t-circle { border: 0.22cqw solid #5b6876; border-radius: 50%; }
+.lay-el.t-desk { border: 0.18cqw solid #8a6a3a; background: #f3e6cf; border-radius: 0.4cqw; }
+.lay-el.t-chair { border: 0.18cqw solid #5b6876; border-top-width: 0.75cqw; background: #dfe6ee; border-radius: 35%; }
+.lay-el.t-shelf { border: 0.18cqw solid #6b5a3c; background-color: #efe6d6; background-image: repeating-linear-gradient(90deg, transparent 0, transparent calc(25% - 0.16cqw), #6b5a3c calc(25% - 0.16cqw), #6b5a3c 25%); }
+.lay-el.t-rack { border: 0.18cqw solid #2f3a46; background-color: #c9d1da; background-image: repeating-linear-gradient(0deg, transparent 0, transparent 0.9cqw, rgba(47, 58, 70, .4) 0.9cqw, rgba(47, 58, 70, .4) 1.1cqw); }
+.lay-el.t-counter { border: 0.18cqw solid #5b6876; background-color: #e9edf2; border-radius: 1.2cqw; }
+.lay-el.t-copier { border: 0.18cqw solid #3d4854; background-color: #d5dbe2; border-radius: 0.5cqw; box-shadow: inset 0 0.9cqw 0 #aab4bf; }
+.lay-el.t-text { white-space: nowrap; justify-content: flex-start; }
+.lay-el.t-icon { flex-direction: column; transform: translate(-50%, -50%); white-space: nowrap; }
+.lay-el.t-icon small { font-size: 1.2cqw; }
+.lay-el.t-pin { transform: translate(-50%, -50%); background: var(--brand); color: #fff; border-radius: 999px; padding: 0.3cqw 1cqw; white-space: nowrap; font-weight: 600; }
+.lay-el.t-pin.k-desktop { background: #2d6a4f; }
+.lay-el.t-pin.k-other { background: #6b4e9b; }
+/* 月次レポート（管理画面と同じ） */
+.report { max-width: 820px; margin: 0 auto; padding: 20px 18px; background: #fff; color: #18222d; }
+.report h1 { font-size: 19px; margin: 0; }
+.report .rhead { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; border-bottom: 2px solid #18222d; padding-bottom: 8px; flex-wrap: wrap; }
+.report .rmeta { font-size: 12px; color: #5b6876; text-align: right; }
+.report h2 { font-size: 14px; margin: 18px 0 6px; padding-left: 8px; border-left: 4px solid var(--brand); }
+.report .rsum { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-top: 12px; }
+.report .rsum div { border: 1px solid #dde3ea; border-radius: 6px; padding: 8px 10px; }
+.report .rsum b { display: block; font-size: 20px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.report .rsum span { font-size: 11px; color: #5b6876; }
+.report table { font-size: 13px; }
+.report th { background: #f3f5f8; }
+.report td.body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.report .rnone { color: #5b6876; font-size: 13px; margin: 0; }
+.report .rnote { border: 1px solid #dde3ea; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; }
+.report .rfoot { margin-top: 18px; font-size: 11px; color: #5b6876; text-align: right; }
+footer { color: var(--muted); font-size: 12px; text-align: center; }
+/* Tips と Windows情報（いちばん上） */
+.tipsbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--brand-soft); border: 1px solid #c9daf0; border-radius: 8px; padding: 9px 12px; }
+.tipsbar .tag { flex: none; background: var(--brand); color: #fff; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 700; }
+.tipsbar .tip { flex: 1 1 260px; min-width: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.tipsbar .tip b { margin-right: 8px; white-space: nowrap; }
+.tipsbar .btn { flex: none; min-height: 32px; padding: 3px 12px; font-size: 13px; }
+.tipsbar .x { flex: none; border: 0; background: none; color: var(--muted); font-size: 18px; line-height: 1; padding: 4px 6px; }
+.winfo h2 { font-size: 15px; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
+.winfo .wi { display: flex; gap: 10px; align-items: baseline; padding: 10px 16px; border-top: 1px solid var(--line-soft); flex-wrap: wrap; }
+.winfo h2 + .wi { border-top: 0; }
+.winfo .wi .d { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.winfo .wi .t { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.winfo .wi .t b { display: block; }
+.winfo .wi .t span { color: var(--muted); font-size: 13px; }
+.winfo .wi a { flex: none; font-size: 13px; white-space: nowrap; }
+/* まとめて印刷（印刷・PDFにする） */
+header { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+header .grow { flex: 1; min-width: 200px; }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
+.btn:disabled { opacity: .55; cursor: default; }
+.checks { display: flex; gap: 8px 18px; flex-wrap: wrap; }
+.checks label { display: flex; gap: 6px; align-items: center; min-height: 32px; }
+#printPick h2 { font-size: 15px; margin: 0 0 8px; }
+#printPick .note { color: var(--muted); font-size: 12px; margin: 8px 0 12px; }
+#printArea { display: none; }
+#printArea .phead { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; border-bottom: 2px solid #18222d; padding-bottom: 8px; margin-bottom: 4px; }
+#printArea .phead h1 { font-size: 18px; margin: 0; }
+#printArea .phead img { max-height: 36px; max-width: 170px; object-fit: contain; display: block; margin-bottom: 4px; }
+#printArea .phead .pmeta { font-size: 11px; color: #5b6876; text-align: right; }
+#printArea h2 { font-size: 13px; margin: 16px 0 6px; padding-left: 8px; border-left: 4px solid var(--brand); }
+#printArea table { font-size: 11px; }
+#printArea th, #printArea td { padding: 5px 7px; }
+#printArea .scroll { overflow: visible; }
+#printArea .empty { padding: 6px 0; font-size: 12px; }
+#printArea .psheet { page-break-before: always; break-before: page; }
+#printArea .psheet .lay-canvas { max-width: min(100%, calc(225mm * var(--r, 1.3333))) !important; page-break-inside: avoid; break-inside: avoid; }
+#printArea > .phead + .psheet { page-break-before: auto; break-before: auto; }
+#printArea > .phead + .psheet > .phead { display: none; }
+#printArea .pill { border: 1px solid currentColor; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+@media print {
+  body.printing .wrap { display: none !important; }
+  body.printing #printArea { display: block; }
+  body.printing #printArea a { color: inherit; text-decoration: none; }
+  body { background: #fff; }
+  header, .notice, .tabs, footer, .noprint, .tipsbar, .winfo { display: none !important; }
+  .wrap { padding: 0; max-width: none; }
+  .panel { border: 0; }
+  .report { max-width: none; padding: 0; }
+  tr { page-break-inside: avoid; }
+}
+</style>
+</head>
+<body data-logo="<?= logo ?>">
+<div class="wrap">
+  <div id="state" class="state">読み込んでいます…</div>
+  <div id="page" hidden style="display:flex;flex-direction:column;gap:16px">
+    <div id="tipsBox" hidden></div>
+    <header>
+      <div class="grow">
+        <img id="logo" class="logo" alt="" hidden>
+        <div class="provider" id="provider"></div>
+        <h1 id="customer"></h1>
+        <div class="date" id="date"></div>
+      </div>
+      <button type="button" class="btn" id="printOpen" hidden>印刷・PDFにする</button>
+    </header>
+    <section class="panel pad noprint" id="printPick" hidden></section>
+    <section class="panel winfo" id="winInfo" hidden></section>
+    <div class="notice" id="notice"></div>
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <section class="panel" id="panel"></section>
+    <footer>このページのURLは、ほかの人に教えないでください。</footer>
+  </div>
+</div>
+<div id="printArea"></div>
+<script>
+'use strict';
+var PORTAL_TOKEN = '<?= portalToken ?>';
+var P = null, TAB = '';
+// 会社のロゴ（画像の data URL のときだけ出す）
+(function () {
+  var logo = document.body.dataset.logo || '';
+  var im = document.getElementById('logo');
+  if (im && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/]+={0,2}$/.test(logo)) { im.src = logo; im.hidden = false; }
+})();
+
+function $(id) { return document.getElementById(id); }
+function esc(v) {
+  return String(v === null || v === undefined ? '' : v).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function pill(text, kind) { return '<span class="pill' + (kind ? ' ' + kind : '') + '">' + esc(text) + '</span>'; }
+function daysUntil(ymd) {
+  if (!ymd) return null;
+  var a = P.today.split('-'), b = String(ymd).split('-');
+  return Math.round((Date.UTC(+b[0], +b[1] - 1, +b[2]) - Date.UTC(+a[0], +a[1] - 1, +a[2])) / 86400000);
+}
+function expiryHtml(ymd, warnDays) {
+  if (!ymd) return '—';
+  var d = daysUntil(ymd);
+  if (d < 0) return esc(ymd) + ' ' + pill('期限切れ', 'danger');
+  if (d <= warnDays) return esc(ymd) + ' ' + pill('あと' + d + '日', 'warn');
+  return esc(ymd);
+}
+function statusPill(s) {
+  if (s === '完了') return pill(s, 'ok');
+  if (s === '保留中') return pill(s, 'warn');
+  if (s === '対応中' || s === '実施中') return pill(s, 'brand');
+  return s ? pill(s) : '';
+}
+function table(heads, rows, empty) {
+  if (!rows.length) return '<p class="empty">' + esc(empty) + '</p>';
+  return '<div class="scroll"><table><thead><tr>' + heads.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
+    '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
+}
+
+var LABEL = { '機器': '機器', 'ライセンス': 'ライセンス', '修理': '修理の状況', '対応': '対応の履歴', 'レイアウト': 'レイアウト図', '資料': '資料', 'レポート': '月次レポート' };
+var LAY = { id: '', data: null, ratio: 4 / 3, failed: false };
+var REP = { month: '', data: null, failed: '' };
+function fileSizeText(n) {
+  if (typeof n !== 'number') return '';
+  return n >= 1024 * 1024 ? (Math.round(n / 1024 / 1024 * 10) / 10) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+}
+function gas(fn, params, onOk, onNg) {
+  google.script.run.withSuccessHandler(function (r) { if (r && r.ok) onOk(r); else onNg((r && r.message) || '読み込めませんでした。'); })
+    .withFailureHandler(function () { onNg('通信に失敗しました。少し待ってから、もう一度試してください。'); })[fn](params);
+}
+/** レイアウト図の中身（管理画面の layoutInnerHtml と同じ描き方。ピンは名前で届く） */
+function layoutHtml(data, ratio) {
+  var H = 1000 / ratio;
+  var html = data.imageBase64 ? '<img class="lay-bg" alt="" src="data:' + esc(data.imageMimeType) + ';base64,' + esc(data.imageBase64) + '">' : '';
+  var lines = '', boxes = '';
+  data.elements.forEach(function (el) {
+    if (el.type === 'line' || el.type === 'arrow') {
+      var x1 = el.x1 * 10, y1 = el.y1 * H / 100, x2 = el.x2 * 10, y2 = el.y2 * H / 100;
+      var color = el.color || '#5b6876', w = (el.width || 2) * 1.6;
+      lines += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + esc(color) + '" stroke-width="' + w + '" stroke-linecap="round"></line>';
+      if (el.type === 'arrow') {
+        var ang = Math.atan2(y2 - y1, x2 - x1), len = 10 + w * 3, spread = 0.45;
+        lines += '<polygon points="' + x2 + ',' + y2 + ' ' + (x2 - len * Math.cos(ang - spread)) + ',' + (y2 - len * Math.sin(ang - spread)) + ' ' + (x2 - len * Math.cos(ang + spread)) + ',' + (y2 - len * Math.sin(ang + spread)) + '" fill="' + esc(color) + '"></polygon>';
+      }
+      return;
+    }
+    if (el.type === 'poly') {
+      if (!Array.isArray(el.points)) return;
+      lines += '<polyline points="' + el.points.map(function (p) { return (Number(p[0]) * 10) + ',' + (Number(p[1]) * H / 100); }).join(' ') + '" fill="none" stroke="' + esc(el.color || '#5b6876') +
+        '" stroke-width="' + ((Number(el.width) || 2) * 1.6) + '" stroke-linecap="round" stroke-linejoin="round"></polyline>';
+      return;
+    }
+    var style = 'left:' + Number(el.x) + '%;top:' + Number(el.y) + '%;';
+    var r = Number(el.r) || 0;
+    if (el.type === 'pin') {
+      boxes += '<div class="lay-el t-pin' + (el.kind === 'デスクトップ' ? ' k-desktop' : el.kind === 'ノート' ? '' : ' k-other') + '" style="' + style + '">' + esc(el.label) + '</div>';
+    } else if (el.type === 'text') {
+      boxes += '<div class="lay-el t-text" style="' + style + 'font-size:' + (Number(el.size) * 0.1) + 'cqw;' + (el.color ? 'color:' + esc(el.color) + ';' : '') + (r ? 'transform:rotate(' + r + 'deg);' : '') + '">' + esc(el.text) + '</div>';
+    } else if (el.type === 'icon') {
+      boxes += '<div class="lay-el t-icon" style="' + style + 'font-size:' + (Number(el.size) * 0.1) + 'cqw;' + (r ? 'transform:translate(-50%,-50%) rotate(' + r + 'deg);' : '') + '"><span>' + esc(el.icon) + '</span>' + (el.text ? '<small>' + esc(el.text) + '</small>' : '') + '</div>';
+    } else if (['rect', 'circle', 'desk', 'chair', 'shelf', 'rack', 'counter', 'copier'].indexOf(el.type) !== -1) {
+      boxes += '<div class="lay-el t-' + el.type + '" style="' + style + 'width:' + Number(el.w) + '%;height:' + Number(el.h) + '%;' + (el.color ? 'background-color:' + esc(el.color) + ';' : '') + (r ? 'transform:rotate(' + r + 'deg);' : '') + '">' + esc(el.text) + '</div>';
+    }
+  });
+  return '<div class="lay-canvas" style="aspect-ratio:' + ratio + ';max-width:max(300px, calc((100vh - 120px) * ' + ratio + '));margin:0 auto;background-color:' + esc(data.backgroundColor) + '">' + html +
+    '<svg viewBox="0 0 1000 ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + lines + '</svg>' + boxes + '</div>';
+}
+function openLayout(id) {
+  LAY = { id: id, data: null, ratio: 4 / 3, failed: false };
+  render();
+  gas('getPortalLayout', { t: PORTAL_TOKEN, layoutId: id }, function (r) {
+    if (LAY.id !== id) return;
+    LAY.data = r.layout; render();
+    if (r.layout.imageBase64) {
+      var img = new Image();
+      img.onload = function () { if (LAY.id === id && img.naturalWidth && img.naturalHeight) { LAY.ratio = Math.min(4, Math.max(0.4, img.naturalWidth / img.naturalHeight)); render(); } };
+      img.src = 'data:' + r.layout.imageMimeType + ';base64,' + r.layout.imageBase64;
+    }
+  }, function () { if (LAY.id === id) { LAY.failed = true; render(); } });
+}
+function openReport(month) {
+  REP = { month: month, data: null, failed: '', note: '' };
+  render();
+  gas('getPortalReport', { t: PORTAL_TOKEN, month: month }, function (r) { if (REP.month === month) { REP.data = r.report; REP.note = r.note || ''; render(); } },
+    function (msg) { if (REP.month === month) { REP.failed = msg; render(); } });
+}
+/** レポートの本体（管理画面の reportHtml と同じ） */
+function reportHtml(d, note) {
+  var ym = d.month.split('-');
+  var tbl = function (heads, rows) {
+    return '<table><thead><tr>' + heads.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+  };
+  var none = function (text) { return '<p class="rnone">' + esc(text) + '</p>'; };
+  var sum = function (n, label) { return '<div><b>' + esc(n) + '</b><span>' + esc(label) + '</span></div>'; };
+  return '<div class="report">' +
+    '<div class="rhead"><div><h1>' + esc(d.customerName) + ' 様　' + Number(ym[0]) + '年' + Number(ym[1]) + '月のご報告</h1></div>' +
+    '<div class="rmeta">' + (d.provider ? esc(d.provider) + '<br>' : '') + '対象：' + esc(d.from) + ' 〜 ' + esc(d.to) + '<br>作成：' + esc(d.createdOn) + '</div></div>' +
+    '<div class="rsum">' + sum(d.summary.activities, '対応') + sum(d.summary.maintenances, '保守の実施') + sum(d.summary.repairsReceived, '修理の受付') + sum(d.summary.repairsDone, '修理の完了') + sum(d.summary.devices, '管理している機器') + '</div>' +
+    '<h2>対応したこと' + (d.summary.kinds.length ? '（' + d.summary.kinds.map(function (k) { return esc(k.name) + ' ' + Number(k.count) + '件'; }).join('・') + '）' : '') + '</h2>' +
+    (d.activities.length ? tbl(['日付', '種別', '内容', '状況'], d.activities.map(function (a) {
+      return '<tr><td class="nowrap">' + esc(a['受付日']) + '</td><td class="nowrap">' + esc(a['対応種別']) + (a['インシデント種別'] ? '<br><small>' + esc(a['インシデント種別']) + '</small>' : '') + '</td><td class="body">' + esc(a['内容']) + '</td><td class="nowrap">' + esc(a['ステータス']) + '</td></tr>';
+    })) : none('この月の対応はありませんでした。')) +
+    '<h2>保守の実施</h2>' +
+    (d.maintenances.length ? tbl(['日付', '種別', '内容'], d.maintenances.map(function (m) {
+      return '<tr><td class="nowrap">' + esc(m['実施日']) + '</td><td class="nowrap">' + esc(m['種別']) + '</td><td class="body">' + esc(m['内容']) + '</td></tr>';
+    })) : none('この月の保守の実施はありませんでした。')) +
+    '<h2>修理</h2>' +
+    (d.repairs.length ? tbl(['受付日', '件名', '種別', '状況', '完了日'], d.repairs.map(function (x) {
+      return '<tr><td class="nowrap">' + esc(x['受付日']) + '</td><td>' + esc(x['件名']) + '</td><td class="nowrap">' + esc(x['種別']) + '</td><td class="nowrap">' + esc(x['ステータス']) + '</td><td class="nowrap">' + (x['完了日'] ? esc(x['完了日']) : '—') + '</td></tr>';
+    })) : none('この月に動いた修理はありませんでした。')) +
+    '<h2>機器の状態（' + d.deviceKinds.map(function (k) { return esc(k.name) + ' ' + Number(k.count) + '台'; }).join('・') + '）</h2>' +
+    (d.deviceNotes.length ? tbl(['機器', 'お知らせしたいこと'], d.deviceNotes.map(function (n) {
+      return '<tr><td>' + esc(n.name) + '</td><td class="body">' + esc(n.note) + '</td></tr>';
+    })) : none('とくにお知らせすることはありません。')) +
+    '<h2>ライセンスの期限</h2>' +
+    (d.licenses.length ? tbl(['製品', '数量', '有効期限', ''], d.licenses.map(function (l) {
+      return '<tr><td>' + esc(l['製品名']) + '</td><td class="nowrap">' + (l['数量'] === '' ? '—' : esc(l['数量'])) + '</td><td class="nowrap">' + esc(l['有効期限']) + '</td><td class="nowrap">' + esc(l.state) + '</td></tr>';
+    })) : none('期限が近いライセンスはありません。')) +
+    (String(note || '').trim() ? '<h2>担当者から</h2><div class="rnote">' + esc(note) + '</div>' : '') +
+    '<div class="rfoot">' + (d.provider ? esc(d.provider) : '') + '</div></div>';
+}
+var RENDER = {
+  '機器': function () {
+    return table(['種類', '利用者', 'メーカー・機種', 'シリアル', '設置場所', '購入日', '保証期限'], P.devices.map(function (d) {
+      return '<tr><td class="nowrap">' + esc(d['種類']) + (d['状況'] === '未使用' ? ' ' + pill('未使用') : '') + '</td>' +
+        '<td>' + esc(d['利用者']) + (d['部署'] ? '<span class="minor">' + esc(d['部署']) + '</span>' : '') + '</td>' +
+        '<td>' + esc(d['機種名']) + (d['メーカー'] ? '<span class="minor">' + esc(d['メーカー']) + '</span>' : '') + '</td>' +
+        '<td>' + esc(d['シリアル']) + '</td><td>' + esc(d['設置場所']) + '</td>' +
+        '<td class="nowrap">' + (d['購入日'] ? esc(d['購入日']) : '—') + '</td><td class="nowrap">' + expiryHtml(d['保証期限'], P.warrantyWarnDays) + '</td></tr>';
+    }), '登録されている機器はありません。');
+  },
+  'ライセンス': function () {
+    return table(['製品名', '数量', '使っている機器', '有効期限'], P.licenses.map(function (l) {
+      return '<tr><td>' + esc(l['製品名']) + (l['契約期間'] ? '<span class="minor">' + esc(l['契約期間']) + '</span>' : '') + '</td>' +
+        '<td class="nowrap">' + (l['数量'] === '' ? '—' : esc(l['数量'])) + '</td>' +
+        '<td>' + (l['割当先'].length ? l['割当先'].map(esc).join('<br>') : '—') + '</td>' +
+        '<td class="nowrap">' + expiryHtml(l['有効期限'], P.licenseWarnDays) + '</td></tr>';
+    }), '登録されているライセンスはありません。');
+  },
+  '修理': function () {
+    return table(['受付日', '件名', '種別', '預かり品', '状況', '完了日'], P.repairs.map(function (r) {
+      return '<tr><td class="nowrap">' + esc(r['受付日']) + '</td><td>' + esc(r['件名']) + (r['型番'] ? '<span class="minor">' + esc(r['型番']) + '</span>' : '') + '</td>' +
+        '<td class="nowrap">' + esc(r['種別']) + '</td><td>' + esc(r['預かり品']) + '</td><td class="nowrap">' + statusPill(r['ステータス']) + '</td>' +
+        '<td class="nowrap">' + (r['完了日'] ? esc(r['完了日']) : '—') + '</td></tr>';
+    }), '修理の記録はありません。');
+  },
+  'レイアウト': function () {
+    if (!P.layouts.length) return '<p class="empty">レイアウト図はまだありません。</p>';
+    var pick = P.layouts.length > 1 ? '<div class="pad chipset noprint">' + P.layouts.map(function (l) {
+      return '<button type="button" data-layout="' + esc(l.id) + '" aria-pressed="' + (l.id === LAY.id) + '">' + esc(l.name) + '</button>';
+    }).join('') + '</div>' : '';
+    return pick + '<div class="pad"' + (pick ? ' style="padding-top:0"' : '') + '>' +
+      (LAY.failed ? '<p class="empty">このレイアウト図は読み込めませんでした。</p>' : LAY.data ? layoutHtml(LAY.data, LAY.ratio) : '<p class="empty">読み込んでいます…</p>') + '</div>';
+  },
+  '資料': function () {
+    return table(['資料', '大きさ', '日付'], P.files.map(function (f) {
+      return '<tr><td><a href="' + esc(f.url) + '" target="_blank" rel="noopener">' + esc(f.name) + '</a></td><td class="nowrap">' + esc(fileSizeText(f.size)) + '</td><td class="nowrap">' + esc(f.date) + '</td></tr>';
+    }), '資料はまだありません。');
+  },
+  'レポート': function () {
+    if (!P.reportMonths.length) return '<p class="empty">まだ見られる月次レポートはありません。</p>';
+    var head = '<div class="pad row noprint"><label for="repMonth">月</label><select id="repMonth">' + P.reportMonths.map(function (m) {
+      var p = m.split('-');
+      return '<option value="' + esc(m) + '"' + (m === REP.month ? ' selected' : '') + '>' + Number(p[0]) + '年' + Number(p[1]) + '月</option>';
+    }).join('') + '</select><button type="button" class="btn" id="repPrint">印刷する</button></div>';
+    return head + (REP.failed ? '<p class="empty">' + esc(REP.failed) + '</p>' : REP.data ? '<div class="scroll">' + reportHtml(REP.data, REP.note) + '</div>' : '<p class="empty">読み込んでいます…</p>');
+  },
+  '対応': function () {
+    return table(['受付日', '種別', '内容', '状況'], P.activities.map(function (a) {
+      return '<tr><td class="nowrap">' + esc(a['受付日']) + '</td><td class="nowrap">' + esc(a['対応種別']) + (a['インシデント種別'] ? '<span class="minor">' + esc(a['インシデント種別']) + '</span>' : '') + '</td>' +
+        '<td class="body">' + esc(a['内容']) + '</td><td class="nowrap">' + statusPill(a['ステータス']) + '</td></tr>';
+    }), '対応の記録はありません。');
+  }
+};
+
+function render() {
+  $('tabs').innerHTML = P.tabs.map(function (t) {
+    return '<button type="button" role="tab" data-tab="' + esc(t) + '" aria-selected="' + (t === TAB) + '">' + esc(LABEL[t] || t) + '</button>';
+  }).join('');
+  $('tabs').hidden = P.tabs.length < 2;
+  $('panel').innerHTML = RENDER[TAB] ? RENDER[TAB]() : '<p class="empty">いま表示できる内容はありません。</p>';
+}
+
+// ---- まとめて印刷（印刷・PDFにする）。見せている内容から、印刷するものを選んで1つにまとめる ----
+var PRINTABLE = ['機器', 'ライセンス', '修理', '対応', 'レイアウト', '資料'];   // 月次レポートは、レポートのタブの「印刷する」で印刷する
+var PRINT = { busy: false, cancelled: false, layouts: {} };
+/** 前の「まとめて印刷」の中身が残っていたら片づける（印刷が終わった合図を出さないブラウザがある） */
+function clearPrintArea() { document.body.classList.remove('printing'); $('printArea').innerHTML = ''; }
+function printTabs() { return PRINTABLE.filter(function (t) { return P.tabs.indexOf(t) !== -1; }); }
+function printPickHtml() {
+  return '<h2>印刷・PDFにする</h2><div class="checks">' + printTabs().map(function (t) {
+    var n = t === 'レイアウト' ? P.layouts.length : null;
+    return '<label><input type="checkbox" data-print="' + esc(t) + '" checked' + (n === 0 ? ' disabled' : '') + '>' + esc(LABEL[t] || t) + (n ? '（' + n + '枚）' : '') + '</label>';
+  }).join('') + '</div>' +
+    '<p class="note">チェックを付けたものを、1つにまとめて印刷します。PDFにするときは、印刷の画面で「PDFに保存」を選んでください。' + (P.tabs.indexOf('レポート') !== -1 ? '月次レポートは、「月次レポート」のタブから印刷できます。' : '') + '</p>' +
+    '<p class="empty" id="printMsg" hidden style="padding:0 0 10px"></p>' +
+    '<div class="row"><button type="button" class="btn primary" id="printGo">印刷する</button><button type="button" class="btn" id="printCancel">やめる</button></div>';
+}
+function printHeadHtml() {
+  var logo = document.body.dataset.logo || '';
+  var okLogo = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/]+={0,2}$/.test(logo);
+  return '<div class="phead"><div>' + (okLogo ? '<img alt="" src="' + esc(logo) + '">' : '') + '<h1>' + esc(P.customerName) + ' 様</h1></div>' +
+    '<div class="pmeta">' + (P.provider ? esc(P.provider) + '<br>' : '') + esc(P.today) + ' 時点</div></div>';
+}
+/** 選んだレイアウト図を、まだ読んでいなければ読む（1枚ずつ順に） */
+function loadPrintLayouts(done, fail) {
+  var todo = P.layouts.filter(function (l) { return !PRINT.layouts[l.id]; });
+  var next = function () {
+    var l = todo.shift();
+    if (!l) { done(); return; }
+    gas('getPortalLayout', { t: PORTAL_TOKEN, layoutId: l.id }, function (r) {
+      var item = { data: r.layout, ratio: 4 / 3 };
+      PRINT.layouts[l.id] = item;
+      if (!r.layout.imageBase64) { next(); return; }
+      var img = new Image();
+      img.onload = function () { if (img.naturalWidth && img.naturalHeight) item.ratio = Math.min(4, Math.max(0.4, img.naturalWidth / img.naturalHeight)); next(); };
+      img.onerror = next;
+      img.src = 'data:' + r.layout.imageMimeType + ';base64,' + r.layout.imageBase64;
+    }, fail);
+  };
+  next();
+}
+function printAll(picked) {
+  var html = printHeadHtml();
+  picked.forEach(function (t) {
+    if (t === 'レイアウト') {
+      P.layouts.forEach(function (l) {
+        var item = PRINT.layouts[l.id];
+        if (item) html += '<div class="psheet" style="--r:' + Number(item.ratio) + '">' + printHeadHtml() + '<h2>レイアウト図　' + esc(l.name) + '</h2>' + layoutHtml(item.data, item.ratio) + '</div>';
+      });
+      return;
+    }
+    html += '<h2>' + esc(LABEL[t] || t) + '</h2>' + RENDER[t]();
+  });
+  clearPrintArea();
+  $('printArea').innerHTML = html;
+  document.body.classList.add('printing');
+  window.print();
+}
+window.addEventListener('afterprint', clearPrintArea);
+
+// ---- Tips と Windows情報 ----
+var TIP = { ix: 0, hidden: false };
+function drawTips() {
+  var box = $('tipsBox'), tips = P.tips || [];
+  if (!tips.length || TIP.hidden) { box.hidden = true; box.innerHTML = ''; return; }
+  var t = tips[((TIP.ix % tips.length) + tips.length) % tips.length];
+  box.hidden = false;
+  box.innerHTML = '<div class="tipsbar"><span class="tag">Tips</span><span class="tip"><b>' + esc(t.t) + '</b>' + esc(t.b) + '</span>' +
+    '<button type="button" class="btn" id="tipNext">次のTips</button><button type="button" class="x" id="tipHide" aria-label="閉じる" title="閉じる">×</button></div>';
+}
+function drawWinInfo() {
+  var box = $('winInfo'), list = P.wininfo || [];
+  box.hidden = !list.length;
+  box.innerHTML = !list.length ? '' : '<h2>Windows のお知らせ（更新プログラム・ドライバーの不具合）</h2>' + list.map(function (w) {
+    var link = typeof w['リンク'] === 'string' && /^https:\/\/[^\s"'<>\\]+$/.test(w['リンク']) ? w['リンク'] : '';
+    return '<div class="wi"><span class="d">' + esc(String(w['日付']).slice(5).replace('-', '/')) + '</span>' +
+      '<span class="t"><b>' + (w['重要度'] === '重要' ? pill('重要', 'danger') + ' ' : '') + esc(w['タイトル']) + '</b>' + (w['内容'] ? '<span>' + esc(w['内容']) + '</span>' : '') + '</span>' +
+      (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">くわしく</a>' : '') + '</div>';
+  }).join('');
+}
+
+function showError(message) {
+  $('page').hidden = true;
+  var s = $('state');
+  s.hidden = false;
+  s.innerHTML = '<h1>このページは開けません</h1><p>' + esc(message) + '</p>';
+}
+
+function start(r) {
+  if (!r || !r.ok) { showError((r && r.message) || 'このURLは使えません。担当者に確認してください。'); return; }
+  P = r;
+  TAB = r.tabs[0] || '';
+  $('provider').textContent = r.provider;
+  $('provider').hidden = !r.provider;
+  $('customer').textContent = r.customerName + ' 様';
+  $('date').textContent = r.today + ' 時点';
+  var notes = (r.notices || []).map(function (n) {
+    return '<p class="info' + (n['重要度'] === '重要' ? ' important' : '') + '">' + esc(n['本文']) + '<small>' + esc(n.date) + '</small></p>';
+  });
+  if (r.licenses) {
+    var expired = r.licenses.filter(function (l) { var d = daysUntil(l['有効期限']); return d !== null && d < 0; }).length;
+    var soon = r.licenses.filter(function (l) { var d = daysUntil(l['有効期限']); return d !== null && d >= 0 && d <= r.licenseWarnDays; }).length;
+    if (expired) notes.push('<p class="danger">有効期限が切れているライセンスが ' + expired + ' 件あります。</p>');
+    if (soon) notes.push('<p class="warn">' + r.licenseWarnDays + '日以内に有効期限が来るライセンスが ' + soon + ' 件あります。</p>');
+  }
+  $('notice').innerHTML = notes.join('');
+  $('notice').hidden = !notes.length;
+  $('state').hidden = true;
+  $('page').hidden = false;
+  $('printOpen').hidden = !(r.canPrint && printTabs().length);
+  if (r.tips && r.tips.length) { var dp = r.today.split('-'); TIP.ix = Math.floor(Date.UTC(+dp[0], +dp[1] - 1, +dp[2]) / 86400000) % r.tips.length; }
+  drawTips();
+  drawWinInfo();
+  enterTab();
+}
+
+function enterTab() {
+  if (TAB === 'レイアウト' && !LAY.id && P.layouts.length) { openLayout(P.layouts[0].id); return; }
+  if (TAB === 'レポート' && !REP.month && P.reportMonths.length) { openReport(P.reportMonths[0]); return; }
+  render();
+}
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-tab]');
+  if (b) { TAB = b.dataset.tab; enterTab(); return; }
+  var l = e.target.closest('[data-layout]');
+  if (l) { openLayout(l.dataset.layout); return; }
+  if (e.target.id === 'repPrint') { clearPrintArea(); window.print(); return; }
+  if (e.target.id === 'tipNext') { TIP.ix++; drawTips(); return; }
+  if (e.target.id === 'tipHide') { TIP.hidden = true; drawTips(); return; }
+  if (e.target.id === 'printOpen') {
+    var box = $('printPick');
+    box.hidden = !box.hidden;
+    if (!box.hidden && !PRINT.busy) box.innerHTML = printPickHtml();   // 読み込みの途中なら、作り直さない（押せないボタンを、押せるように見せない）
+    if (!box.hidden) box.scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  if (e.target.id === 'printCancel') { PRINT.cancelled = true; $('printPick').hidden = true; return; }
+  if (e.target.id === 'printGo') {
+    if (PRINT.busy) return;
+    var picked = Array.prototype.filter.call($('printPick').querySelectorAll('input[data-print]'), function (x) { return x.checked && !x.disabled; }).map(function (x) { return x.dataset.print; });
+    var msg = $('printMsg');
+    if (!picked.length) { msg.textContent = '印刷するものを、1つ以上選んでください。'; msg.hidden = false; return; }
+    PRINT.cancelled = false;
+    var go = function () {
+      PRINT.busy = false; e.target.disabled = false; msg.hidden = true;
+      if (PRINT.cancelled) return;      // 読み込みを待つ間に「やめる」を押した
+      $('printPick').hidden = true; printAll(picked);
+    };
+    if (picked.indexOf('レイアウト') === -1) { go(); return; }
+    PRINT.busy = true; e.target.disabled = true;
+    msg.textContent = 'レイアウト図を読み込んでいます…'; msg.hidden = false;
+    loadPrintLayouts(go, function (m) { PRINT.busy = false; e.target.disabled = false; msg.textContent = 'レイアウト図を読み込めませんでした。' + m; msg.hidden = false; });
+  }
+});
+document.addEventListener('change', function (e) {
+  if (e.target.id === 'repMonth') openReport(e.target.value);
+});
+
+google.script.run
+  .withSuccessHandler(start)
+  .withFailureHandler(function () { showError('通信に失敗しました。少し待ってから、もう一度開いてください。'); })
+  .getPortalData({ t: PORTAL_TOKEN });
+</script>
+</body>
+</html>
