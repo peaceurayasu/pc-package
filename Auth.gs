@@ -9,7 +9,7 @@
  *   ログアウト・パスワードの変更・スタッフの無効化・期限（REMEMBER_DAYS 日）で、使えなくなる
  * - 公開関数：login / loginWithRemember / logout / changeMyPassword / saveMyStartView / saveMyView / listStaff / saveStaff / resetStaffPassword
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.128.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.128.1';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // ハッシュ・乱数
@@ -191,15 +191,52 @@ function markTempPassword_(staffId, hash) {
   try { PropertiesService.getScriptProperties().setProperty(tempPwKey_(staffId), passwordStamp_(hash)); }
   catch (e) { console.warn('仮パスワードの印を残せませんでした: ' + e); }
 }
-/** 本人がパスワードを変えたときに呼ぶ（印が合わなくなるので無くても出ないが、片づけておく） */
+/** 本人がパスワードを変えたときに呼ぶ（印を「変えた」にしておく。仮パスワードの印とは合わないので、出なくなる） */
 function clearTempPassword_(staffId) {
-  try { PropertiesService.getScriptProperties().deleteProperty(tempPwKey_(staffId)); } catch (e) { /* 印が合わないので、残っても出ない */ }
+  try { PropertiesService.getScriptProperties().setProperty(tempPwKey_(staffId), TEMP_PW_CHANGED); } catch (e) { /* 印が合わないので、残っても出ない */ }
 }
-/** そのスタッフ（シートの行）が、仮パスワードのままか */
+const TEMP_PW_CHANGED = 'changed';
+
+/**
+ * そのスタッフ（シートの行）が、仮パスワードのままか。
+ * v0.128.1：印がまだ無い人（v0.128.0 より前に仮パスワードを出した人）は、変更履歴から1回だけ確かめる。
+ *   いちばん新しい「パスワード再設定」「スタッフ追加」が、本人の「パスワード変更」より後なら、仮パスワードのまま。
+ *   確かめた結果は印に残すので、次からは変更履歴を読まない。
+ */
 function isTempPassword_(staff) {
   if (!staff || !staff['パスワードハッシュ']) return false;
-  try { return PropertiesService.getScriptProperties().getProperty(tempPwKey_(staff['スタッフID'])) === passwordStamp_(staff['パスワードハッシュ']); }
-  catch (e) { return false; }
+  const stamp = passwordStamp_(staff['パスワードハッシュ']);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const key = tempPwKey_(staff['スタッフID']);
+    const mark = props.getProperty(key);
+    if (mark !== null) return mark === stamp;
+    const temp = auditSaysTempPassword_(staff['スタッフID']);
+    props.setProperty(key, temp ? stamp : TEMP_PW_CHANGED);
+    return temp;
+  } catch (e) {
+    console.warn('仮パスワードかどうか確かめられませんでした: ' + e);
+    return false;
+  }
+}
+
+/**
+ * 変更履歴から、そのスタッフのパスワードが仮パスワードのままかを見る（v0.128.1）。
+ * 「パスワード再設定」「スタッフ追加」（仮パスワードを出した）と、本人の「パスワード変更」のうち、いちばん新しいもので決める。
+ * 変更履歴にどれも無い（退避シートへ移した・最初の管理者）ときは、仮パスワードとは見なさない。
+ */
+function auditSaysTempPassword_(staffId) {
+  const ids = [String(staffId), normStaffId_(staffId)].filter(function (v, i, all) { return v && all.indexOf(v) === i; });
+  const kinds = { 'パスワード再設定': true, 'スタッフ追加': true, 'パスワード変更': false };
+  let latest = null;
+  ids.forEach(function (id) {
+    rowsWhere_(SHEET_AUDIT, '対象', id).forEach(function (r) {
+      if (!Object.prototype.hasOwnProperty.call(kinds, r['種別'])) return;
+      const at = String(r['日時'] || '');
+      if (!latest || at > latest.at || (at === latest.at && r._row > latest.row)) latest = { at: at, row: r._row, temp: kinds[r['種別']] };
+    });
+  });
+  return !!(latest && latest.temp);
 }
 
 // ---------------------------------------------------------------------------

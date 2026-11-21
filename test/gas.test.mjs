@@ -275,3 +275,30 @@ test('仮パスワード：出したパスワードのままなら「仮」、�
   assert.equal(G.isTempPassword_(null), false);
   assert.equal(G.isTempPassword_({ 'スタッフID': 'x' }), false);
 });
+
+test('仮パスワード：印が無い人は、変更履歴のいちばん新しい記録で見分け、結果を印に残す', () => {
+  const g = G.$global, real = g.rowsWhere_;
+  const audit = [];
+  let reads = 0;
+  g.rowsWhere_ = (sheet, col, value) => { reads++; return audit.filter((r) => r['対象'] === value); };
+  const row = (n, at, kind, target) => ({ _row: n, '日時': at, '種別': kind, '対象': target });
+  try {
+    // 再設定のあと、本人が変えていない → 仮パスワードのまま
+    audit.push(row(2, '2026-10-01 09:00', 'スタッフ追加', 'tanaka'), row(3, '2026-10-02 09:00', 'パスワード変更', 'tanaka'), row(9, '2026-11-01 10:00', 'パスワード再設定', 'Tanaka'));
+    const tanaka = { 'スタッフID': 'Tanaka', 'パスワードハッシュ': G.makePasswordHash_('Temp9999aa') };
+    assert.equal(G.isTempPassword_(tanaka), true);
+    const before = reads;
+    assert.equal(G.isTempPassword_(tanaka), true);
+    assert.equal(reads, before);                       // 2回めは変更履歴を読まない（印から）
+    // 本人が変えたあと → 出ない
+    G.clearTempPassword_('tanaka');
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'Tanaka', 'パスワードハッシュ': G.makePasswordHash_('MyOwnPass99') }), false);
+    // 最後が本人の変更 → 仮パスワードではない
+    audit.push(row(4, '2026-10-05 09:00', 'パスワード再設定', 'sato'), row(5, '2026-10-06 09:00', 'パスワード変更', 'sato'));
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'sato', 'パスワードハッシュ': G.makePasswordHash_('SatoPass123') }), false);
+    // 変更履歴に何も無い → 仮パスワードとは見なさない
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'nobody', 'パスワードハッシュ': G.makePasswordHash_('Whatever12') }), false);
+  } finally {
+    g.rowsWhere_ = real;
+  }
+});
