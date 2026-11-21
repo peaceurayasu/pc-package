@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.127.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.127.3';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -823,7 +823,7 @@ function mtgMonthlyHtml() {
       }).join('') + '</tbody></table>' + (rankAll > rank.length ? '<p class="note">上位' + rank.length + '社まで（対応のあった顧客は ' + rankAll + '社）</p>' : '') : '<p class="mempty">' + mLabel + 'の対応はありません。</p>') + '</div>' +
       '<div><h3 class="mh3">今月・来月に期限が来るもの</h3>' +
       (due.length ? '<table class="mtbl"><thead><tr><th>期限</th><th>種類</th><th>顧客</th><th>内容</th></tr></thead><tbody>' + due.slice(0, 20).map(function (x) {
-        return '<tr data-act="editRecord:' + x.key + '" data-id="' + esc(x.id) + '"' + memoAttr(memoOfRec(x.key, x.id)) + '><td class="nowrap">' + esc(md(x.d)) + '</td><td class="nowrap">' + esc(x.kind) + '</td><td>' + esc(custName(x.cust)) + '</td><td class="clamp">' + esc(x.text) + '</td></tr>';
+        return '<tr data-act="editRecord:' + x.key + '" data-id="' + esc(x.id) + '"' + memoAttr(memoOfRec(x.key, x.id)) + '><td class="nowrap">' + esc(md(x.d)) + '</td><td class="nowrap">' + esc(x.kind) + '</td><td>' + esc(custName(x.cust)) + '</td><td class="clamp" title="' + esc(x.text) + '"><span>' + esc(x.text) + '</span></td></tr>';
       }).join('') + '</tbody></table>' + (due.length > 20 ? '<p class="note">ほか ' + (due.length - 20) + '件</p>' : '') : '<p class="mempty">ありません。</p>') + '</div></div>' +
     '</div></section>';
 }
@@ -837,7 +837,7 @@ function mtgRepairsHtml(w, st) {
   var label = st.off === -1 ? '先週' : st.off === 0 ? '今週' : 'この週';
   return '<section class="panel mtg" id="mtgRepairs"><h2><span class="grow">③ ' + label + 'の修理履歴</span>' + pill('受付 ' + got, '') + pill('完了 ' + done, done ? 'ok' : '') + '</h2><div class="pad">' +
     (list.length ? '<table class="mtbl"><thead><tr><th>受付日</th><th>顧客</th><th>件名</th><th>種別</th><th>担当</th><th>状態</th><th>完了日</th></tr></thead><tbody>' + list.slice(0, MAX).map(function (r) {
-      return '<tr class="' + (isOpenRepair(r) ? 'mopen' : '') + '" data-act="editRecord:repair" data-id="' + esc(r['修理ID']) + '"' + memoAttr(r) + '><td class="nowrap">' + esc(mdw(String(r['受付日']).slice(0, 10))) + '</td><td>' + esc(custName(r['顧客ID'])) + '</td><td class="clamp">' + esc(r['件名']) +
+      return '<tr class="' + (isOpenRepair(r) ? 'mopen' : '') + '" data-act="editRecord:repair" data-id="' + esc(r['修理ID']) + '"' + memoAttr(r) + '><td class="nowrap">' + esc(mdw(String(r['受付日']).slice(0, 10))) + '</td><td>' + esc(custName(r['顧客ID'])) + '</td><td class="clamp" title="' + esc(r['件名']) + '"><span>' + esc(r['件名']) + '</span>' +
         (r['型番'] ? '<span class="minor">' + esc(r['型番']) + '</span>' : '') + '</td><td class="nowrap">' + esc(r['種別'] || '') + '</td><td class="nowrap">' + esc(r['担当スタッフ'] || '') + '</td><td>' + statusPill(r['ステータス']) + '</td><td class="nowrap">' + (r['完了日'] ? esc(md(String(r['完了日']).slice(0, 10))) : '—') + '</td></tr>';
     }).join('') + '</tbody></table>' + (list.length > MAX ? '<p class="note">ほか ' + (list.length - MAX) + '件（修理履歴の画面で見られます）</p>' : '')
       : '<p class="mempty">この週に受け付けた・完了した修理はありません。</p>') + '</div></section>';
@@ -1040,7 +1040,7 @@ VIEWS.meeting = function () {
   var staleHtml = '<section class="panel mtg"><h2><span class="grow">② ' + esc(st.off === -1 ? '先週' : st.off === 0 ? '今週' : 'この週') + 'の対応履歴</span>' +
     pill(wActs.length + '件', '') + (wOpen ? pill('未完了 ' + wOpen, 'warn') : '') + '</h2><div class="pad">' +
     (wActs.length ? '<table class="mtbl"><thead><tr><th>受付日</th><th>顧客</th><th>内容</th><th>種別</th><th>担当</th><th>時間</th><th>状態</th></tr></thead><tbody>' + wActs.slice(0, MTG_ACT_MAX).map(function (a) {
-      return '<tr class="' + (isOpenActivity(a) ? 'mopen' : '') + (a['会議で共有'] === 'はい' ? ' mshare' : '') + '" data-act="editRecord:activity" data-id="' + esc(a['対応ID']) + '"' + memoAttr(a) + '><td class="nowrap">' + esc(mdw(String(a['受付日']).slice(0, 10))) + '</td><td>' + esc(custName(a['顧客ID'])) + '</td><td class="clamp">' + (a['会議で共有'] === 'はい' ? pill('共有', 'brand') + ' ' : '') + linkify(a['内容']) + '</td><td class="nowrap">' + esc(a['対応種別'] || '') + '</td><td class="nowrap">' + esc(a['受付スタッフ'] || '') + '</td><td class="nowrap">' + mtgTimeHtml(a) + '</td><td>' + statusPill(a['ステータス']) + '</td></tr>';
+      return '<tr class="' + (isOpenActivity(a) ? 'mopen' : '') + (a['会議で共有'] === 'はい' ? ' mshare' : '') + '" data-act="editRecord:activity" data-id="' + esc(a['対応ID']) + '"' + memoAttr(a) + '><td class="nowrap">' + esc(mdw(String(a['受付日']).slice(0, 10))) + '</td><td>' + esc(custName(a['顧客ID'])) + '</td><td class="clamp" title="' + esc(a['内容']) + '"><span>' + (a['会議で共有'] === 'はい' ? pill('共有', 'brand') + ' ' : '') + linkify(a['内容']) + '</span></td><td class="nowrap">' + esc(a['対応種別'] || '') + '</td><td class="nowrap">' + esc(a['受付スタッフ'] || '') + '</td><td class="nowrap">' + mtgTimeHtml(a) + '</td><td>' + statusPill(a['ステータス']) + '</td></tr>';
     }).join('') + '</tbody></table>' + (wActs.length > MTG_ACT_MAX ? '<p class="note">ほか ' + (wActs.length - MTG_ACT_MAX) + '件（対応履歴の画面で見られます）</p>' : '')
       : '<p class="mempty">この週に受けた対応はありません。</p>') +
     (olderActs || olderReps ? '<p class="mcarry">この週より前からの未完了：対応 <b>' + olderActs + '</b>件・修理 <b>' + olderReps + '</b>件<button type="button" class="btn small" data-act="tileOpenActs">対応を見る</button><button type="button" class="btn small" data-act="tileOpenReps">修理を見る</button></p>' : '') +
@@ -1074,7 +1074,7 @@ VIEWS.meeting = function () {
     (soon.length ? '<table class="mtbl"><thead><tr><th>いつ</th><th>種類</th><th>顧客</th><th>内容</th></tr></thead><tbody>' + soon.slice(0, 20).map(function (x) {
       var n = dueIn(x.d);
       var when = x.since ? pill('受付から' + Math.max(0, -n) + '日', -n >= MTG_STALE_DAYS ? 'warn' : '') : x.past ? esc(md(x.d)) + ' 受信' : n < 0 ? pill((x.over ? '過ぎて' : '切れて') + (-n) + '日', 'danger') : n === 0 ? pill('今日', 'danger') : pill('あと' + n + '日', n <= 7 ? 'warn' : '');
-      return '<tr data-act="editRecord:' + x.key + '" data-id="' + esc(x.id) + '"' + memoAttr(memoOfRec(x.key, x.id)) + '><td class="nowrap">' + when + '</td><td class="nowrap">' + esc(x.kind) + '</td><td>' + esc(custName(x.cust)) + '</td><td class="clamp">' + esc(x.text) + '</td></tr>';
+      return '<tr data-act="editRecord:' + x.key + '" data-id="' + esc(x.id) + '"' + memoAttr(memoOfRec(x.key, x.id)) + '><td class="nowrap">' + when + '</td><td class="nowrap">' + esc(x.kind) + '</td><td>' + esc(custName(x.cust)) + '</td><td class="clamp" title="' + esc(x.text) + '"><span>' + esc(x.text) + '</span></td></tr>';
     }).join('') + '</tbody></table>' : '<p class="mempty">この先' + MTG_AHEAD_DAYS + '日に気をつけることはありません。</p>') + '</div></section>';
 
   // ⑥ 議題メモ

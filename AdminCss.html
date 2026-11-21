@@ -1,5 +1,5 @@
 <style>
-:root { --file-version: "@file-version 0.127.2"; }
+:root { --file-version: "@file-version 0.127.3"; }
 /* 配置の考え方：上に固定の帯（名前・画面の切り替え・利用者）、その下は1本の列。一覧は表、編集は重ねた窓。 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
@@ -742,6 +742,8 @@ a.ulink { color: var(--brand); text-decoration: underline; overflow-wrap: anywhe
 .mtbl td { padding: 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
 .mtbl tr[data-act] { cursor: pointer; } .mtbl tr[data-act]:hover { background: #f6f9fd; }
 .mtbl td.clamp { max-width: 420px; }
+/* v0.127.3：ミーティングの表の長い文は2行で切る（全文は、マウスを乗せると出る・行を押すと開く）。型番などの小さい字は1行 */
+.mtbl td.clamp > span.minor { display: block; -webkit-line-clamp: 1; white-space: nowrap; text-overflow: ellipsis; }
 .mempty { margin: 0; color: var(--ok); font-weight: 700; }
 .mprog { position: relative; height: 26px; border-radius: 13px; background: var(--idle-soft); overflow: hidden; margin-bottom: 12px; }
 .mprog i { position: absolute; inset: 0 auto 0 0; background: var(--ok); border-radius: 13px; }
