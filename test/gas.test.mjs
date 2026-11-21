@@ -261,3 +261,17 @@ test('管理画面：Admin.html が読み込む部品は、どれも実在し、
     assert.ok(!readFileSync(name + '.html', 'utf8').includes('<?'), name + '.html の中に <? があると、そのまま画面に出てしまう');
   }
 });
+
+test('仮パスワード：出したパスワードのままなら「仮」、本人が変えたら「仮」でなくなる', () => {
+  const hash = G.makePasswordHash_('Temp12345x');
+  const staff = { 'スタッフID': 'Yamada', 'パスワードハッシュ': hash };
+  assert.equal(G.isTempPassword_(staff), false);                    // 印がまだ無い
+  G.markTempPassword_('yamada', hash);                              // ID の大文字・小文字は区別しない
+  assert.equal(G.isTempPassword_(staff), true);
+  assert.equal(G.isTempPassword_({ 'スタッフID': 'yamada', 'パスワードハッシュ': G.makePasswordHash_('MyOwnPass99') }), false);   // 本人が変えた
+  assert.equal(G.isTempPassword_({ 'スタッフID': 'suzuki', 'パスワードハッシュ': hash }), false);   // ほかの人
+  G.clearTempPassword_('yamada');
+  assert.equal(G.isTempPassword_(staff), false);
+  assert.equal(G.isTempPassword_(null), false);
+  assert.equal(G.isTempPassword_({ 'スタッフID': 'x' }), false);
+});

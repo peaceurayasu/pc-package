@@ -9,7 +9,7 @@
  *   ログアウト・パスワードの変更・スタッフの無効化・期限（REMEMBER_DAYS 日）で、使えなくなる
  * - 公開関数：login / loginWithRemember / logout / changeMyPassword / saveMyStartView / saveMyView / listStaff / saveStaff / resetStaffPassword
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.111.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.128.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // ハッシュ・乱数
@@ -176,6 +176,30 @@ function staffPublic_(row) {
 /** パスワードが変わったら古いセッションを無効にするための印 */
 function passwordStamp_(hash) {
   return String(hash || '').slice(-12);
+}
+
+// ---------------------------------------------------------------------------
+// 仮パスワード（v0.128.0）
+//   仮パスワードを出したとき（スタッフの追加・パスワードの再設定・最初の管理者）、そのパスワードの印をスクリプトのプロパティに残す。
+//   ログインしたとき、いまのパスワードの印と同じなら「仮パスワードのまま」として、画面がパスワードの変更を促す。
+//   本人がパスワードを変えると印が合わなくなるので、自動で出なくなる（シートの列は増やさない）。
+// ---------------------------------------------------------------------------
+const TEMP_PW_PREFIX = 'tmppw_';
+function tempPwKey_(staffId) { return TEMP_PW_PREFIX + sha256Hex_('temp:' + normStaffId_(staffId)).slice(0, 40); }
+/** 仮パスワードを出したときに呼ぶ */
+function markTempPassword_(staffId, hash) {
+  try { PropertiesService.getScriptProperties().setProperty(tempPwKey_(staffId), passwordStamp_(hash)); }
+  catch (e) { console.warn('仮パスワードの印を残せませんでした: ' + e); }
+}
+/** 本人がパスワードを変えたときに呼ぶ（印が合わなくなるので無くても出ないが、片づけておく） */
+function clearTempPassword_(staffId) {
+  try { PropertiesService.getScriptProperties().deleteProperty(tempPwKey_(staffId)); } catch (e) { /* 印が合わないので、残っても出ない */ }
+}
+/** そのスタッフ（シートの行）が、仮パスワードのままか */
+function isTempPassword_(staff) {
+  if (!staff || !staff['パスワードハッシュ']) return false;
+  try { return PropertiesService.getScriptProperties().getProperty(tempPwKey_(staff['スタッフID'])) === passwordStamp_(staff['パスワードハッシュ']); }
+  catch (e) { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -685,6 +709,7 @@ function changeMyPassword(params) {
       const hash = makePasswordHash_(p.next);
       updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': hash, '更新日時': nowStamp_() });
       logAudit_('パスワード変更', me.id, '', 'パスワード', '', '（本人が変更）', me.name);
+      clearTempPassword_(me.id);
       // このセッションだけは続けて使えるようにする（ほかの端末のセッションは切れる）
       staff['パスワードハッシュ'] = hash;
       putSession_(p.token, staff, Date.now());
@@ -734,10 +759,12 @@ function saveStaff(params) {
       if (p.isNew) {
         if (existing) throw appError_('invalid', 'そのスタッフIDはすでに使われています。');
         const tempPassword = randomPassword_(10);
+        const tempHash = makePasswordHash_(tempPassword);
         appendRecord_(SHEET_STAFF, {
-          'スタッフID': id, '表示名': name, 'パスワードハッシュ': makePasswordHash_(tempPassword),
+          'スタッフID': id, '表示名': name, 'パスワードハッシュ': tempHash,
           '権限': role, '有効': active, '登録日時': now, '更新日時': now
         });
+        markTempPassword_(id, tempHash);
         logAudit_('スタッフ追加', id, '', '', '', name + '（' + role + '）', me.name);
         return { staff: staffPublic_(findStaff_(id)), tempPassword: tempPassword };
       }
@@ -774,6 +801,7 @@ function resetStaffPassword(params) {
       const tempPassword = randomPassword_(10);
       const hash = makePasswordHash_(tempPassword);
       updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': hash, '更新日時': nowStamp_() });
+      markTempPassword_(staff['スタッフID'], hash);
       // 連続まちがいで止まっていたら、解除する（渡した仮パスワードで、すぐ入れるように）
       CacheService.getScriptCache().remove('fail_' + normStaffId_(staff['スタッフID']));
       logAudit_('パスワード再設定', staff['スタッフID'], '', 'パスワード', '', '（管理者が再設定）', me.name);

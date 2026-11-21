@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.124.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.128.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -567,9 +567,12 @@ function tempPasswordDialog(staffId, password) {
     '<div><button type="button" class="btn small" data-act="copyTempPw">コピー</button></div>' +
     '<p class="note">この画面を閉じると二度と表示されません。本人に伝えて、ログイン後すぐに「パスワード変更」をしてもらってください。</p>');
 }
-function openPasswordForm() {
+/** temp が true なら、仮パスワードのままなので変えてほしい、と添える（v0.128.0） */
+function openPasswordForm(temp) {
   openModal('<header><h2>パスワード変更</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
-    '<form data-form="password" novalidate><div class="body"><p class="msg" hidden></p>' +
+    '<form data-form="password" novalidate><div class="body">' +
+    (temp ? '<p class="note" id="pwTempNote" style="margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--warn-soft);color:var(--warn);font-weight:600">仮パスワードでログインしています。自分だけが知っているパスワードに変えてください。<br><span style="font-weight:400">「今のパスワード」には、受け取った仮パスワードを入れます。変えるまで、ログインのたびにこの画面が出ます。</span></p>' : '') +
+    '<p class="msg" hidden></p>' +
     '<div class="field"><label for="pw_cur">今のパスワード</label><input type="password" id="pw_cur" autocomplete="current-password"></div>' +
     '<div class="field"><label for="pw_new">新しいパスワード（8文字以上）</label><input type="password" id="pw_new" autocomplete="new-password"></div>' +
     '<div class="field"><label for="pw_new2">新しいパスワード（もう一度）</label><input type="password" id="pw_new2" autocomplete="new-password"></div>' +
@@ -2256,6 +2259,7 @@ document.addEventListener('submit', function (e) {
     if ($('pw_new').value !== $('pw_new2').value) { showErr({ message: '新しいパスワードが2回で違っています。' }); return; }
     call('changeMyPassword', { current: $('pw_cur').value, next: $('pw_new').value, remember: rememberNow(), ticket: S.ticket || '', keep: keepGet(KEEP_CHOICE_KEY) === '1' }).then(function (r) {
       if (r && r.resume) { urlTicketWrite(r.resume); ticketAt = Date.now(); }
+      if (S.D) S.D.mustChangePassword = false;
       closeModal(form); toast('パスワードを変更しました');
     }).catch(showErr);
     return;

@@ -9,7 +9,7 @@
  * 公開関数：doGet / getBootstrap / listActivities
  * （収集ツールからの受信 doPost は Receiver.gs）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.119.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.128.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 /**
  * 初期設定が済んでいるか（シートが全部あるか）。
@@ -161,6 +161,7 @@ function bootCore_(me) {
   const before = cacheStatsNow_();
   const settings = getSettings_();
   const parts = bootParts_(['customers', 'devices']);
+  const staffRow = findStaff_(me.id);
   const out = {
     version: APP_VERSION,
     staleFiles: me.isAdmin ? staleFiles_() : [],     // 差し替え漏れ（管理者だけに出す。v0.111.0）
@@ -177,7 +178,8 @@ function bootCore_(me) {
     wininfoShowDays: WININFO_SHOW_DAYS,
     wininfoShowMax: WININFO_SHOW_MAX,
     wininfoPins: winInfoPins_(),
-    viewState: staffViewState_(findStaff_(me.id)),     // 画面設定は大きいので、スタッフの控えには入れない（開くときだけシートから）
+    viewState: staffViewState_(staffRow),
+    mustChangePassword: isTempPassword_(staffRow),      // 仮パスワードのまま（画面がパスワードの変更を促す。v0.128.0）     // 画面設定は大きいので、スタッフの控えには入れない（開くときだけシートから）
     viewPeriodModes: VIEW_PERIOD_MODES,
     canReveal: canSeeSecrets_(me, settings),
     licenseWarnDays: settingDays_(settings, 'ライセンス期限の手前日数', 30),
