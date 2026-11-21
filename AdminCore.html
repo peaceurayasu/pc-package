@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.127.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.128.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -570,6 +570,8 @@ function applyCore(core, token, resume) {
   draftsPurge();
   var loc = S.restoreLoc; S.restoreLoc = null;
   if (!restoreLoc(loc)) go(rootView());
+  // 仮パスワードのままなら、パスワードの変更を促す（v0.128.0。変えるまで、ログインのたびに出す）
+  if (core.mustChangePassword) setTimeout(function () { if (S.D === core && !$('modals').children.length) openPasswordForm(true); }, 0);
   S.timing.first = Date.now() - S.timing.t0;
   S.timing.coreMs = core.coreMs;
   S.timing.coreCache = core.coreCache;

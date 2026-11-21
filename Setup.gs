@@ -5,7 +5,7 @@
  * 最初に SpreadsheetApp.getUi() を呼ぶ。ウェブアプリ経由で第三者が呼んでも、そこで止まって何も起きない。
  * 仮パスワードは画面のダイアログにだけ出し、戻り値では返さない。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Setup.gs'] = '0.125.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Setup.gs'] = '0.128.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
@@ -143,11 +143,13 @@ function setupCore_() {
   // スタッフ：1人もいないときだけ、最初の管理者を作る
   if (!readTable_(SHEET_STAFF).rows.length) {
     const password = randomPassword_(10);
+    const hash = makePasswordHash_(password);
     const now = nowStamp_();
     appendRecord_(SHEET_STAFF, {
-      'スタッフID': 'admin', '表示名': '管理者', 'パスワードハッシュ': makePasswordHash_(password),
+      'スタッフID': 'admin', '表示名': '管理者', 'パスワードハッシュ': hash,
       '権限': ROLE_ADMIN, '有効': YES, '登録日時': now, '更新日時': now
     });
+    markTempPassword_('admin', hash);
     report.adminPassword = password;
   }
 
@@ -199,7 +201,9 @@ function resetPasswordFromMenu() {
     const staff = findStaff_(id);
     if (!staff) return;
     password = randomPassword_(10);
-    updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': makePasswordHash_(password), '有効': YES, '更新日時': nowStamp_() });
+    const hash = makePasswordHash_(password);
+    updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': hash, '有効': YES, '更新日時': nowStamp_() });
+    markTempPassword_(staff['スタッフID'], hash);
     logAudit_('パスワード再設定', staff['スタッフID'], '', 'パスワード', '', '（スプレッドシートのメニューから）', 'メニュー操作');
   });
   if (!password) { ui.alert('そのスタッフIDは見つかりませんでした。'); return; }
