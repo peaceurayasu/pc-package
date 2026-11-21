@@ -1,0 +1,2302 @@
+<script>
+'use strict';
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.124.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+// ===========================================================================
+// 書類のスキャン（v0.18.0）
+//   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
+//   カメラを直接使えない端末もある。そのときは端末のカメラアプリで撮って、同じ補正をかける）。
+//   撮ったあとは、四隅を指で直せる。用紙をまっすぐにして、白黒くっきり／カラー／そのまま を選んで、写真として付ける。
+//   画像の処理はすべてこの端末の中で行う（外のサービスには送らない）。
+// ===========================================================================
+var SCAN = null;
+var SCAN_SRC_MAX = 2400;        // 補正に使う元の画像の長辺（スマホのメモリに収める）
+var SCAN_OUT_MAX = 1800;        // 補正したあとの長辺
+var SCAN_DETECT_W = 320;        // 用紙を探すときの幅（小さくして速く）
+var SCAN_STEADY_MS = 1200;      // この時間、四隅が止まっていたら自動で撮る
+var SCAN_MODES = [['bw', '白黒くっきり'], ['color', 'カラー'], ['raw', 'そのまま']];
+
+/** 明るさ（0〜255）の配列 */
+function scanGray(data, n) {
+  var g = new Uint8ClampedArray(n);
+  for (var i = 0, j = 0; i < n; i++, j += 4) g[i] = (data[j] * 77 + data[j + 1] * 150 + data[j + 2] * 29) >> 8;
+  return g;
+}
+/** 大津の方法で、明るい・暗いの境目を決める */
+function scanOtsu(g) {
+  var hist = new Array(256).fill(0), n = g.length, i;
+  for (i = 0; i < n; i++) hist[g[i]]++;
+  var sum = 0; for (i = 0; i < 256; i++) sum += i * hist[i];
+  var sumB = 0, wB = 0, best = 0, th = 128;
+  for (i = 0; i < 256; i++) {
+    wB += hist[i]; if (!wB) continue;
+    var wF = n - wB; if (!wF) break;
+    sumB += i * hist[i];
+    var mB = sumB / wB, mF = (sum - sumB) / wF, v = wB * wF * (mB - mF) * (mB - mF);
+    if (v > best) { best = v; th = i; }
+  }
+  return th;
+}
+/**
+ * 用紙（まわりより明るい四角）の四隅を探す。
+ * @return {Array<{x:number,y:number}>|null} 左上・右上・右下・左下（0〜1の割合）。見つからなければ null
+ */
+function scanDetect(data, w, h) {
+  var n = w * h, g = scanGray(data, n);
+  var th = scanOtsu(g);
+  var mask = new Uint8Array(n), i;
+  for (i = 0; i < n; i++) mask[i] = g[i] > th ? 1 : 0;
+  // いちばん大きい、明るいかたまり
+  var label = new Int32Array(n), stack = new Int32Array(n), best = null, cur = 0;
+  for (i = 0; i < n; i++) {
+    if (!mask[i] || label[i]) continue;
+    cur++;
+    var sp = 0, count = 0, s1 = -1, s1v = -1e9, s2 = -1, s2v = -1e9, s3 = -1, s3v = -1e9, s4 = -1, s4v = -1e9, touch = 0;
+    stack[sp++] = i; label[i] = cur;
+    while (sp) {
+      var p = stack[--sp], x = p % w, y = (p / w) | 0;
+      count++;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) touch++;
+      if (-x - y > s1v) { s1v = -x - y; s1 = p; }     // 左上
+      if (x - y > s2v) { s2v = x - y; s2 = p; }       // 右上
+      if (x + y > s3v) { s3v = x + y; s3 = p; }       // 右下
+      if (y - x > s4v) { s4v = y - x; s4 = p; }       // 左下
+      if (x > 0 && mask[p - 1] && !label[p - 1]) { label[p - 1] = cur; stack[sp++] = p - 1; }
+      if (x < w - 1 && mask[p + 1] && !label[p + 1]) { label[p + 1] = cur; stack[sp++] = p + 1; }
+      if (y > 0 && mask[p - w] && !label[p - w]) { label[p - w] = cur; stack[sp++] = p - w; }
+      if (y < h - 1 && mask[p + w] && !label[p + w]) { label[p + w] = cur; stack[sp++] = p + w; }
+    }
+    if (!best || count > best.count) best = { count: count, c: [s1, s2, s3, s4], touch: touch };
+  }
+  if (!best || best.count < n * 0.08) return null;
+  var quad = best.c.map(function (p) { return { x: (p % w) / (w - 1), y: ((p / w) | 0) / (h - 1) }; });
+  var area = scanQuadArea(quad);
+  // 小さすぎる・画面いっぱい（明るい机など）・かたまりが四角に見えない、ときは使わない
+  if (area < 0.12 || area > 0.97) return null;
+  if (best.count / n < area * 0.8) return null;
+  if (!scanConvex(quad)) return null;
+  return quad;
+}
+function scanQuadArea(q) {
+  var a = 0;
+  for (var i = 0; i < 4; i++) { var p = q[i], r = q[(i + 1) % 4]; a += p.x * r.y - r.x * p.y; }
+  return Math.abs(a) / 2;
+}
+function scanConvex(q) {
+  var sign = 0;
+  for (var i = 0; i < 4; i++) {
+    var a = q[i], b = q[(i + 1) % 4], c = q[(i + 2) % 4];
+    var z = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (Math.abs(z) < 1e-6) return false;
+    if (!sign) sign = z > 0 ? 1 : -1; else if ((z > 0 ? 1 : -1) !== sign) return false;
+  }
+  return true;
+}
+/** 四角（0〜1）→ 用紙の四隅（ピクセル）への写し方（射影変換）。Heckbert の式 */
+function scanHomography(q) {
+  var x0 = q[0].x, y0 = q[0].y, x1 = q[1].x, y1 = q[1].y, x2 = q[2].x, y2 = q[2].y, x3 = q[3].x, y3 = q[3].y;
+  var dx1 = x1 - x2, dx2 = x3 - x2, dy1 = y1 - y2, dy2 = y3 - y2, sx = x0 - x1 + x2 - x3, sy = y0 - y1 + y2 - y3;
+  var g = 0, h = 0;
+  if (Math.abs(sx) > 1e-12 || Math.abs(sy) > 1e-12) {
+    var den = dx1 * dy2 - dx2 * dy1;
+    g = (sx * dy2 - dx2 * sy) / den; h = (dx1 * sy - sx * dy1) / den;
+  }
+  return { a: x1 - x0 + g * x1, b: x3 - x0 + h * x3, c: x0, d: y1 - y0 + g * y1, e: y3 - y0 + h * y3, f: y0, g: g, h: h };
+}
+function scanDist(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
+/**
+ * 用紙をまっすぐにする。src は元の画像（canvas）、quad はピクセルの四隅。→ 新しい canvas
+ */
+function scanWarp(src, quad) {
+  var sw = src.width, sh = src.height;
+  var W = Math.max(scanDist(quad[0], quad[1]), scanDist(quad[3], quad[2]));
+  var H = Math.max(scanDist(quad[0], quad[3]), scanDist(quad[1], quad[2]));
+  var k = Math.min(1, SCAN_OUT_MAX / Math.max(W, H));
+  W = Math.max(8, Math.round(W * k)); H = Math.max(8, Math.round(H * k));
+  var sdata = src.getContext('2d').getImageData(0, 0, sw, sh).data;
+  var out = document.createElement('canvas'); out.width = W; out.height = H;
+  var octx = out.getContext('2d'), img = octx.createImageData(W, H), d = img.data;
+  var m = scanHomography(quad);
+  for (var y = 0; y < H; y++) {
+    var v = (y + 0.5) / H;
+    for (var x = 0; x < W; x++) {
+      var u = (x + 0.5) / W;
+      var z = m.g * u + m.h * v + 1;
+      var px = (m.a * u + m.b * v + m.c) / z, py = (m.d * u + m.e * v + m.f) / z;
+      var ix = px < 0 ? 0 : px > sw - 1 ? sw - 1 : px | 0, iy = py < 0 ? 0 : py > sh - 1 ? sh - 1 : py | 0;
+      var si = (iy * sw + ix) * 4, di = (y * W + x) * 4;
+      d[di] = sdata[si]; d[di + 1] = sdata[si + 1]; d[di + 2] = sdata[si + 2]; d[di + 3] = 255;
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  return out;
+}
+/** 見やすくする。bw … 影を消して白黒くっきり、color … 色はそのまま明るさをそろえる、raw … そのまま */
+function scanEnhance(cv, mode) {
+  if (mode === 'raw') return cv;
+  var w = cv.width, h = cv.height, ctx = cv.getContext('2d'), img = ctx.getImageData(0, 0, w, h), d = img.data, n = w * h;
+  var g = scanGray(d, n);
+  // 影・ムラ：大きくぼかした明るさ（用紙の地の色）で割る。ぼかしは積分画像で
+  var r = Math.max(8, Math.round(Math.max(w, h) / 30));
+  var integ = new Float64Array((w + 1) * (h + 1)), x, y;
+  for (y = 0; y < h; y++) {
+    var row = 0;
+    for (x = 0; x < w; x++) { row += g[y * w + x]; integ[(y + 1) * (w + 1) + x + 1] = integ[y * (w + 1) + x + 1] + row; }
+  }
+  for (y = 0; y < h; y++) {
+    var y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+    for (x = 0; x < w; x++) {
+      var x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+      var area = (y1 - y0) * (x1 - x0);
+      var bg = (integ[y1 * (w + 1) + x1] - integ[y0 * (w + 1) + x1] - integ[y1 * (w + 1) + x0] + integ[y0 * (w + 1) + x0]) / area;
+      var k = bg > 8 ? 245 / bg : 1;
+      var i = (y * w + x) * 4;
+      if (mode === 'bw') {
+        var v = g[y * w + x] * k;
+        v = (v - 60) * 255 / 170;                 // 文字を濃く、地を白く
+        v = v < 0 ? 0 : v > 255 ? 255 : v;
+        d[i] = d[i + 1] = d[i + 2] = v;
+      } else {
+        for (var c = 0; c < 3; c++) { var t = d[i + c] * k; d[i + c] = t > 255 ? 255 : t; }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return cv;
+}
+/** 画像（img / video）を、長辺 max 以下の canvas にする */
+function scanToCanvas(media, w, h, max) {
+  var k = Math.min(1, max / Math.max(w, h));
+  var cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(w * k)); cv.height = Math.max(1, Math.round(h * k));
+  cv.getContext('2d').drawImage(media, 0, 0, cv.width, cv.height);
+  return cv;
+}
+function scanDetectCanvas(cv) {
+  var small = scanToCanvas(cv, cv.width, cv.height, SCAN_DETECT_W);
+  return scanDetect(small.getContext('2d').getImageData(0, 0, small.width, small.height).data, small.width, small.height);
+}
+
+// ---- 画面
+function openScanner(form) {
+  if (!form || !form.querySelector('.photos')) return;
+  closeScanner();
+  var box0 = form.querySelector('.photos');
+  SCAN = { form: form, stream: null, timer: null, quad: null, steadySince: 0, mode: 'bw', src: null, corners: null, added: 0, live: false,
+    pdf: !!(box0 && box0.dataset.photokey === 'maintenance'), pages: [] };     // 保守の報告書は、はじめから1つのPDFにまとめる（v0.30.0）
+  openModal('<header><h2>書類をスキャン <span class="sub" id="scanCount"></span></h2>' +
+    '<button type="button" class="btn small scanpdf" id="scanPdfBtn" data-act="scanPdfToggle" aria-pressed="' + SCAN.pdf + '">1つのPDFにまとめる</button>' +
+    '<button type="button" class="x" data-act="scanClose" aria-label="閉じる">×</button></header>' +
+    '<div class="body scanbody" id="scanBody"><p class="note" id="scanMsg">カメラを準備しています…</p></div>' +
+    '<footer id="scanFoot"></footer>', false, false).classList.add('scanwrap');
+  scanStartLive();
+}
+function closeScanner() {
+  if (!SCAN) return;
+  if (SCAN.timer) clearTimeout(SCAN.timer);
+  if (SCAN.stream) SCAN.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* そのまま */ } });
+  SCAN = null;
+}
+function scanCountText() {
+  if (!SCAN) return '';
+  if (SCAN.pdf) return SCAN.pages.length ? SCAN.pages.length + '枚（あとでPDFにまとめます）' : '';
+  return SCAN.added ? SCAN.added + '枚付けました' : '';
+}
+/** 撮ったページを PDF にして付けるボタン（PDF にまとめるとき） */
+function scanPdfButton() {
+  return SCAN && SCAN.pdf && SCAN.pages.length ? '<button type="button" class="btn primary" data-act="scanPdfMake">PDFにして付ける（' + SCAN.pages.length + '枚）</button>' : '';
+}
+function scanCloseLabel() { return SCAN && (SCAN.added || SCAN.pages.length) ? '終わる' : 'やめる'; }
+/** 端末のカメラアプリで撮る（カメラを直接使えないとき・自分で撮りたいとき） */
+function scanFileButtons(primary) {
+  return '<label class="btn' + (primary ? ' primary' : '') + ' scanfile">カメラアプリで撮る<input type="file" accept="image/*" capture="environment" hidden data-scanfile="1"></label>' +
+    '<label class="btn scanfile">写真から選ぶ<input type="file" accept="image/*" hidden data-scanfile="1"></label>';
+}
+function scanStartLive() {
+  var body = $('scanBody'), foot = $('scanFoot');
+  if (!SCAN || !body) return;
+  $('scanCount').textContent = scanCountText();
+  if (SCAN.stream) { SCAN.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* そのまま */ } }); SCAN.stream = null; }
+  var md = navigator.mediaDevices;
+  var fallback = function (why) {
+    if (!SCAN || !$('scanBody')) return;
+    SCAN.live = false;
+    body.innerHTML = '<p class="note" id="scanMsg">' + esc(why) + '</p><p class="note">撮ったあとに、用紙の四隅を見つけて、まっすぐ・くっきりに直します。</p>';
+    foot.innerHTML = scanFileButtons(true) + scanPdfButton() + '<span class="grow"></span><button type="button" class="btn" data-act="scanClose">' + scanCloseLabel() + '</button>';
+  };
+  if (!md || !md.getUserMedia) { fallback('この画面では、カメラを直接使えません。端末のカメラアプリで撮ってください。'); return; }
+  var mine = SCAN, ask = (SCAN.ask = (SCAN.ask || 0) + 1);
+  md.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }).then(function (stream) {
+    // 待っている間に閉じた・開き直した・もう一度頼んだ、なら、このカメラはすぐ止める
+    if (SCAN !== mine || mine.ask !== ask || mine.stream || mine.src) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+    SCAN.stream = stream; SCAN.live = true;
+    body.innerHTML = '<div class="scanstage" id="scanStage"><video id="scanVideo" playsinline muted autoplay></video><canvas id="scanOver"></canvas></div>' +
+      '<p class="note" id="scanMsg">用紙を画面に入れて、少し止めてください。四隅がそろうと自動で撮ります。</p>';
+    foot.innerHTML = '<button type="button" class="btn primary" id="scanShot" data-act="scanShot">撮る</button>' + scanFileButtons(false) +
+      scanPdfButton() + '<span class="grow"></span><button type="button" class="btn" data-act="scanClose">' + scanCloseLabel() + '</button>';
+    var video = $('scanVideo');
+    video.srcObject = stream;
+    var p = video.play(); if (p && p.catch) p.catch(function () { /* 自動再生できなくても、押せば撮れる */ });
+    SCAN.steadySince = 0; SCAN.quad = null;
+    scanLoop();
+  }, function () {
+    if (SCAN !== mine || mine.ask !== ask || mine.src) return;
+    fallback('この端末（または、この画面）では、カメラを直接使えませんでした。端末のカメラアプリで撮ってください。');
+  });
+}
+function scanLoop() {
+  if (!SCAN || !SCAN.live) return;
+  var video = $('scanVideo'), over = $('scanOver');
+  if (!video || !over) return;
+  var vw = video.videoWidth, vh = video.videoHeight;
+  if (vw && vh) {
+    // 映像の縦横の比に、枠を合わせる（四隅の線が映像とずれないように）
+    var stage = $('scanStage');
+    if (stage && stage.dataset.ratio !== vw + 'x' + vh) {
+      stage.dataset.ratio = vw + 'x' + vh;
+      stage.style.aspectRatio = vw + ' / ' + vh;
+      stage.style.maxWidth = 'calc(62vh * ' + (vw / vh).toFixed(4) + ')';
+      stage.style.margin = '0 auto';
+    }
+    var small = scanToCanvas(video, vw, vh, SCAN_DETECT_W);
+    var q = scanDetect(small.getContext('2d').getImageData(0, 0, small.width, small.height).data, small.width, small.height);
+    over.width = over.clientWidth || 320; over.height = over.clientHeight || 240;
+    var ctx = over.getContext('2d');
+    ctx.clearRect(0, 0, over.width, over.height);
+    var now = Date.now(), msg = $('scanMsg');
+    if (q) {
+      var moved = SCAN.quad ? Math.max.apply(null, q.map(function (p, i) { return scanDist(p, SCAN.quad[i]); })) : 1;
+      if (moved > 0.025) SCAN.steadySince = now;
+      SCAN.quad = q;
+      var steady = now - SCAN.steadySince;
+      ctx.strokeStyle = steady > SCAN_STEADY_MS / 2 ? '#2e9d4f' : '#f2b705'; ctx.lineWidth = 4;
+      ctx.beginPath();
+      q.forEach(function (p, i) { var X = p.x * over.width, Y = p.y * over.height; if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); });
+      ctx.closePath(); ctx.stroke();
+      if (msg) msg.textContent = steady > SCAN_STEADY_MS / 2 ? 'そのまま止めてください…' : '用紙が見つかりました。少し止めてください。';
+      if (steady >= SCAN_STEADY_MS) { scanCaptureLive(); return; }
+    } else {
+      SCAN.quad = null; SCAN.steadySince = now;
+      if (msg) msg.textContent = '用紙を画面に入れてください（暗めの机の上だと見つけやすい）。見つからないときは「撮る」を押します。';
+    }
+  }
+  SCAN.timer = setTimeout(scanLoop, 250);
+}
+/** いまの映像を撮る */
+function scanCaptureLive() {
+  var video = $('scanVideo');
+  if (!SCAN || !video || !video.videoWidth) return;
+  if (SCAN.timer) clearTimeout(SCAN.timer);
+  var src = scanToCanvas(video, video.videoWidth, video.videoHeight, SCAN_SRC_MAX);
+  SCAN.live = false;
+  scanEdit(src, SCAN.quad);
+}
+/** カメラアプリ・写真から */
+function scanUseFile(file) {
+  if (!SCAN || !file) return;
+  var msg = $('scanMsg'); if (msg) msg.textContent = '読み込んでいます…';
+  loadImageFile(file).then(function (img) {
+    if (!SCAN) return;
+    var src = scanToCanvas(img, img.naturalWidth || img.width, img.naturalHeight || img.height, SCAN_SRC_MAX);
+    scanEdit(src, scanDetectCanvas(src));
+  }).catch(failToast);
+}
+/** 四隅を直す画面 */
+function scanEdit(src, quad) {
+  if (!SCAN) return;
+  if (SCAN.timer) clearTimeout(SCAN.timer);
+  SCAN.live = false;
+  // 四隅を直している間は、カメラを止める（電池のため。撮り直すときに開き直す）
+  if (SCAN.stream) { SCAN.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* そのまま */ } }); SCAN.stream = null; }
+  SCAN.src = src;
+  var found = !!quad;
+  var m = 0.04;
+  SCAN.corners = (quad || [{ x: m, y: m }, { x: 1 - m, y: m }, { x: 1 - m, y: 1 - m }, { x: m, y: 1 - m }]).map(function (p) { return { x: p.x, y: p.y }; });
+  $('scanBody').innerHTML = '<p class="note" id="scanMsg">' + (found ? '用紙の四隅を見つけました。ずれていたら、丸を動かして直してください。' : '用紙の四隅が見つかりませんでした。丸を用紙の角に動かしてください。') + '</p>' +
+    '<div class="scanedit" id="scanEdit"><canvas id="scanPic"></canvas>' +
+    [0, 1, 2, 3].map(function (i) { return '<span class="scanpin" data-pin="' + i + '"></span>'; }).join('') + '</div>' +
+    '<div class="chipset small" id="scanModes">' + SCAN_MODES.map(function (md) {
+      return '<button type="button" data-act="scanMode" data-mode="' + md[0] + '" aria-pressed="' + (SCAN.mode === md[0]) + '">' + md[1] + '</button>';
+    }).join('') + '</div>';
+  $('scanFoot').innerHTML = '<button type="button" class="btn" data-act="scanRetake">撮り直す</button><span class="grow"></span>' +
+    '<button type="button" class="btn primary" id="scanUse" data-act="scanUse">このページを付ける</button>';
+  var pic = $('scanPic');
+  pic.width = src.width; pic.height = src.height;
+  pic.getContext('2d').drawImage(src, 0, 0);
+  scanPlacePins();
+  requestAnimationFrame(scanPlacePins);
+}
+// 四隅の丸を、指（マウス）で動かす
+var scanDrag = null;
+document.addEventListener('pointerdown', function (e) {
+  var pin = e.target && e.target.closest ? e.target.closest('.scanpin') : null;
+  if (!pin || !SCAN || !SCAN.corners) return;
+  e.preventDefault();
+  scanDrag = { i: +pin.dataset.pin, id: e.pointerId };
+  try { pin.setPointerCapture(e.pointerId); } catch (err) { /* そのまま */ }
+});
+document.addEventListener('pointermove', function (e) {
+  if (!scanDrag || !SCAN || e.pointerId !== scanDrag.id) return;
+  var pic = $('scanPic'); if (!pic) return;
+  var r = pic.getBoundingClientRect();
+  var c = SCAN.corners[scanDrag.i];
+  c.x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  c.y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  scanPlacePins();
+});
+['pointerup', 'pointercancel'].forEach(function (type) { document.addEventListener(type, function () { scanDrag = null; }); });
+window.addEventListener('resize', function () { if (SCAN && SCAN.src) scanPlacePins(); });
+function scanPlacePins() {
+  var box = $('scanEdit'), pic = $('scanPic');
+  if (!box || !pic || !SCAN) return;
+  var r = pic.getBoundingClientRect(), br = box.getBoundingClientRect();
+  Array.prototype.forEach.call(box.querySelectorAll('.scanpin'), function (pin) {
+    var c = SCAN.corners[+pin.dataset.pin];
+    pin.style.left = (r.left - br.left + c.x * r.width) + 'px';
+    pin.style.top = (r.top - br.top + c.y * r.height) + 'px';
+  });
+  var svgOld = box.querySelector('svg'); if (svgOld) svgOld.remove();
+  var pts = SCAN.corners.map(function (c) { return (r.left - br.left + c.x * r.width) + ',' + (r.top - br.top + c.y * r.height); }).join(' ');
+  box.insertAdjacentHTML('beforeend', '<svg class="scanline" width="' + br.width + '" height="' + br.height + '"><polygon points="' + pts + '"/></svg>');
+}
+/** 補正して、写真として付ける */
+function scanFinish() {
+  if (!SCAN || !SCAN.src) return Promise.resolve(false);
+  var src = SCAN.src, w = src.width, h = src.height;
+  var quad = SCAN.corners.map(function (c) { return { x: c.x * (w - 1), y: c.y * (h - 1) }; });
+  if (!scanConvex(SCAN.corners)) { toast('四隅の順番がおかしくなっています。丸を用紙の角に合わせてください。', true); return Promise.resolve(false); }
+  var out;
+  try { out = scanEnhance(scanWarp(src, quad), SCAN.mode); } catch (e) { toast('画像を直せませんでした（メモリが足りない可能性）。「撮り直す」か「カメラアプリで撮る」を試してください。', true); return Promise.resolve(false); }
+  return new Promise(function (resolve) {
+    if (!out.toBlob) { toast('この端末では、直した画像を保存できません。「カメラで撮る」で付けてください。', true); resolve(false); return; }
+    out.toBlob(function (blob) {
+      if (!SCAN || !blob) { if (SCAN) toast('画像を保存できませんでした。もう一度押してください。', true); resolve(false); return; }
+      var file;
+      try { file = new File([blob], 'scan_' + (SCAN.added + 1) + '.jpg', { type: 'image/jpeg' }); } catch (e) { blob.name = 'scan.jpg'; file = blob; }
+      var form = SCAN.form, box = form && form.querySelector('.photos');
+      if (!form || !form.isConnected || !box) { toast('記録の窓が閉じられたので、付けられませんでした。', true); resolve(false); return; }
+      if (SCAN.pdf) {
+        // PDF にまとめるときは、ここではためておくだけ（「PDFにして付ける」でまとめる）
+        var roomP = S.D.photoMax - form._saved.length - form._photos.length - form._sending - (form._preparing || 0);
+        if (!SCAN.pages.length && roomP < 1) { toast('この記録には、もう付けられません（' + S.D.photoMax + '枚まで）。', true); resolve(false); return; }
+        if (SCAN.pages.length >= S.D.scanPdfMaxPages) { toast('1つのPDFにまとめられるのは' + S.D.scanPdfMaxPages + '枚までです。「PDFにして付ける」を押してください。', true); resolve(false); return; }
+        var mine = SCAN;
+        shrinkPhoto(file).then(function (p) { return jpegSize(p.base64).then(function (sz) { p.w = sz.w; p.h = sz.h; return p; }); }).then(function (p) {
+          if (SCAN !== mine) { resolve(false); return; }
+          SCAN.pages.push(p); SCAN.src = null;
+          toast(SCAN.pages.length + '枚め。続けて撮るか、「PDFにして付ける」を押します。');
+          resolve(true);
+        }, function (e) { toast((e && e.message) || '画像を保存できませんでした。', true); resolve(false); });
+        return;
+      }
+      if (addPhotoFiles(form, box, [file]) < 1) { resolve(false); return; }
+      SCAN.added++;
+      SCAN.src = null;
+      toast(SCAN.added + '枚めを付けました。続けて撮るか、「終わる」で戻ります。');
+      resolve(true);
+    }, 'image/jpeg', 0.9);
+  });
+}
+
+/** JPEG（base64）の縦横 */
+function jpegSize(b64) {
+  return new Promise(function (resolve, reject) {
+    var img = new Image();
+    img.onload = function () { resolve({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height }); };
+    img.onerror = function () { reject({ message: '画像を読めませんでした。' }); };
+    img.src = 'data:image/jpeg;base64,' + b64;
+  });
+}
+function b64ToBytes(b64) { var bin = atob(b64), out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+function bytesToB64(u8) { var s = '', CH = 0x8000; for (var i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH)); return btoa(s); }
+/**
+ * JPEG のページを、A4 の PDF にまとめる（ライブラリを使わずに作る。v0.30.0）。
+ * 1ページに1枚。縦長の画像は縦、横長の画像は横の A4 に、はみ出さないように真ん中に置く。
+ * @param {Array<{base64:string, w:number, h:number}>} pages
+ * @return {Uint8Array}
+ */
+/** 付けたPDFを開く：ドライブで開く／ダウンロード（v0.30.0） */
+function viewPdf(r, p, form) {
+  var url = '';
+  try { url = URL.createObjectURL(new Blob([b64ToBytes(r.base64)], { type: r.mimeType || 'application/pdf' })); } catch (e) { url = ''; }
+  var drive = safeLink(p.url || '');
+  var canDelete = S.D.me.isAdmin || p['自分のもの'] === true;
+  var t = safeImage(p.thumb);
+  var isFileView = isOtherFile(p['種類']);
+  var wrap = openModal('<header><h2>' + (isFileView ? '添付ファイル' : 'スキャンしたPDF') + ' <span class="sub">' + esc(p['添付ID']) + '</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+    '<div class="body photo-view">' + (t ? '<img src="' + esc(t) + '" alt="1ページめ" style="max-height:40vh">' : '') +
+    '<p class="note">' + esc(String(p['ファイル名'])) + '<br>' + esc(String(p['登録日時'])) + '　' + esc(p['登録者']) + '　' + esc(fileSizeText(p['サイズ'])) + '</p>' +
+    '<div class="row">' + (drive ? '<a class="btn primary" href="' + esc(drive) + '" target="_blank" rel="noopener">ドライブで開く</a>' : '') +
+    (url ? '<a class="btn" href="' + esc(url) + '" download="' + esc(String(p['ファイル名'] || 'scan.pdf')) + '">ダウンロード</a>' : '') + '</div></div>' +
+    '<footer>' + (canDelete ? '<button type="button" class="btn danger" data-act="deletePhoto" data-id="' + esc(p['添付ID']) + '">' + (isFileView ? 'このファイルを削除' : 'このPDFを削除') + '</button>' : '') +
+    '<span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>');
+  wrap._photoForm = form;
+  wrap._blobUrl = url;
+}
+function makeScanPdf(pages) {
+  var parts = [], len = 0, offs = [];
+  var add = function (x) {
+    var u = typeof x === 'string' ? new Uint8Array(x.split('').map(function (c) { return c.charCodeAt(0) & 255; })) : x;
+    parts.push(u); len += u.length;
+  };
+  var obj = function (n, body) { offs[n] = len; add(n + ' 0 obj\n'); body(); add('\nendobj\n'); };
+  add('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  var n = pages.length, kids = [];
+  for (var i = 0; i < n; i++) kids.push((3 + i * 3) + ' 0 R');
+  obj(1, function () { add('<< /Type /Catalog /Pages 2 0 R >>'); });
+  obj(2, function () { add('<< /Type /Pages /Count ' + n + ' /Kids [' + kids.join(' ') + '] >>'); });
+  pages.forEach(function (p, i) {
+    var pageN = 3 + i * 3, contN = pageN + 1, imgN = pageN + 2;
+    var land = p.w > p.h, PW = land ? 841.89 : 595.28, PH = land ? 595.28 : 841.89, M = 18;
+    var k = Math.min((PW - M * 2) / p.w, (PH - M * 2) / p.h), dw = p.w * k, dh = p.h * k;
+    var x = (PW - dw) / 2, y = (PH - dh) / 2;
+    var jpg = b64ToBytes(p.base64);
+    var draw = 'q ' + dw.toFixed(2) + ' 0 0 ' + dh.toFixed(2) + ' ' + x.toFixed(2) + ' ' + y.toFixed(2) + ' cm /Im0 Do Q';
+    obj(pageN, function () { add('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + PW + ' ' + PH + '] /Resources << /XObject << /Im0 ' + imgN + ' 0 R >> >> /Contents ' + contN + ' 0 R >>'); });
+    obj(contN, function () { add('<< /Length ' + draw.length + ' >>\nstream\n' + draw + '\nendstream'); });
+    obj(imgN, function () {
+      add('<< /Type /XObject /Subtype /Image /Width ' + p.w + ' /Height ' + p.h + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + jpg.length + ' >>\nstream\n');
+      add(jpg); add('\nendstream');
+    });
+  });
+  var total = 3 + n * 3, xref = len;
+  var x = 'xref\n0 ' + total + '\n0000000000 65535 f \n';
+  for (var j = 1; j < total; j++) x += ('0000000000' + offs[j]).slice(-10) + ' 00000 n \n';
+  add(x + 'trailer\n<< /Size ' + total + ' /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n');
+  var out = new Uint8Array(len), at = 0;
+  parts.forEach(function (u) { out.set(u, at); at += u.length; });
+  return out;
+}
+/** できあがった1つ（PDF など）を、写真の欄に足す。記録がまだ無ければ保存のあとに送る */
+function addPreparedItem(form, box, p) {
+  if (!form || !box || form._saved === null) return false;
+  var key = box.dataset.photokey, id = box.dataset.photoid;
+  var room = S.D.photoMax - form._saved.length - form._photos.length - form._sending - (form._preparing || 0);
+  if (room < 1) { toast('1つの記録に付けられるのは' + S.D.photoMax + '件までです。', true); return false; }
+  if (!id) { form._photos.push(p); drawPhotos(form); return true; }
+  form._sending++; drawPhotos(form);
+  call('uploadPhoto', { target: key, targetId: id, base64: p.base64, thumb: p.thumb, kind: p.kind || '', pages: p.pages || 0, name: p.name || '', mimeType: p.mimeType || '' }, true).then(function (r) {
+    form._sending--; form._saved.push(r.photo); bumpPhotoCount(key, id, 1); S.files = null;
+    drawPhotos(form); softRender();
+  }, function (e) { form._sending--; drawPhotos(form); failToast(e); });
+  return true;
+}
+/** 撮りためたページを PDF にして付ける */
+function scanPdfMake() {
+  if (!SCAN || !SCAN.pages.length) return Promise.resolve(false);
+  var form = SCAN.form, box = form && form.querySelector('.photos');
+  if (!form || !form.isConnected || !box) { toast('記録の窓が閉じられたので、付けられませんでした。', true); return Promise.resolve(false); }
+  var bytes;
+  try { bytes = makeScanPdf(SCAN.pages); } catch (e) { toast('PDFを作れませんでした（メモリが足りない可能性）。枚数を減らしてください。', true); return Promise.resolve(false); }
+  if (bytes.length > S.D.scanPdfMaxBytes) { toast('PDFが大きすぎます（' + fileSizeText(bytes.length) + '）。枚数を減らしてください。', true); return Promise.resolve(false); }
+  var item = { kind: 'pdf', base64: bytesToB64(bytes), thumb: SCAN.pages[0].thumb, pages: SCAN.pages.length, bytes: bytes.length };
+  if (!addPreparedItem(form, box, item)) return Promise.resolve(false);
+  toast(item.pages + '枚を1つのPDFにして付けました');
+  SCAN.pages = []; SCAN.added++;
+  return Promise.resolve(true);
+}
+
+var tmpSeq = 0;
+/** サーバーの返事を待つ間、画面に出しておく仮の記録。入力した値を、記録と同じ形にする */
+function provisionalRecord(key, before, data) {
+  var schema = S.D.schema[key], rec = {};
+  if (before) Object.keys(before).forEach(function (k) { rec[k] = before[k]; });
+  schema.fields.forEach(function (f) {
+    var v = data[f.name];
+    if (v === undefined) { if (rec[f.name] === undefined) rec[f.name] = ''; return; }
+    if (Array.isArray(v)) v = v.join(',');
+    else if (f.type === 'number') v = v === '' || !isFinite(Number(v)) ? '' : Number(v);
+    else v = String(v).trim();
+    rec[f.name] = v;
+  });
+  if (!before) rec[schema.idField] = 'tmp-' + (++tmpSeq);
+  rec._pending = true;
+  return rec;
+}
+/** 窓が開いていたら、閉じたときに描き直す。開いていなければ、すぐ描き直す */
+function softRender() {
+  if ($('modals').children.length) S.renderPending = true; else render();
+}
+
+
+// ---- 割当 ----
+function openAlloc(licenseId) {
+  var l = IDX.lic[licenseId];
+  if (!l) return;
+  openModal('<header><h2>割当 <span class="sub">' + esc(l['製品名']) + '</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+    '<div class="body" id="allocBody" data-license="' + esc(licenseId) + '">' + allocHtml(licenseId) + '</div>' +
+    '<footer><span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>');
+}
+function allocHtml(licenseId) {
+  var l = IDX.lic[licenseId];
+  var allocs = IDX.alloc[licenseId] || [];
+  var used = {};
+  allocs.forEach(function (a) { used[a['機器ID']] = a; });
+  var devs = S.D.devices.filter(function (d) { return d['顧客ID'] === l['顧客ID'] && (d['状況'] !== '廃棄' || used[d['機器ID']]); });
+  var full = typeof l['数量'] === 'number' && l['数量'] > 0 && allocs.length >= l['数量'];
+  return '<p class="note">' + esc(custName(l['顧客ID'])) + '　割当 ' + allocs.length + ' / 数量 ' + (l['数量'] === '' ? '—' : esc(l['数量'])) + '</p>' +
+    (devs.length ? '<div class="scroll"><table><tbody>' + devs.map(function (d) {
+      var a = used[d['機器ID']];
+      return '<tr><td>' + esc(devLabel(d['機器ID'])) + '<span class="minor">' + esc(d['種類']) + (d['シリアル'] ? ' / ' + esc(d['シリアル']) : '') + '</span></td>' +
+        '<td class="nowrap" style="text-align:right">' + (a
+          ? pill('割当済み', 'ok') + ' <button type="button" class="btn small" data-act="removeAlloc" data-id="' + esc(a['割当ID']) + '">外す</button>'
+          : '<button type="button" class="btn small"' + (full ? ' disabled title="数量を超えるので割り当てられません"' : '') + ' data-act="addAlloc" data-device="' + esc(d['機器ID']) + '">割り当てる</button>') + '</td></tr>';
+    }).join('') + '</tbody></table></div>' : '<p class="note">この顧客には、割り当てられる機器がありません。</p>');
+}
+function refreshAlloc() {
+  var el = $('allocBody');
+  if (el) el.innerHTML = allocHtml(el.dataset.license);
+  refreshList();
+  if ($('plist_lic')) pDraw('lic');
+  if (S.view === 'customer') render();
+}
+
+// ---- スタッフ・パスワード ----
+function openStaffForm(staff) {
+  var isNew = !staff;
+  var s = staff || { 'スタッフID': '', '表示名': '', '権限': 'スタッフ', '有効': 'はい' };
+  openModal('<header><h2>スタッフを' + (isNew ? '追加' : '編集') + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+    '<form data-form="staff" data-new="' + (isNew ? '1' : '') + '" novalidate><div class="body"><p class="msg" hidden></p>' +
+    '<div class="field"><label for="st_id">スタッフID<span class="req">必須</span></label><input type="text" id="st_id" name="スタッフID" value="' + esc(s['スタッフID']) + '"' + (isNew ? '' : ' disabled') + ' autocapitalize="off" maxlength="64"><span class="note">半角の英数字と . _ - @ + で、3〜64文字（メールアドレスも使えます）。あとから変えられません。</span></div>' +
+    '<div class="field"><label for="st_name">表示名<span class="req">必須</span></label><input type="text" id="st_name" name="表示名" value="' + esc(s['表示名']) + '" maxlength="60"><span class="note">対応履歴の「受付スタッフ」に出る名前です。</span></div>' +
+    '<div class="grid2"><div class="field"><label for="st_role">権限</label><select id="st_role" name="権限">' + optionsHtml(S.D.roles, s['権限']) + '</select></div>' +
+    '<div class="field"><label for="st_active">有効</label><select id="st_active" name="有効">' + optionsHtml(['はい', 'いいえ'], s['有効']) + '</select></div></div>' +
+    '</div><footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button><button type="submit" class="btn primary">保存</button></footer></form>', true);
+}
+function tempPasswordDialog(staffId, password) {
+  infoDialog('仮パスワード', '<p style="margin:0">スタッフID：<b>' + esc(staffId) + '</b></p><div class="box secret" id="tempPw">' + esc(password) + '</div>' +
+    '<div><button type="button" class="btn small" data-act="copyTempPw">コピー</button></div>' +
+    '<p class="note">この画面を閉じると二度と表示されません。本人に伝えて、ログイン後すぐに「パスワード変更」をしてもらってください。</p>');
+}
+function openPasswordForm() {
+  openModal('<header><h2>パスワード変更</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+    '<form data-form="password" novalidate><div class="body"><p class="msg" hidden></p>' +
+    '<div class="field"><label for="pw_cur">今のパスワード</label><input type="password" id="pw_cur" autocomplete="current-password"></div>' +
+    '<div class="field"><label for="pw_new">新しいパスワード（8文字以上）</label><input type="password" id="pw_new" autocomplete="new-password"></div>' +
+    '<div class="field"><label for="pw_new2">新しいパスワード（もう一度）</label><input type="password" id="pw_new2" autocomplete="new-password"></div>' +
+    '</div><footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button><button type="submit" class="btn primary">変更する</button></footer></form>', true);
+}
+
+// ===========================================================================
+// 操作
+// ===========================================================================
+var ACT = {
+  nav: function (el) { go(el.dataset.view); },
+  sub: function (el) { var next = el.dataset.sub; guardLayout(function () { S.sub = next; render(); }); },
+  sort: function (el) {
+    var t = el.dataset.table, i = Number(el.dataset.i), st = S.sort[t];
+    S.sort[t] = st && st.i === i ? { i: i, dir: -st.dir } : { i: i, dir: 1 };
+    render();
+  },
+  closeModal: function (el) {
+    // 入力の途中の窓は、「×」「やめる」で閉じる前にも確かめる（v0.68.0）
+    var wrap = el && el.closest ? el.closest('.overlay') : null;
+    var form = wrap && wrap.querySelector('form[data-form]');
+    if (form && form.isConnected && S.D && S.D.schema[form.dataset.form] && formDirty(form)) { askCloseForm(form); return; }
+    closeModal(el);
+  },
+  /** ログアウトの前に、確かめる（「ログインしたまま」も解除されることを知らせる。v0.94.0） */
+  logout: function () {
+    if (document.querySelector('.overlay.logoutconfirm')) return;
+    var msg = 'ログアウトします。' + (rememberNow() ? '\nこの端末の「ログインしたまま」も解除されるので、次に開くときは、パスワードの入力が必要です。\n（画面を閉じるだけなら、次もそのまま入れます）' : '');
+    confirmDialog('ログアウトしますか？', msg, 'ログアウトする', false, 'やめる').then(function (yes) { if (yes) ACT.logoutNow(); });
+    var w = $('modals').lastElementChild; if (w) w.classList.add('logoutconfirm');
+  },
+  logoutNow: function () {
+    var token = S.token;
+    // まだ送っていない絞り込みがあれば、先に覚えてからログアウトする
+    var saved = viewTimer ? sendView() : Promise.resolve();
+    // この端末の「ログインしたまま」も取り消す（スタッフIDは、次のログインのために残す）
+    var secret = rememberNow(), ticket = S.ticket || '';
+    rememberSet('');
+    snapClear();      // この端末に残した前回のデータも消す（v0.112.0）
+    if (!Object.keys(S.sending || {}).length) keepSet(DRAFT_KEY, '');        // ログアウトしたら、この端末の下書きも消す（保存の途中のものがあれば残す）
+    toLogin('');
+    var bye = function () { google.script.run.withFailureHandler(function () {}).logout({ token: token, remember: secret, ticket: ticket }); };
+    saved.then(bye, bye);
+  },
+  /**
+   * 控えを使わずに、シートから読み直す（いま見ている画面のまま）。
+   * 読み直している間は、画面を覆って操作を止める（途中で保存や移動をすると、古い返事で上書きしてしまうため）。
+   */
+  /**
+   * 「更新」：いま見ている画面のぶんだけ、新しく届いた・直したぶんを読み足す（v0.95.0）。
+   * その画面に要るグループは getViewChanges（差分）で、顧客・機器・収集ツールは getChanges（差分）で読む。まだ読んでいないグループだけ、まるごと読む。
+   * 差分で読めなかったとき（時刻のずれなど）は、その画面のぶんを読み直す。全部を読み直すのは、メニューの「すべて読み直す」（refreshFull）
+   */
+  refreshAll: function () {
+    if (!S.D || refreshBusy) return;
+    refreshBusy = true;
+    $('blocker').hidden = false;
+    var token = S.token, epoch = S.epoch;
+    var groups = [];
+    viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).forEach(function (g) { if (groups.indexOf(g) === -1 && g !== 'diag') groups.push(g); });
+    var useDiag = viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).indexOf('diag') !== -1 && !!S.have.diag;
+    var pending = viewTimer ? sendView() : Promise.resolve();
+    var done = function () { refreshBusy = false; $('blocker').hidden = true; };
+    var alive = function () { return S.D && S.token === token && S.epoch === epoch; };
+    var t0 = Date.now();
+    var run = function () {
+      if (!alive()) return null;
+      var haveG = groups.filter(function (g) { return S.have[g]; });
+      var missG = groups.filter(function (g) { return !S.have[g]; });
+      var stamps = {};
+      haveG.forEach(function (g) { stamps[g] = (S.gStamp && S.gStamp[g]) || S.baseStamp; });
+      var canDelta = haveG.length && haveG.every(function (g) { return !!stamps[g]; });
+      var n = 0;
+      // まるごと読み直す（差分にできないとき）：その画面のグループを、控えを捨てて読む
+      var fullLoad = function (list) {
+        if (!list.length) return Promise.resolve();
+        var asked = Date.now();
+        return call('getBootstrap', { part: 'rest', groups: list, fresh: true }).then(function (rest) {
+          if (!alive()) return;
+          list.forEach(function (g) { delete S.have[g]; S.asked[g] = asked; });
+          applyRest(rest, asked, list);       // 読んだ時刻（restStamp）も、ここで覚える
+          n++;
+        });
+      };
+      // v0.111.0：画面の差分と、顧客・機器・収集ツールの差分を、1回の呼び出しで受ける（前は2回）
+      var withCore = canDelta && !!S.syncStamp;
+      var deltaCall = !canDelta ? fullLoad(haveG) : call('getViewChanges', withCore ? { groups: haveG, since: stamps, core: { since: S.syncStamp, withDiag: useDiag } } : { groups: haveG, since: stamps }).then(function (r) {
+        if (!alive()) return;
+        n += applyViewChanges(r);
+        // 顧客ごと・期間ごとの対応の一覧も、差分で直す（読み直さない。v0.106.0）
+        if (r.delta && r.delta.activities && typeof mergeActExtras === 'function') mergeActExtras(r.delta.activities.recs);
+        if (r.core) { n += applyChanges(r.core, true); S.syncStamp = r.core.stamp || S.syncStamp; }
+      }, function () { return fullLoad(haveG); });
+      var coreCall = !withCore && S.syncStamp ? call('getChanges', { since: S.syncStamp, withDiag: useDiag, cached: true }).then(function (r) {
+        if (!alive()) return;
+        n += applyChanges(r, true);
+        S.syncStamp = r.stamp || S.syncStamp;
+      }) : Promise.resolve();
+      return Promise.all([deltaCall, coreCall, fullLoad(missG)]).then(function () {
+        if (!alive()) return;
+        // 画面ごとにあとから読むもの（カレンダー・変更履歴・設定など）は、読み直す
+        //   顧客ごと・期間ごとの対応の一覧（custActs・actRange）は、上で差分を入れたので捨てない（捨てると、全部を読み直して遅くなる。v0.106.0）
+        S.cal = null; S.creds = null; S.staff = null; S.release = undefined; S.audit = null; S.files = null; S.report = null;
+        if ($('modals').children.length) S.renderPending = true; else render();
+        var sec = ((Date.now() - t0) / 1000).toFixed(1);
+        S.timing.refresh = { ms: Date.now() - t0, n: n };
+        toast(n ? 'この画面の新着 ' + n + '件を読み込みました（' + sec + '秒）' : '新しいデータはありませんでした（' + sec + '秒）');
+      });
+    };
+    pending.then(run, run).then(function () { done(); }, function (e) { done(); failToast(e); });
+  },
+  /** 全部（対応・修理・ライセンスなども）をシートから読み直す。スプレッドシートを手で直したあとは、こちら */
+  refreshFull: function () {
+    if (!S.D || refreshBusy) return;
+    refreshBusy = true;
+    $('blocker').hidden = false;
+    var token = S.token;
+    var pending = viewTimer ? sendView() : Promise.resolve();
+    var done = function () { refreshBusy = false; $('blocker').hidden = true; };
+    var run = function () {
+      if (!S.D || S.token !== token) return null;
+      S.timing = { t0: Date.now() };
+      return call('getBootstrap', { part: 'core', fresh: true }).then(function (core) {
+        // 待っている間にログアウトした・ログインし直したときは、何もしない
+        if (!S.D || S.token !== token) return null;
+        S.cal = null; S.custActs = {}; S.actRange = {}; S.creds = null; S.staff = null; S.release = undefined; S.audit = null; S.files = null; S.report = null;
+        Object.keys(REST_EMPTY).forEach(function (k) { core[k] = Array.isArray(REST_EMPTY[k]) ? [] : REST_EMPTY[k] && typeof REST_EMPTY[k] === 'object' ? {} : REST_EMPTY[k]; });
+        S.D = core;
+        S.loadedAt = Date.now();
+        S.syncStamp = core.stamp || '';
+        S.baseStamp = S.syncStamp; S.gStamp = {};
+        S.alerts = []; S.have = {}; S.asked = {}; S.ready = false; S.all = false; S.restFailed = false;
+        groupBusy = {}; prefetchFails = {}; S.epoch++;
+        reindex();
+        showBrand();
+        if (S.view === 'customer' && !IDX.cust[S.customerId]) { S.view = 'customers'; S.customerId = ''; S.sub = 'devices'; }
+        S.timing.first = Date.now() - S.timing.t0;
+        S.timing.coreMs = core.coreMs; S.timing.coreCache = core.coreCache;
+        render();                       // 開いている画面に要るぶんは、render が並べて読み始める（残りはパソコンなら裏で先読み）
+        return ensureView();
+      }).then(function () { if (S.D && S.ready && S.token === token) toast('最新のデータを読み込みました'); }).catch(failToast);
+    };
+    pending.then(run, run).then(done, done);
+  },
+  forgetView: function (el) {
+    closeModal(el);
+    var keepPref = {}; Object.keys(S.q).forEach(function (k) { if (/^pref\./.test(k)) keepPref[k] = S.q[k]; });
+    S.q = keepPref; S.sort = {}; S.per = {};
+    sendView();
+    toast('覚えていた絞り込み・並び替えを消しました');
+    render();
+  },
+  openPassword: function (el) { if (el && el.closest('.overlay')) closeModal(el); openPasswordForm(); },
+  retryRest: function () {
+    S.restFailed = false; prefetchFails = {};
+    render();
+    if (S.view === 'home' && String(S.homeQ || '').trim()) ensureGroups(['lic']);
+  },
+  printYear: function () {
+    var c = IDX.cust[S.customerId], box = $('yearBox');
+    if (!c || !box) return;
+    // v0.124.0：ブラウザが付ける上下の文字（日付・ページ名・URL）を出さない。PDFの名前は「年間ご報告書_顧客名」
+    printHtml(yearReportHtml(c, custActsFor(c['顧客ID']), S.D.repairs.filter(function (r) { return r['顧客ID'] === c['顧客ID']; }), S.D.maintenances.filter(function (m) { return m['顧客ID'] === c['顧客ID']; })),
+      { bare: true, title: '年間ご報告書_' + c['顧客名'] + '_' + S.D.today.replace(/-/g, '') });
+  },
+  printCustomer: function () {
+    if (!S.all) { toast('残りのデータを読み込んでいます。終わったら、印刷の画面を開きます。'); ensureRest().then(function () { if (S.all && S.D) ACT.printCustomer(); }); return; }
+    var c = IDX.cust[S.customerId];
+    if (!c) return;
+    var box = function (name, label, checked, note) {
+      return '<label class="check"><input type="checkbox" name="' + name + '"' + (checked ? ' checked' : '') + '> ' + label + (note ? '<span class="note">　' + note + '</span>' : '') + '</label>';
+    };
+    openModal('<header><h2>印刷・PDFにする <span class="sub">' + esc(c['顧客名']) + '</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<form data-form="printcustomer" novalidate><div class="body"><p class="msg" hidden></p>' +
+      '<div class="field"><span class="lab">印刷するもの</span><div class="checks">' +
+        box('info', '会社の情報', true) + box('devices', '機器の一覧', true) + box('licenses', 'ライセンス', true) + box('layouts', 'レイアウト図', true, '1枚ずつ、ページを分けます') +
+      '</div></div>' +
+      '<div class="field"><span class="lab">細かい指定</span><div class="checks">' +
+        box('gone', '廃棄した機器も入れる', false) + box('notes', '備考も入れる', false, '社内用。お客様に渡すときは外したままに') +
+      '</div><span class="note">ID・パスワードなどの認証情報は、印刷に入りません。</span></div>' +
+      '</div><footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button><button type="submit" class="btn primary">印刷する</button></footer></form>', true);
+  },
+  openMyPrefs: function (el) {
+    if (el && el.closest('.overlay')) closeModal(el);
+    var D = S.D, common = START_KEY[D.settings['開いた直後の画面']] ? D.settings['開いた直後の画面'] : D.startViews[0];
+    openModal('<header><h2>自分の設定</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<form data-form="myprefs" novalidate><div class="body"><p class="msg" hidden></p>' +
+      '<div class="field"><label for="my_start">開いた直後の画面</label><select id="my_start">' +
+        optionsHtml([['', '全体の設定に合わせる（いまは「' + common + '」）']].concat(D.startViews.filter(function (n) { return navVisible(START_KEY[n]); })), D.me.startView || '') + '</select>' +
+        '<span class="note">ログインした直後に開く画面です。自分のぶんだけ変わります。スマホでは、いつも「入力」の画面から始まります。</span></div>' +
+      '<div class="field"><label>絞り込み・並び替え</label>' +
+        '<span class="note">各画面の絞り込み・検索の文字・並び替え・期間の種類（週ごと／月ごと など）は、自動で覚えます。次に開いたとき、パソコンでもスマホでも同じ状態で始まります。</span>' +
+        '<div><button type="button" class="btn small" data-act="forgetView">覚えた絞り込み・並び替えを消す</button></div></div>' +
+      '<div class="field"><label for="my_confirm">直して保存するときの確認</label><select id="my_confirm">' +
+        optionsHtml([['auto', 'おすすめ：直す項目が少ないときは聞かない'], ['always', '毎回、変えた内容を見せて確かめる'], ['never', '聞かずに保存する']], q('pref.confirm', 'auto')) + '</select>' +
+        '<span class="note">「おすすめ」は、直した項目が3つ以上・認証情報・機器の顧客の移動のときだけ確かめます。</span></div>' +
+      '<div class="field"><label for="my_intro">画面の説明（見出しの下の一行）</label><select id="my_intro">' +
+        optionsHtml([['hide', 'ふだんは隠す（見出しの「？」で出す）'], ['show', 'いつも出す']], q('pref.intro', 'hide')) + '</select></div>' +
+      '<div class="field"><label>スマホの下のメニュー</label><div class="bnavpick">' + [0, 1, 2, 3].map(function (i) {
+        var cur = bnavList()[i];
+        return '<select id="my_b' + i + '" aria-label="下のメニューの' + (i + 1) + 'つめ">' + optionsHtml(bnavOptions(), cur ? cur[0] : '') + '</select>';
+      }).join('') + '</div><span class="note">真ん中の「入力」は固定です。左の2つ・右の2つを選べます。</span></div>' +
+      '</div><footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button><button type="submit" class="btn primary">保存</button></footer></form>', true);
+  },
+  quickAdd: function () {
+    var c = S.view === 'customer' ? IDX.cust[S.customerId] : null;
+    var item = function (key, title, sub, primary) {
+      return '<button type="button" class="btn' + (primary ? ' primary' : '') + '" data-act="quickNew" data-key="' + key + '">' + title + '<span>' + sub + '</span></button>';
+    };
+    openModal('<header><h2>記録する' + (c ? ' <span class="sub">' + esc(c['顧客名']) + '</span>' : '') + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<div class="body"><div class="sheet-list">' +
+      item('activity', '対応を記録', '訪問・リモート・電話などの対応', true) +
+      item('repair', '修理を受け付け', '預かった機器と状況') +
+      item('maintenance', '保守を記録', '定期保守・スポット保守の実施') +
+      item('license', 'ライセンスを追加', '製品名・数量・有効期限') +
+      item('device', '機器を追加', 'PCやプリンターを台帳に足す') +
+      item('memo', 'メモを書く', 'スタッフどうしの連絡。お客様には見えません') +
+      item('customer', '顧客を追加', '新しい取引先') +
+      '</div></div>', true, true);
+  },
+  quickNew: function (el) {
+    if (el.closest('.overlay')) closeModal(el);
+    var preset = S.view === 'customer' && el.dataset.key !== 'customer' ? { '顧客ID': S.customerId, lockCustomer: true } : null;
+    openForm(el.dataset.key, null, preset);
+  },
+  draftOpen: function (el) {
+    var d = draftById(el.dataset.draft);
+    var wrap = el.closest('.overlay');
+    if (wrap) { wrap._noDraft = true; closeModal(el); }
+    if (d) openDraft(d); else render();
+  },
+  draftDrop: function (el) {
+    draftDropId(el.dataset.draft);
+    var offer = el.closest('.draft-offer');
+    if (offer) offer.remove(); else render();
+  },
+  /** 下のメニューのまん中。顧客の画面では、その顧客の記録を選ぶ窓。ほかでは「入力」の画面へ */
+  plusInput: function () { if (S.view === 'customer') ACT.quickAdd(); else go('home'); },
+  homeClear: function () { S.homeQ = ''; var i = $('homeQ'); if (i) i.value = ''; drawHomeHits(); },
+  openMenu: function () {
+    var go2 = function (view, title) { return '<button type="button" class="btn" data-act="menuGo" data-view="' + view + '">' + title + '</button>'; };
+    openModal('<header><h2>メニュー <span class="sub">' + esc(S.D.me.name) + '（' + esc(S.D.me.role) + '）</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<div class="body"><div class="sheet-list">' + go2('meeting', 'ミーティング') + go2('licenses', 'ライセンス') +
+      (S.D.rentalOn ? go2('rentals', 'レンタル') : '') + (S.D.bizOn ? go2('projects', '案件・営業（テスト版）') : '') + go2('notices', 'お知らせ') +
+      (S.D.me.isAdmin ? go2('settings', '設定') + go2('audit', '変更履歴') : '') +
+      '<button type="button" class="btn" data-act="openMyPrefs">自分の設定（下のメニュー・説明など）</button>' +
+      '<button type="button" class="btn" data-act="openPassword">パスワード変更</button>' +
+      '<button type="button" class="btn" data-act="menuRefreshFull">すべて読み直す（手で直したあと）</button>' +
+      '<button type="button" class="btn" data-act="logout">ログアウト</button></div></div>', true, true);
+  },
+  menuRefreshFull: function (el) { closeModal(el); ACT.refreshFull(); },
+  cinfoToggle: function () { S.cinfoOpen = !S.cinfoOpen; render(); },
+  introToggle: function () { S.introOpen = S.introOpen === S.view ? '' : S.view; render(); },
+  showMore: function (el) { S.more = S.more || {}; var t = el.dataset.table; S.more[t] = (S.more[t] || TABLE_PAGE) + TABLE_PAGE; render(); },
+  mmStart: function () { go('mmaint'); },
+  mtgWeek: function (el) { var st = mtgState(); st.off = Math.min(0, st.off + Number(el.dataset.d)); st.monthly = null; render(); },
+  mtgMonthly: function () { var st = mtgState(); st.monthly = !mtgShowMonthly(); render(); },
+  mtgFull: function () {
+    var on = !document.body.classList.contains('mtgfull');
+    document.body.classList.toggle('mtgfull', on);
+    try { if (on && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen(); else if (!on && document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* 枠の中では全画面にできないことがある。文字を大きくするだけにする */ }
+  },
+  mtgPrint: function () {
+    var st = mtgState(), w = mtgWeek(st.off);
+    var box = document.querySelector('.mtggrid');
+    if (!box) return;
+    printHtml('<h1 class="ptitle">' + printLogoHtml() + 'ミーティング資料　' + esc(mdw(w.from) + '〜' + mdw(w.to)) + '　<small>' + esc(S.D.settings['自社名']) + '　' + esc(S.D.today) + ' 作成</small></h1>' +
+      '<div class="mtggrid mprint">' + box.innerHTML.replace(/<textarea[^>]*>[\s\S]*?<\/textarea>/, function () { var t = ($('mtgMemo') || {}).value || ''; return '<div class="mmemo">' + (t.trim() ? esc(t) : '（なし）') + '</div>'; }) + '</div>');
+  },
+  mtgSaveMemo: function (el) {
+    var st = mtgState(), w = mtgWeek(st.off), t = ($('mtgMemo') || {}).value || '';
+    if (!t.trim()) { toast('メモを書いてください。', true); return; }
+    el.disabled = true;
+    call('saveMemo', { data: { '顧客ID': '', '本文': '【ミーティング ' + w.from + '〜' + w.to + '】\n' + t } }).then(function (r) {
+      el.disabled = false; upsert(S.D.memos, 'メモID', r.record); delete st.memos[w.from]; toast('社内メモに残しました'); render();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  pFilter: function (el) { var st = pState(el.dataset.key); st.f = el.dataset.f; st.n = P_STEP; render(); },
+  pMore: function (el) { var st = pState(el.dataset.key); st.n += P_STEP; pDraw(el.dataset.key); },
+  pAlerts: function () { S.pAlertsOpen = !S.pAlertsOpen; render(); },
+  mmCust: function (el) {
+    var id = el.dataset.id || '';
+    S.mm.cust = id; S.mm.dev = ''; S.mm.diag = null; S.mm.diagFor = '';
+    if (id) noteRecentCust(id);
+    render(); window.scrollTo(0, 0); armBack(); saveLocSoon();
+  },
+  mmDev: function (el) {
+    var id = el.dataset.id;
+    if (!IDX.dev[id]) return;
+    S.mm.dev = id;
+    if (S.mm.diagFor !== id) { S.mm.diagFor = ''; S.mm.diag = null; }
+    render(); window.scrollTo(0, 0); armBack(); saveLocSoon();
+  },
+  mmRetry: function (el) { if (S.mm.diagErr === el.dataset.id) S.mm.diagErr = ''; mmRedraw(); },
+  mmList: function () {
+    var t = $('mmNote'); if (t) S.mm.notes[t.dataset.mmnote] = t.value;
+    S.mm.dev = ''; render(); armBack(); saveLocSoon();
+  },
+  mmDone: function (el) {
+    var id = el.dataset.id, d = IDX.dev[id];
+    if (!d || S.mm.saving[id]) return;        // 返事を待っている間に、もう一度押しても送らない（記録が2つできないように）
+    var t = $('mmNote'), note = t ? t.value : '';
+    var done = mmDoneRec(id);
+    var data = done ? { '実施ID': done['実施ID'], '内容': note }
+      : { '顧客ID': d['顧客ID'], '機器ID': id, '実施日': S.D.today, '種別': S.D.maintKindRegular, '内容': note, '担当スタッフ': S.D.me.name };
+    // 先に画面へ出す（v0.18.0）：すぐ一覧に戻って ✓ を付ける。サーバーの返事は裏で待ち、だめだったら元に戻す
+    var before = done ? Object.assign({}, done) : null;
+    var prov = done ? Object.assign({}, done, { '内容': note }) : Object.assign({ '実施ID': 'tmp' + (++tmpSeq), _pending: true }, data);
+    upsert(S.D.maintenances, '実施ID', prov);
+    reindex();
+    S.mm.saving[id] = true;
+    var token = S.token;
+    delete S.mm.notes[id];
+    toast(done ? '備考を直しました' : '✓ ' + (devLabel(id) || id) + ' を完了にしました');
+    if (S.view === 'mmaint' && S.mm.dev === id) { S.mm.dev = ''; render(); window.scrollTo(0, 0); }
+    var putBack = function () {
+      var list = S.D.maintenances;
+      for (var i = list.length - 1; i >= 0; i--) if (list[i]['実施ID'] === prov['実施ID']) list.splice(i, 1);
+      if (before && !list.some(function (m) { return m['実施ID'] === before['実施ID']; })) list.unshift(before);    // 待っている間に読み直していたら、入れ直さない
+    };
+    var redraw = function () { if (S.view === 'mmaint' && !$('modals').children.length) mmRedraw(); else S.renderPending = true; };
+    call('saveMaintenance', { data: data }).then(function (r) {
+      if (!S.D || S.token !== token) return;     // ログインし直したあとに届いた返事は捨てる
+      delete S.mm.saving[id];
+      putBack();
+      if (before) { for (var i = 0; i < S.D.maintenances.length; i++) if (S.D.maintenances[i]['実施ID'] === before['実施ID']) { S.D.maintenances.splice(i, 1); break; } }
+      upsert(S.D.maintenances, '実施ID', r.record);
+      reindex();
+      noteSaved('maintenance', r.record);
+      S.alertsStale = true;
+      redraw();
+    }).catch(function (e) {
+      if (!S.D || S.token !== token) return;
+      delete S.mm.saving[id];
+      putBack();
+      reindex();
+      if (S.mm.notes[id] === undefined) S.mm.notes[id] = note;    // 打った備考は消さない
+      redraw();
+      if (e && e.error === 'unauthorized') return;
+      toast('「' + (devLabel(id) || id) + '」の完了を保存できませんでした。もう一度開いて押してください。' + (e && e.message ? '（' + e.message + '）' : ''), true);
+    });
+  },
+  mmReport: function () {
+    if (!S.mm.cust) return;
+    openForm('maintenance', null, { '顧客ID': S.mm.cust, '種別': S.D.maintKindRegular, '内容': mmSummaryText(), lockCustomer: true });
+  },
+  maintPlan: function () { openMaintPlan(); },
+  yrPickAll: function (el) {
+    var v = el.dataset.on, k = el.dataset.kind || 'a', boxes = document.querySelectorAll('.yrPick[data-kind="' + k + '"]'), key = k === 'r' ? 'pickedR' : 'picked';
+    if (!S.yrOpt[key]) S.yrOpt[key] = {};
+    boxes.forEach(function (b, i) { b.checked = v === '8' ? i < 8 : !!v; S.yrOpt[key][b.dataset.id] = b.checked; });
+    yrPickCountShow(k);
+    yrRefresh();
+  },
+  // v0.117.0
+  licenseBulk: function () { openForm('license', null, { bulk: true }); },
+  voiceInput: function (el) { voiceStart(el); },
+  returnLoanToday: function (el) {
+    var loan = findRecord('loan', el.dataset.id);
+    if (!loan) return;
+    el.disabled = true;
+    call('saveLoan', { data: { '貸出ID': loan['貸出ID'], '返却日': S.D.today } }).then(function (r) {
+      upsert(S.D.loans, '貸出ID', r.record); reindex(); S.alertsStale = true; toast('今日の日付で返却を記録しました'); render();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  salesFromProject: function (el) {
+    var pj = findRecord('project', el.dataset.id);
+    if (!pj) return;
+    closeModal(el);
+    openForm('saleslog', null, { '案件ID': pj['案件ID'], '顧客ID': pj['顧客ID'] || '', '相手先': pj['先方名'] || '' });
+  },
+  projectFromSales: function (el) {
+    var sl = findRecord('saleslog', el.dataset.id);
+    if (!sl) return;
+    closeModal(el);
+    var first = String(sl['内容'] || '').split(/\n/)[0].slice(0, 60);
+    openForm('project', null, { '案件名': (sl['相手先'] ? sl['相手先'] + ' ' : '') + (first || '新しい案件'), '顧客ID': sl['顧客ID'] || '', '次にやること': sl['次回アクション'] || '', '次の連絡日': sl['次回予定日'] || '', '備考': sl['内容'] || '', linkSales: sl['営業ID'] });
+  },
+  maintPlanMonth: function (el) { openMaintPlan(el.dataset.month); },
+  maintPlanRegister: function (el) { maintPlanRegister(el); },
+  maintPlanAll: function (el) { var tb = document.getElementById('mplanTbl'); if (!tb) return; tb.querySelectorAll('.mpOn').forEach(function (c) { c.checked = !!el.dataset.on; }); maintPlanCount(); },
+  recordMaint: function (el) { openForm('maintenance', null, { '顧客ID': el.dataset.id, '種別': S.D.maintKindRegular, lockCustomer: true }); },
+  openCustomerMaint: function (el) { S.creds = null; go('customer', { customerId: el.dataset.id, sub: 'maint' }); },
+  printLoan: function (el) { var loan = findRecord('loan', el.dataset.id); if (loan) printHtml(loanSheetHtml(loan)); },
+  rtTile: function (el) { S.q['rt.kind'] = q('rt.kind') === el.dataset.v ? '' : el.dataset.v; refreshList(); },
+  rtClear: function () { S.q['rt.text'] = ''; S.q['rt.type'] = ''; S.q['rt.kind'] = ''; render(); },
+  extendLoan: function (el) {
+    var loan = findRecord('loan', el.dataset.id);
+    if (!loan) return;
+    var base = loan['返却予定日'] && loan['返却予定日'] > S.D.today ? loan['返却予定日'] : S.D.today;
+    var plus = function (n) { var d = new Date(base + 'T00:00:00'); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
+    loanDateAsk(el.dataset.id, { title: '返却予定を変える', label: '新しい返却予定日', field: '返却予定日', ok: '変える', note: 'いまの返却予定：' + (loan['返却予定日'] || 'なし'), value: plus(7),
+      chips: [['+1日', plus(1)], ['+1週間', plus(7)], ['+2週間', plus(14)], ['+1か月', plus(30)]] });
+  },
+  extPick: function (el) { var i = $('ld_date'); if (i) i.value = el.dataset.d; },
+  extendLoanGo: function (el) { loanDateSave(el, '返却予定日', '返却予定日', function (d) { return '返却予定を ' + d + ' にしました'; }); },
+  lendRental: function (el) { openForm('loan', null, { 'レンタルID': el.dataset.id, lockRental: true }); },
+  salesDone: function (el) {
+    var r = findRecord('saleslog', el.dataset.id);
+    if (!r) return;
+    call('saveSalesLog', { data: { '営業ID': r['営業ID'], 'アクション完了': 'はい' } }).then(function (res) {
+      upsert(S.D.saleslogs, '営業ID', res.record); reindex(); S.alertsStale = true; toast('完了にしました'); render();
+    }).catch(failToast);
+  },
+  convertProject: function (el) {
+    var d = findRecord('project', el.dataset.id), to = el.dataset.to;
+    if (!d) return;
+    var who = pjWho(d) || d['案件名'];
+    var msg = to === 'order' ? '「' + who + '」を受注にして、「要件確認」に進めます。顧客がまだなければ、顧客も作ります。' : '「' + who + '」を顧客として登録します。';
+    confirmDialog(to === 'order' ? '受注にする' : '顧客にする', msg, 'する', false).then(function (yes) {
+      if (!yes) return;
+      call('convertProject', { id: d['案件ID'], to: to }).then(function (r) {
+        upsert(S.D.projects, '案件ID', r.project);
+        if (r.customer) upsert(S.D.customers, '顧客ID', r.customer);
+        reindex(); S.alertsStale = true; toast(to === 'order' ? '受注にしました' : '顧客にしました'); render();
+      }).catch(failToast);
+    });
+  },
+  returnLoan: function (el) {
+    loanDateAsk(el.dataset.id, { title: '返却を記録', label: '返却日', field: '返却日', ok: '返却を記録', note: '昔の日付でも選べます（貸出日以降）。', value: S.D.today });
+  },
+  returnLoanGo: function (el) { loanDateSave(el, '返却日', '返却日', function () { return '返却を記録しました'; }); },
+  auditMore: function () { loadAudit(500); },
+  layoutOpen: function (el) { var id = el.dataset.id; if (id !== L.id) guardLayout(function () { if (!L.list) { loadLayouts(); return; } loadLayout(id); }); },
+  layoutNew: function () {
+    guardLayout(function () {
+      askText('新しいレイアウト', '名前（例：本社2F）', '', 40).then(function (name) {
+        if (name === null) return;
+        call('createLayout', { customerId: S.customerId, name: name }).then(function (r) {
+          if (!L.list || L.customerId !== S.customerId) { L.customerId = ''; loadLayouts(); return; }
+          L.list.push(r.layout);
+          loadLayout(r.layout['レイアウトID']);
+          toast('レイアウトを作りました。「編集する」から図形を置けます');
+        }).catch(failToast);
+      });
+    });
+  },
+  layoutRename: function () {
+    var cur = L.list.filter(function (l) { return l['レイアウトID'] === L.id; })[0];
+    askText('名前を変える', 'レイアウトの名前', cur ? cur['名前'] : '', 40).then(function (name) {
+      if (name === null) return;
+      call('renameLayout', { layoutId: L.id, name: name }).then(function (r) {
+        upsert(L.list, 'レイアウトID', r.layout); L.data['名前'] = r.layout['名前']; drawLayoutBox(); toast('名前を変えました');
+      }).catch(failToast);
+    });
+  },
+  layoutDelete: function () {
+    var cur = L.list.filter(function (l) { return l['レイアウトID'] === L.id; })[0];
+    confirmDialog('レイアウトを削除', '「' + (cur ? cur['名前'] : L.id) + '」を削除します。元には戻せません。', '削除する', true).then(function (yes) {
+      if (!yes) return;
+      var id = L.id;
+      call('deleteLayout', { layoutId: id }).then(function () {
+        L.list = L.list.filter(function (l) { return l['レイアウトID'] !== id; });
+        toast('削除しました');
+        if (L.list.length) loadLayout(L.list[0]['レイアウトID']); else { L.id = ''; L.data = null; drawLayoutBox(); }
+      }).catch(failToast);
+    });
+  },
+  layoutEdit: function () { L.edit = true; L.conn = null; L.sels = []; L.pt = -1; L.multi = false; L.undo = []; L.redo = []; L.dirty = false; drawLayoutBox(); },
+  layoutStop: function () {
+    if (!L.dirty) { L.edit = false; L.sels = []; drawLayoutBox(); return; }
+    confirmDialog('編集をやめる', '保存していない変更があります。保存せずにやめると、変更は消えます。', '保存せずにやめる', true).then(function (yes) { if (yes) loadLayout(L.id); });
+  },
+  layoutSave: function (el) {
+    el.disabled = true;
+    var id = L.id;
+    call('saveLayout', { layoutId: id, elements: L.data.elements, backgroundColor: L.data.backgroundColor }).then(function (r) {
+      if (L.id !== id) return;
+      L.data.elements = r.elements; L.data['更新日時'] = r.updatedAt; L.dirty = false; L.sels = []; L.pt = -1; L.undo = []; L.redo = [];
+      var cur = L.list.filter(function (l) { return l['レイアウトID'] === id; })[0];
+      if (cur) { cur.count = r.elements.length; cur['更新日時'] = r.updatedAt; }
+      toast('レイアウト図を保存しました'); drawLayoutBox();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  layoutAdd: function (el) {
+    var type = el.dataset.type, list = L.data.elements, off = (list.length % 6) * 2;
+    if (el.closest('.overlay')) closeModal(el);
+    if (!layoutRoom(1)) return;
+    layoutPushUndo();
+    if (type === 'line' || type === 'arrow') list.push({ type: type, x1: 35, y1: 46 + off, x2: 65, y2: 46 + off, color: '', width: 2 });
+    else if (type === 'poly') list.push({ type: 'poly', points: [[35, 40 + off], [52, 40 + off], [52, 56 + off]], color: '', width: 2 });
+    else if (type === 'text') list.push({ type: 'text', x: 40 + off, y: 44 + off, text: '文字', size: 16, color: '' });
+    else list.push({ type: type, x: 40 + off, y: 40 + off, w: LAY_NEW[type].w, h: LAY_NEW[type].h, color: '', text: LAY_NEW[type].text });
+    L.sel = list.length - 1; L.textUndo = L.sel; L.pt = -1;
+    layoutChanged();
+    var input = $('layText');
+    if (input && type === 'text') { input.focus(); input.select(); }
+  },
+  layoutIconPick: function () {
+    openModal('<header><h2>アイコンを選ぶ</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body"><div class="chipset">' +
+      S.D.layoutIcons.map(function (ic) { return '<button type="button" data-act="layoutIconAdd" data-icon="' + esc(ic) + '" style="font-size:24px;min-width:52px" aria-pressed="false">' + esc(ic) + '</button>'; }).join('') +
+      '</div></div>', true, true);
+  },
+  layoutIconAdd: function (el) {
+    closeModal(el);
+    if (!layoutRoom(1)) return;
+    layoutPushUndo();
+    var off = (L.data.elements.length % 6) * 2;
+    L.data.elements.push({ type: 'icon', x: 50 + off, y: 50 + off, icon: el.dataset.icon, size: 28, text: '' });
+    L.sel = L.data.elements.length - 1; L.textUndo = L.sel;
+    layoutChanged();
+  },
+  layoutNetPick: function () {
+    openModal('<header><h2>ネットワーク機器を置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body"><p class="note" style="margin:0 0 8px">置いたあと、名前・IPアドレス・メモを入れられます。機器台帳の機器と結びつけることもできます。</p><div class="tpl-grid">' +
+      NET_ORDER.map(function (k) {
+        return '<button type="button" class="btn" data-act="layoutNetAdd" data-k="' + k + '"><b style="display:inline-block;min-width:44px;text-align:center;color:#fff;border-radius:5px;padding:1px 6px;margin-right:8px;background:' + NET_KINDS[k][2] + '">' + esc(NET_KINDS[k][0]) + '</b>' + esc(NET_KINDS[k][1]) + '</button>';
+      }).join('') + '</div></div>', true, true);
+  },
+  layoutNetAdd: function (el) {
+    var kind = el.dataset.k;
+    closeModal(el);
+    if (!NET_KINDS[kind] || !layoutRoom(1)) return;
+    layoutPushUndo();
+    var list = L.data.elements, off = (list.length % 6) * 3;
+    list.push({ type: 'net', id: layNetNextId(list), kind: kind, x: 45 + off, y: 40 + off, size: 28, text: '', ip: '', note: '', deviceId: '' });
+    L.conn = null; L.sel = list.length - 1; L.textUndo = L.sel; L.pt = -1;
+    layoutChanged();
+    var input = $('layText'); if (input) input.focus();
+  },
+  layoutConnect: function () {
+    L.conn = L.conn ? null : { kind: 'lan', first: '' };
+    L.sels = []; L.pt = -1;
+    drawLayoutBox();
+  },
+  layoutConnKind: function (el) { if (L.conn && LINK_KINDS[el.dataset.k]) { L.conn.kind = el.dataset.k; drawLayoutBox(); } },
+  layoutLinkKind: function (el) {
+    var x = L.data.elements[L.sel];
+    if (!x || x.type !== 'link' || !LINK_KINDS[el.dataset.k] || x.kind === el.dataset.k) return;
+    layoutPushUndo(); x.kind = el.dataset.k; layoutChanged();
+  },
+  layoutShowIp: function () { L.showIp = !L.showIp; drawLayoutBox(); },
+  layoutLegend: function () { L.legend = !L.legend; drawLayoutBox(); },
+  layoutNetInfo: function (el) {
+    // 見るだけのとき、記号を押すと出る情報カード（IP・メモ・結びつけた機器・つながっている先）
+    var n = L.data.elements[Number(el.dataset.i)];
+    if (!n || n.type !== 'net') return;
+    var nk = NET_KINDS[n.kind] || NET_KINDS.port, dev = n.deviceId ? IDX.dev[n.deviceId] : null, g = dev ? (IDX.diag[n.deviceId] || {}) : {};
+    var rows = [['種類', nk[1]]];
+    if (n.ip) rows.push(['IPアドレス', n.ip]);
+    if (n.note) rows.push(['メモ', n.note]);
+    if (dev) {
+      rows.push(['機器台帳', [dev['メーカー'], dev['機種名']].filter(Boolean).join(' ') || dev['種類']]);
+      if (dev['設置場所']) rows.push(['設置場所', dev['設置場所']]);
+      if (dev['シリアル']) rows.push(['シリアル', dev['シリアル']]);
+      if (dev['保証期限']) rows.push(['保証期限', dev['保証期限']]);
+      if (g['IPアドレス']) rows.push(['収集したIP', g['IPアドレス']]);
+    }
+    var conns = [];
+    L.data.elements.forEach(function (x) {
+      if (x.type !== 'link') return;
+      var other = x.a === n.id ? x.b : x.b === n.id ? x.a : '', o = other ? layNetById(L.data, other) : null;
+      if (o) conns.push(layNetName(o) + '（' + (LINK_KINDS[x.kind] || LINK_KINDS.lan)[0] + (x.text ? '・' + x.text : '') + '）');
+    });
+    if (conns.length) rows.push(['つながり', conns.join('、')]);
+    openModal('<header><h2>' + esc(layNetName(n)) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body" style="gap:6px">' +
+      rows.map(function (r) { return '<div class="frow"><span class="flabel" style="width:92px">' + esc(r[0]) + '</span><span style="overflow-wrap:anywhere">' + esc(r[1]) + '</span></div>'; }).join('') + '</div>' +
+      '<footer><span class="grow"></span>' + (dev ? '<button type="button" class="btn primary" data-act="layoutNetDevOpen" data-id="' + esc(n.deviceId) + '">機器を開く</button>' : '') +
+      '<button type="button" class="btn" data-act="closeModal">閉じる</button></footer>', true, true);
+  },
+  layoutNetDevOpen: function (el) {
+    var id = el.dataset.id;
+    closeModal(el);
+    var rec = findRecord('device', id); if (rec) openForm('device', rec, null);
+  },
+  layoutNetTplPick: function () {
+    openModal('<header><h2>幹線図テンプレートを置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body"><p class="note" style="margin:0 0 8px">ネットワーク機器の記号と回線を、まとめて置きます。置いたあと、名前・IPアドレス・位置を1つずつ直せます（回線は、機器を動かすとついてきます）。間取り図の上に重ねて置くこともできます。</p><div class="tpl-grid">' +
+      LAY_NET_TEMPLATES.map(function (tp) { return '<button type="button" class="btn" data-act="layoutNetTplAdd" data-key="' + tp.key + '">' + esc(tp.name) + '<span>' + esc(tp.sub) + '</span></button>'; }).join('') + '</div></div>', true, true);
+  },
+  layoutNetTplAdd: function (el) {
+    var tp = LAY_NET_TEMPLATES.filter(function (x) { return x.key === el.dataset.key; })[0];
+    closeModal(el);
+    if (!tp) return;
+    L.conn = null;
+    var n = layoutPlaceNet(tp);
+    if (n) toast('「' + tp.name + '」を置きました。名前とIPアドレスを入れてください');
+  },
+  layoutPinAdd: function (el) {
+    if (!layoutRoom(1)) return;
+    layoutPushUndo();
+    var n = L.data.elements.filter(function (x) { return x.type === 'pin'; }).length;
+    L.data.elements.push({ type: 'pin', x: 12 + (n % 6) * 15, y: 12 + (Math.floor(n / 6) % 10) * 8, deviceId: el.dataset.id });
+    L.sel = L.data.elements.length - 1;
+    layoutChanged();
+  },
+  layoutPinAll: function () {
+    var placed = {}, bottom = 4;
+    L.data.elements.forEach(function (x) { if (x.type === 'pin') { placed[x.deviceId] = true; bottom = Math.max(bottom, x.y); } });
+    var free = S.D.devices.filter(function (dev) { return dev['顧客ID'] === L.customerId && dev['状況'] !== '廃棄' && !placed[dev['機器ID']]; });
+    if (!layoutRoom(free.length)) return;
+    layoutPushUndo();
+    // いま置いてあるピンより下から、横6つずつ並べる（置いてあるものに重ねない）
+    var top = Math.min(92, bottom + 8);
+    free.forEach(function (dev, i) { L.data.elements.push({ type: 'pin', x: 12 + (i % 6) * 15, y: Math.min(98, top + Math.floor(i / 6) * 8), deviceId: dev['機器ID'] }); });
+    L.sel = -1;
+    layoutChanged();
+  },
+  layoutColor: function (el) {
+    // 選んでいる図形のうち、色を持てるもの全部に付ける
+    var targets = L.sels.map(function (i) { return L.data.elements[i]; }).filter(function (x) { return x && x.type !== 'pin' && x.type !== 'icon' && x.type !== 'net' && x.type !== 'link'; });
+    if (!targets.length) return;
+    layoutPushUndo();
+    targets.forEach(function (x) { x.color = el.dataset.color; });
+    layoutChanged();
+  },
+  layoutBg: function (el) { layoutPushUndo(); L.data.backgroundColor = el.dataset.color; layoutChanged(); },
+  layoutSize: function (el) {
+    var x = L.data.elements[L.sel]; if (!x) return;
+    var d = Number(el.dataset.d);
+    layoutPushUndo();
+    if (x.type === 'pin' || x.type === 'link' || layIsBox(x)) return;
+    if (x.type === 'net') x.size = Math.min(60, Math.max(16, (x.size || 28) + d * 4));
+    else if (x.type === 'text') x.size = Math.min(48, Math.max(8, x.size + d * 2));
+    else if (x.type === 'icon') x.size = Math.min(80, Math.max(12, x.size + d * 4));
+    else x.width = Math.min(8, Math.max(1, (x.width || 2) + d));
+    layoutChanged();
+  },
+  layoutOrder: function (el) {
+    // 重なり順：選んでいる図形（まとめて選んでいてもOK）を、1つ前へ／1つ後ろへ／最前面／最背面へ。並びの順がそのまま重なり順
+    var list = L.data.elements, d = el.dataset.d, sel = L.sels.slice().sort(function (a, b) { return a - b; });
+    if (!sel.length) return;
+    var isSel = function (i) { return sel.indexOf(i) !== -1; };
+    var order = list.map(function (x, i) { return i; }), out;
+    if (d === 'top') out = order.filter(function (i) { return !isSel(i); }).concat(order.filter(isSel));
+    else if (d === 'bottom') out = order.filter(isSel).concat(order.filter(function (i) { return !isSel(i); }));
+    else {
+      out = order.slice();
+      var step = Number(d);
+      if (step > 0) { for (var i = out.length - 2; i >= 0; i--) if (isSel(out[i]) && !isSel(out[i + 1])) { var t = out[i]; out[i] = out[i + 1]; out[i + 1] = t; } }
+      else { for (var k = 1; k < out.length; k++) if (isSel(out[k]) && !isSel(out[k - 1])) { var u = out[k]; out[k] = out[k - 1]; out[k - 1] = u; } }
+    }
+    if (out.every(function (v, i) { return v === i; })) { toast(d === 'top' || d === '1' ? 'もう一番前です' : 'もう一番後ろです'); return; }
+    layoutPushUndo();
+    var before = list.slice();
+    L.data.elements = out.map(function (i) { return before[i]; });
+    L.sels = sel.map(function (i) { return out.indexOf(i); }).sort(function (a, b) { return a - b; });
+    layoutChanged();
+  },
+  layoutDup: function () {
+    // 選んでいる図形を、並びを保ったまま少しずらして写す（機器のピンは1台1つなので写さない）
+    var list = L.data.elements;
+    var src = L.sels.slice().sort(function (a, b) { return a - b; }).map(function (i) { return list[i]; }).filter(function (x) { return x && x.type !== 'pin' && x.type !== 'link'; });
+    if (!src.length || !layoutRoom(src.length)) return;
+    layoutPushUndo();
+    var made = [], gmap = {}, used = {};
+    list.forEach(function (x) { if (x.grp) used[x.grp] = true; });
+    src.forEach(function (x) {
+      var copy = layClone(x);
+      if (copy.grp) {      // 写したものは、写した同士で新しいグループにする
+        if (!gmap[copy.grp]) { var gn = 1; while (used['g' + gn]) gn++; used['g' + gn] = true; gmap[copy.grp] = 'g' + gn; }
+        copy.grp = gmap[copy.grp];
+      }
+      if (copy.type === 'net') { copy.id = layNetNextId(list); copy.deviceId = ''; copy.x = layoutClamp(copy.x + 3); copy.y = layoutClamp(copy.y + 4); }     // 番号は新しく、機器台帳との結びつきは外す
+      else if (layIsLine(copy)) { copy.y1 = layoutClamp(copy.y1 + 4); copy.y2 = layoutClamp(copy.y2 + 4); }
+      else if (copy.type === 'poly') copy.points = copy.points.map(function (p) { return [layoutClamp(p[0] + 3), layoutClamp(p[1] + 4)]; });
+      else { copy.x = layoutClamp(copy.x + 3); copy.y = layoutClamp(copy.y + 4); }
+      list.push(copy); made.push(list.length - 1);
+    });
+    L.sels = made; L.pt = -1;
+    layoutChanged();
+  },
+  layoutRemove: function () {
+    if (!L.sels.length) return;
+    layoutPushUndo();
+    L.sels.slice().sort(function (a, b) { return b - a; }).forEach(function (i) { L.data.elements.splice(i, 1); });
+    layPurgeLinks();                 // 消した記号につないでいた回線も消す
+    L.sels = []; L.pt = -1;
+    layoutChanged();
+  },
+  layoutRotate: function (el) {
+    var x = L.data.elements[L.sel]; if (!x || x.type === 'pin' || x.type === 'net' || x.type === 'link' || layIsLine(x) || x.type === 'poly') return;
+    layoutPushUndo();
+    var r = ((layRot(x) + Number(el.dataset.d)) % 360 + 360) % 360;
+    if (r) x.r = r; else delete x.r;
+    layoutChanged();
+  },
+  layoutAlign: function (el) {
+    // まとめて選んだ図形の、左（または上）の端をそろえる
+    var list = L.data.elements, k = el.dataset.d === 'top' ? 1 : 0;
+    var picked = L.sels.map(function (i) { return list[i]; }).filter(function (x) { return x; });
+    if (picked.length < 2) return;
+    var edge = Math.min.apply(null, picked.map(function (x) { return layAnchorBounds(x)[k]; }));
+    layoutPushUndo();
+    picked.forEach(function (x) { var d = edge - layAnchorBounds(x)[k]; layShift(x, layClone(x), k ? 0 : d, k ? d : 0); });
+    layoutChanged();
+  },
+  layoutMulti: function () { L.multi = !L.multi; drawLayoutBox(); },
+  layoutSelectNone: function () { L.sels = []; L.pt = -1; drawLayoutBox(); },
+  // ---- v0.105.0：ロック・隠す・グループ・重なり順の一覧
+  layoutLock: function () { layoutFlag('lock'); },
+  layoutHide: function () { layoutFlag('hide'); },
+  layoutGroup: function () {
+    var list = L.data.elements, ids = L.sels.filter(function (i) { return list[i] && list[i].type !== 'link'; });
+    if (ids.length < 2) { toast('グループにするには、2つ以上を選んでください', true); return; }
+    layoutPushUndo();
+    var used = {}; list.forEach(function (x) { if (x.grp) used[x.grp] = true; });
+    var n = 1; while (used['g' + n]) n++;
+    ids.forEach(function (i) { list[i].grp = 'g' + n; });
+    layoutChanged();
+    toast('グループにしました。どれか1つを動かすと、全部いっしょに動きます');
+  },
+  layoutUngroup: function () {
+    var list = L.data.elements, ids = L.sels.filter(function (i) { return list[i] && list[i].grp; });
+    if (!ids.length) return;
+    layoutPushUndo();
+    ids.forEach(function (i) { delete list[i].grp; });
+    layoutChanged();
+  },
+  layoutListToggle: function () { L.listOpen = !L.listOpen; drawLayoutBox(); },
+  layoutRowSel: function (el, arg, e) {
+    var i = Number(el.dataset.i);
+    if (!L.data.elements[i]) return;
+    var additive = L.multi || (e && (e.shiftKey || e.ctrlKey || e.metaKey));
+    if (additive) {
+      if (L.sels.indexOf(i) === -1) L.sels = layExpand(L.sels.concat([i]));
+      else { var gone = layExpand([i]); L.sels = L.sels.filter(function (k) { return gone.indexOf(k) === -1; }); }
+    } else L.sels = layExpand([i]);
+    L.pt = -1; L.textUndo = -1;
+    drawLayoutBox();
+  },
+  layoutRowHide: function (el) { var x = L.data.elements[Number(el.dataset.i)]; if (!x) return; layoutPushUndo(); if (x.hide) delete x.hide; else x.hide = true; layoutChanged(); },
+  layoutRowLock: function (el) { var x = L.data.elements[Number(el.dataset.i)]; if (!x) return; layoutPushUndo(); if (x.lock) delete x.lock; else x.lock = true; layoutChanged(); },
+  layoutPolyAdd: function () {
+    var x = L.data.elements[L.sel]; if (!x || x.type !== 'poly' || x.points.length >= S.D.layoutPolyMaxPoints) return;
+    layoutPushUndo();
+    var last = x.points[x.points.length - 1];
+    x.points.push([layoutClamp(last[0] + (last[0] > 92 ? -6 : 6)), layoutClamp(last[1] + (last[1] > 92 ? -6 : 6))]);
+    L.pt = x.points.length - 1;
+    layoutChanged();
+  },
+  layoutPolyDel: function () {
+    // 最後にさわった点（無ければ末尾の点）を取る。線として残る2点までは減らせる
+    var x = L.data.elements[L.sel]; if (!x || x.type !== 'poly' || x.points.length <= 2) return;
+    layoutPushUndo();
+    x.points.splice(L.pt >= 0 && L.pt < x.points.length ? L.pt : x.points.length - 1, 1);
+    L.pt = -1;
+    layoutChanged();
+  },
+  layoutTemplatePick: function () {
+    var cap = function (t) { return '<p class="note" style="margin:14px 0 6px">' + t + '</p>'; };
+    openModal('<header><h2>テンプレート・セットを置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body" style="gap:0">' +
+      '<p class="note" style="margin:0 0 6px">部屋まるごとの下書き（置いたあと、机や名前を1つずつ直せます）</p><div class="tpl-grid">' +
+      LAY_ROOMS.map(function (t) { return '<button type="button" class="btn" data-act="layoutRoomAdd" data-key="' + t.key + '">' + esc(t.name) + '<span>' + esc(t.sub) + '</span></button>'; }).join('') + '</div>' +
+      cap('席数を入れて並べる') +
+      '<div class="tpl-gen" id="layGen">' +
+        '<div class="field"><label for="layGenCols">横に並ぶ席</label><input type="number" id="layGenCols" min="1" max="8" value="3" inputmode="numeric"></div>' +
+        '<div class="field"><label for="layGenKind">並べ方</label><select id="layGenKind"><option value="island">向かい合わせ（島）</option><option value="wall">片側だけ（壁向き）</option></select></div>' +
+        '<div class="field"><label for="layGenRows">列の数</label><input type="number" id="layGenRows" min="1" max="4" value="1" inputmode="numeric"></div>' +
+        '<button type="button" class="btn primary" data-act="layoutGenAdd">この席数で置く</button></div>' +
+      '<p class="note" style="margin:6px 0 0">例：横3・向かい合わせ・列1 → 6席の島。横4・向かい合わせ・列2 → 8席の島が2つ（16席）。</p>' +
+      cap('セット（置いたあと、まとめて動かせます）') + '<div class="chipset">' +
+      LAY_TEMPLATES.map(function (t) { return '<button type="button" data-act="layoutTemplateAdd" data-key="' + t.key + '" aria-pressed="false">' + esc(t.name) + '</button>'; }).join('') + '</div>' +
+      cap('什器（1つずつ）') + '<div class="chipset">' +
+      LAY_FURNITURE.map(function (f) { return '<button type="button" data-act="layoutAdd" data-type="' + f[0] + '" aria-pressed="false">' + f[1] + '</button>'; }).join('') + '</div>' +
+      '</div>', false, true);
+  },
+  layoutTemplateAdd: function (el) {
+    var t = LAY_TEMPLATES.filter(function (x) { return x.key === el.dataset.key; })[0];
+    closeModal(el);
+    if (t && layoutPlace(t.items, true)) toast('置きました。どれか1つを引っぱると、まとめて動かせます');
+  },
+  layoutRoomAdd: function (el) {
+    var t = LAY_ROOMS.filter(function (x) { return x.key === el.dataset.key; })[0];
+    closeModal(el);
+    if (!t) return;
+    var had = L.data.elements.length;
+    if (layoutPlace(t.items(), false)) {
+      L.sels = [];      // 部屋の下書きは、置いたあと1つずつ直すので、選んだ状態にしない
+      drawLayoutBox();
+      toast('「' + t.name + '」の下書きを置きました。' + (had ? '前からあった図形は残っています。' : '机や名前を押して、実際に合わせて直してください') + '（「元に戻す」で取り消せます）');
+    }
+  },
+  layoutGenAdd: function (el) {
+    var num = function (id, max) { var n = Math.floor(Number($(id).value)); return isFinite(n) ? Math.min(max, Math.max(1, n)) : 1; };
+    var cols = num('layGenCols', 8), rows = num('layGenRows', 4), island = $('layGenKind').value !== 'wall';
+    var one = island ? layIsland(cols) : layWallRow(cols), step = island ? 266 + 70 : 133 + 60, items = [];
+    for (var r = 0; r < rows; r++) items = items.concat(layAt(one, 0, r * step));
+    closeModal(el);
+    if (layoutPlace(items, true)) toast((cols * (island ? 2 : 1) * rows) + '席を置きました。どれか1つを引っぱると、まとめて動かせます');
+  },
+  layoutUndo: function () { if (!L.undo.length) return; L.redo.push(layoutSnapshot()); layoutRestore(L.undo.pop()); drawLayoutBox(); },
+  layoutRedo: function () { if (!L.redo.length) return; L.undo.push(layoutSnapshot()); layoutRestore(L.redo.pop()); drawLayoutBox(); },
+  layoutSnap: function () { L.snap = !L.snap; drawLayoutBox(); },
+  layoutImagePick: function () { var f = $('layImage'); if (f) f.click(); },
+  layoutImageRemove: function () {
+    confirmDialog('背景の画像を外す', '背景の画像を外します。図形はそのまま残ります。', '外す', true).then(function (yes) {
+      if (!yes) return;
+      call('removeLayoutImage', { layoutId: L.id }).then(function () {
+        L.data.imageBase64 = ''; L.data.imageMimeType = ''; L.data.imageMissing = false; L.ratio = 4 / 3;
+        var cur = L.list.filter(function (l) { return l['レイアウトID'] === L.id; })[0]; if (cur) cur.hasImage = false;
+        toast('画像を外しました'); drawLayoutBox();
+      }).catch(failToast);
+    });
+  },
+  layoutPin: function (el) { var rec = findRecord('device', el.dataset.id); if (rec) openForm('device', rec, null); },
+  layoutPrint: function () {
+    var cur = L.list.filter(function (l) { return l['レイアウトID'] === L.id; })[0];
+    printHtml('<h1 class="ptitle">' + esc(custName(L.customerId)) + '　' + esc(cur ? cur['名前'] : '') + '　<small>' + esc(S.D.today) + '</small></h1>' +
+      layoutCanvasHtml(L.data, { edit: false, sels: [], ratio: L.ratio, id: 'layPrint', showIp: L.showIp, legend: L.legend }));
+  },
+
+  pickAttachFile: function (el) { var input = el.closest('.photos').querySelector('input[data-attachfile]'); if (input) input.click(); },
+  pickCamera: function (el) { var input = el.closest('.photos').querySelector('input[data-camera]'); if (input) input.click(); },
+  publishReport: function (el) {
+    var r = S.report; if (!r || !r.data) return;
+    var on = el.dataset.on === '1';
+    var go2 = function () {
+      el.disabled = true;
+      call('publishReport', { customerId: r.customerId, month: r.month, publish: on, note: S.reportNote || '' }).then(function (x) {
+        if (S.report === r) r.published = x.published;
+        toast(on ? 'お客様ページに出しました' : 'お客様ページに出すのをやめました');
+        var box = $('reportPub'); if (box && S.report === r) box.outerHTML = reportPubHtml(r);
+      }).catch(function (e) { el.disabled = false; failToast(e); });
+    };
+    if (!on) { go2(); return; }
+    confirmDialog('お客様ページに出す', r.month.replace('-', '年') + '月のレポートを、お客様ページに出します。\nお客様が見られるようになります。対応の内容に、出してはいけないことが書いていないか確かめてください。', '出す', false).then(function (yes) { if (yes) go2(); });
+  },
+  scanOpen: function (el) { openScanner(el.closest('form')); },
+  scanClose: function () {
+    var shut = function () { var w = document.querySelector('.overlay.scanwrap'); if (w) { w._confirmed = true; closeModal(w.firstChild); } else closeScanner(); };
+    if (SCAN && SCAN.pages.length) {
+      // 撮りためたページを、黙って捨てない
+      confirmDialog('撮ったページ', SCAN.pages.length + '枚撮ってあります。1つのPDFにして付けますか？', 'PDFにして付ける', false, '付けずに閉じる').then(function (yes) {
+        if (!SCAN) return;
+        if (!yes) { SCAN.pages = []; shut(); return; }
+        scanPdfMake().then(function (ok) { if (ok) shut(); });
+      });
+      return;
+    }
+    shut();
+  },
+  scanShot: function () { scanCaptureLive(); },
+  scanRetake: function () { if (SCAN) { SCAN.src = null; scanStartLive(); } },
+  scanMode: function (el) { if (!SCAN) return; SCAN.mode = el.dataset.mode; Array.prototype.forEach.call(document.querySelectorAll('#scanModes button'), function (b) { b.setAttribute('aria-pressed', String(b.dataset.mode === SCAN.mode)); }); },
+  scanUse: function (el) {
+    el.disabled = true; el.textContent = '直しています…';
+    var back = function () { if (el.isConnected) { el.disabled = false; el.textContent = 'このページを付ける'; } };
+    setTimeout(function () {
+      scanFinish().then(function (ok) { if (ok && SCAN) scanStartLive(); else back(); }, back);
+    }, 30);
+  },
+  dropPhoto: function (el) {
+    var form = el.closest('form');
+    form._photos.splice(Number(el.dataset.i), 1);
+    drawPhotos(form);
+  },
+  viewPhoto: function (el) {
+    var form = el.closest('form'), id = el.dataset.id;
+    var p = (form._saved || []).filter(function (x) { return x['添付ID'] === id; })[0];
+    if (!p) return;
+    call('getPhoto', { id: id }).then(function (r) {
+      if (r.mimeType !== 'image/jpeg') { viewPdf(r, p, form); return; }
+      var src = safeImage('data:image/jpeg;base64,' + r.base64);
+      var canDelete = S.D.me.isAdmin || p['自分のもの'] === true;
+      var wrap = openModal('<header><h2>添付ファイル（写真） <span class="sub">' + esc(id) + '</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+        '<div class="body photo-view">' + (src ? '<img src="' + esc(src) + '" alt="写真 ' + esc(id) + '">' : '<p class="empty">画像を表示できませんでした。</p>') +
+        '<p class="note">' + esc(String(p['登録日時'])) + '　' + esc(p['登録者']) + '　' + esc(fileSizeText(p['サイズ'])) + '</p></div>' +
+        '<footer>' + (canDelete ? '<button type="button" class="btn danger" data-act="deletePhoto" data-id="' + esc(id) + '">この添付を削除</button>' : '') +
+        '<span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>');
+      wrap._photoForm = form;
+    }).catch(failToast);
+  },
+  scanPdfToggle: function (el) {
+    if (!SCAN) return;
+    if (SCAN.pages.length) { toast('撮りためたページがあります。先に「PDFにして付ける」を押してください。', true); return; }
+    SCAN.pdf = !SCAN.pdf; el.setAttribute('aria-pressed', String(SCAN.pdf));
+    $('scanCount').textContent = scanCountText();
+    toast(SCAN.pdf ? '撮ったページを、あとで1つのPDFにまとめます' : '1枚ずつ写真として付けます');
+  },
+  scanPdfMake: function (el) {
+    el.disabled = true; el.textContent = 'PDFを作っています…';
+    setTimeout(function () { scanPdfMake().then(function (ok) { if (ok) { var w = document.querySelector('.overlay.scanwrap'); if (w) { w._confirmed = true; closeModal(w.firstChild); } else closeScanner(); } else if (el.isConnected) { el.disabled = false; el.textContent = 'PDFにして付ける'; } }); }, 30);
+  },
+  deletePhoto: function (el) {
+    var view = el.closest('.overlay'), form = view._photoForm, id = el.dataset.id;
+    confirmDialog('添付を削除', 'この添付ファイルを削除します。ドライブのファイルはゴミ箱に入ります。', '削除する', true).then(function (yes) {
+      if (!yes) return;
+      call('deleteAttachment', { id: id }).then(function () {
+        view.remove();
+        if (form && form._saved) {
+          form._saved = form._saved.filter(function (x) { return x['添付ID'] !== id; });
+          var box = form.querySelector('.photos');
+          if (box) bumpPhotoCount(box.dataset.photokey, box.dataset.photoid, -1);
+          drawPhotos(form);
+        }
+        S.files = null; softRender();
+        toast('添付ファイルを削除しました');
+      }).catch(failToast);
+    });
+  },
+  pickLogo: function () { var input = $('logoFile'); if (input) input.click(); },
+  removeLogo: function () {
+    confirmDialog('ロゴを外す', 'ログイン画面・上の帯・お客様ページ・印刷から、ロゴを外します。', '外す', false).then(function (yes) {
+      if (!yes) return;
+      call('saveLogo', { dataUrl: '' }).then(function (r) { S.D.logo = r.logo; showBrand(); toast('ロゴを外しました'); render(); }).catch(failToast);
+    });
+  },
+  uploadAttachment: function (el) {
+    var input = $('attachFile');
+    var file = input && input.files && input.files[0];
+    if (!file) { toast('先にファイルを選んでください。', true); return; }
+    var ext = file.name.lastIndexOf('.') > 0 ? file.name.slice(file.name.lastIndexOf('.') + 1).toLowerCase() : '';
+    if (S.D.attachExtensions.indexOf(ext) === -1) { toast('この種類のファイルは添付できません。使えるのは ' + S.D.attachExtensions.join('・') + ' です。', true); return; }
+    if (file.size > S.D.attachMaxBytes) { toast('ファイルが大きすぎます。' + Math.floor(S.D.attachMaxBytes / 1024 / 1024) + 'MBまでにしてください。', true); return; }
+    var customerId = S.customerId;
+    el.disabled = true;
+    readFileBase64(file).then(function (base64) {
+      return call('uploadAttachment', { customerId: customerId, name: file.name, mimeType: file.type, base64: base64, visible: false });
+    }).then(function (r) {
+      if (S.files && S.files.customerId === customerId) S.files.list.unshift(r.attachment);
+      toast('添付しました');
+      var box = $('filesBox'); if (box && S.customerId === customerId) box.innerHTML = filesBoxHtml();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  toggleAttachment: function (el) {
+    el.disabled = true;
+    call('setAttachmentVisible', { id: el.dataset.id, visible: !el.dataset.on }).then(function (r) {
+      if (S.files) upsert(S.files.list, '添付ID', r.attachment);
+      $('filesBox').innerHTML = filesBoxHtml();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  deleteAttachment: function (el) {
+    var id = el.dataset.id;
+    var a = S.files ? S.files.list.filter(function (x) { return x['添付ID'] === id; })[0] : null;
+    confirmDialog('添付を削除', (a ? a['ファイル名'] : id) + ' を削除します。ドライブのファイルはゴミ箱に入ります。', '削除する', true).then(function (yes) {
+      if (!yes) return;
+      call('deleteAttachment', { id: id }).then(function () {
+        if (S.files) S.files.list = S.files.list.filter(function (x) { return x['添付ID'] !== id; });
+        toast('削除しました');
+        var box = $('filesBox'); if (box) box.innerHTML = filesBoxHtml();
+      }).catch(failToast);
+    });
+  },
+  printReport: function () {
+    if (!S.report || !S.report.data) { toast('レポートを読み込んでから押してください。', true); return; }
+    printHtml(reportHtml(S.report.data, S.reportNote));
+  },
+  saveNext: function (el) { submitRecordForm(el.closest('form'), true); },
+  menuGo: function (el) { closeModal(el); go(el.dataset.view); },
+  recordFor: function (el) {
+    var d = IDX.dev[el.dataset.device];
+    if (!d) return;
+    closeModal(el);
+    var preset = { '顧客ID': d['顧客ID'], '機器ID': d['機器ID'], lockCustomer: true };
+    if (el.dataset.key === 'repair') { preset['型番'] = d['機種名']; preset['シリアル'] = d['シリアル']; }
+    openForm(el.dataset.key, null, preset);
+  },
+  openDiagReport: function (el) {
+    el.disabled = true;
+    openDiagReport(el.dataset.id).then(function () { el.disabled = false; }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  printDiagReport: function (el) {
+    var f = el.closest('.overlay').querySelector('iframe.rptframe');
+    try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { toast('印刷できませんでした。レポートを右クリックして印刷してください。', true); }
+  },
+  showDiag: function (el) {
+    el.disabled = true;
+    call('getDeviceDiagnostics', { deviceId: el.dataset.id }).then(function (r) {
+      var box = $('diagBox');
+      if (!box) return;
+      var g = r.diagnostics;
+      if (!g) { box.innerHTML = '<span class="note">収集ツールからの情報は、まだ届いていません。</span>'; return; }
+      var order = ['受信日時', 'コンピューター名', 'IPアドレス', 'OS', 'CPU', 'メモリ', 'ストレージ', 'ディスク関連イベント', 'イベント重大', 'イベント重大（内容）', 'イベントエラー', 'イベントエラー（内容）',
+        'ウイルス対策ソフト', 'BitLocker', 'Windows Update', 'バッテリー状態', '稼働時間', 'クラッシュダンプ', '前回メンテナンス', 'Cドライブ空き', '前回との比較', 'スタートアップ', 'プリンター情報', 'メーカー（取得値）', '機種名（取得値）', 'シリアル', 'ツールバージョン'];
+      // 短い項目だけ並べ、長い項目（内容・比較・一覧など）は折りたたむ。詳しくは「レポートを見る」で（v0.78.0）
+      var have = order.filter(function (k) { return g[k] !== '' && g[k] !== undefined; });
+      var isLong = function (k) { var t = String(g[k]); return t.length > 40 || t.indexOf('\n') !== -1; };
+      box.innerHTML = '<div class="row"><b class="grow">収集ツールの情報</b>' + reportBtnHtml(g) + '</div><dl class="kv" style="margin-top:8px">' +
+        have.filter(function (k) { return !isLong(k); }).map(function (k) { return '<dt>' + esc(k) + '</dt><dd>' + esc(g[k]) + '</dd>'; }).join('') + '</dl>' +
+        have.filter(isLong).map(function (k) { return '<details class="diagmore"><summary>' + esc(k) + '</summary><pre>' + esc(g[k]) + '</pre></details>'; }).join('');
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  issueReceive: function (el) {
+    var run = function () {
+      call('issueReceiveToken', { customerId: S.customerId }).then(function (r) {
+        upsert(S.D.customers, '顧客ID', r.record); reindex();
+        $('receiverBox').innerHTML = receiverHtml(r.record);
+        showReceiveInfo({ issued: true, receiveToken: r.receiveToken, url: r.url, needsUrlSetting: r.needsUrlSetting });
+        toast('トークンを発行しました');
+      }).catch(failToast);
+    };
+    if (el.dataset.again) {
+      confirmDialog('トークンを作り直す', '作り直すと、いまのトークンを入れてある収集ツールからは届かなくなります。\nこの顧客のPCすべてで、ツールの設定を入れ直す必要があります。', '作り直す', true).then(function (yes) { if (yes) run(); });
+    } else run();
+  },
+  showReceive: function () { call('getReceiveInfo', { customerId: S.customerId }).then(showReceiveInfo).catch(failToast); },
+  copyById: function (el) { var t = $(el.dataset.target); if (t) copyText(t.textContent); },
+  pickerClear: function (el) {
+    var picker = el.closest('.picker'), form = el.closest('form');
+    picker.querySelector('input[type="hidden"]').value = '';
+    picker.querySelector('.picked').hidden = true;
+    var search = picker.querySelector('.pick-search');
+    search.hidden = false;
+    var box = search.querySelector('input'); box.value = '';
+    search.querySelector('.pick-list').innerHTML = pickListHtml('');
+    Array.prototype.forEach.call(form.querySelectorAll('select[data-dep]'), function (sel) { sel.dataset.touched = '1'; });
+    refreshDependents(form);
+    box.focus();
+  },
+
+  tileOpenActs: function () {
+    ['act.kind', 'act.inc', 'act.cust', 'act.staff', 'act.text'].forEach(function (k) { S.q[k] = ''; });
+    S.q['act.status'] = 'open'; perState('act').mode = 'all'; go('activities');
+  },
+  tileOpenReps: function () { S.q['rep.status'] = 'open'; S.q['rep.cust'] = ''; S.q['rep.text'] = ''; go('repairs'); },
+  clearFind: function () { S.q['home.find'] = ''; var i = $('q_home_find'); if (i) i.value = ''; refreshList(); },
+  actOpenTile: function () { S.q['act.status'] = q('act.status') === 'open' ? '' : 'open'; render(); },
+  qChip: function (el) { S.q[el.dataset.q] = el.dataset.v; refreshList(); },
+  toggleGroup: function (el) { S.q[el.dataset.q] = q(el.dataset.q) === '1' ? '' : '1'; render(); },
+  tipNext: function () {
+    S.tipIx = tipIndex() + 1;
+    var bar = $('tipsBar');
+    if (bar) bar.outerHTML = tipsBarHtml();
+  },
+  tipHide: function () { S.q['tips.hide'] = S.D.today; var bar = $('tipsBar'); if (bar) bar.remove(); rememberView(); },
+  help: function (el) {
+    var h = helpFor(el.dataset.view);
+    if (!h) return;
+    openModal('<header><h2>使い方：' + esc(h[0]) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<div class="body">' + manualHtml(el.dataset.view) + '<h3 style="font-size:14px;margin:14px 0 6px">ポイント</h3><ul class="help-list">' + h[1].map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
+      '<footer><span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>', true, true);
+  },
+  phrase: function (el) {
+    var form = el.closest('form'), ta = form && form.elements['内容'];
+    if (!ta) return;
+    var text = el.dataset.text, cur = ta.value.replace(/\s+$/, '');
+    ta.value = (cur ? cur + '\n' : '') + text;
+    var box = el.closest('details'); if (box) box.open = false;
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+  },
+  feedNow: function (el) {
+    el.disabled = true;
+    checkFeed().then(function () { el.disabled = false; });
+  },
+  winInfoShow: function (el) {
+    var id = el.dataset.id, next = el.dataset.on ? 'いいえ' : 'はい';
+    el.disabled = true;
+    call('saveWinInfo', { data: { '情報ID': id, '顧客に見せる': next } }, true).then(function (r) {
+      upsert(S.D.wininfo, '情報ID', r.record);
+      toast(next === 'はい' ? 'お客様ページに出します' : '社内だけにしました');
+      render();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  winInfoPin: function (el) {
+    var id = el.dataset.id, pin = !el.dataset.on;
+    el.disabled = true;
+    call('pinWinInfo', { id: id, pin: pin }, true).then(function (r) {
+      S.D.wininfoPins = r.pins || [];
+      toast(pin ? 'ピン留めしました（いちばん上に出しつづけます）' : 'ピンを外しました');
+      render();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  winInfoPaste: function () {
+    openModal('<header><h2>Windows情報をまとめて貼り付け</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<form data-form="wininfopaste" novalidate><div class="body"><p class="msg" hidden></p>' +
+      '<div class="field"><label for="wi_text">1行に1件</label><textarea id="wi_text" rows="9" placeholder="2026-10-02｜更新プログラム｜重要｜タイトル｜ひとこと｜https://…"></textarea>' +
+      '<span class="note">書き方：日付｜種類｜重要度｜タイトル｜内容｜リンク　（区切りは「｜」。内容とリンクは無くてもよい）<br>種類は「' + esc(S.D.schema.wininfo.fields.filter(function (f) { return f.name === '種類'; })[0].choices.join('・')) + '」、重要度は「通常・重要」。同じ日付・同じタイトルのものは、二重に登録しません。</span></div>' +
+      '</div><footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button><button type="submit" class="btn primary">登録する</button></footer></form>');
+  },
+  custClear: function () {
+    ['cust.contract', 'cust.region', 'cust.text'].forEach(function (k) { S.q[k] = ''; });
+    S.q['cust.state'] = '有効';
+    render();
+  },
+  perMode: function (el) { perState(el.dataset.per).mode = el.dataset.mode; render(); },
+  perShift: function (el) {
+    var p = perState(el.dataset.per), d = Number(el.dataset.d);
+    if (p.mode === 'week') p.week = addDays(p.week, d * 7); else if (p.mode === 'month') p.month = addMonths(p.month, d);
+    render();
+  },
+  perJump: function (el) {
+    var p = perState(el.dataset.per), today = S.D.today, to = el.dataset.to;
+    if (to === 'thisweek') p.week = mondayOf(today);
+    else if (to === 'lastweek') p.week = addDays(mondayOf(today), -7);
+    else if (to === 'thismonth') p.month = today.slice(0, 7);
+    else if (to === 'lastmonth') p.month = addMonths(today.slice(0, 7), -1);
+    else if (to === 'd30') { p.from = addDays(today, -29); p.to = today; }
+    else if (to === 'd90') { p.from = addDays(today, -89); p.to = today; }
+    else if (to === 'year') { p.from = today.slice(0, 4) + '-01-01'; p.to = today; }
+    render();
+  },
+  printActs: function () {
+    var f = actFiltered();
+    if (!f) { toast('読み込みが終わってから、もう一度押してください。', true); return; }
+    printHtml('<h1 class="ptitle">' + printLogoHtml() + '対応履歴　' + esc(f.range.title) + '　<small>' + esc(S.D.settings['自社名']) + '　' + esc(S.D.today) + ' 作成</small></h1>' + printFilterNote('act') +
+      '<div class="report-print stack">' + actReportHtml(f, { print: true }) + '</div>');
+  },
+  printReps: function () {
+    var f = repFiltered();
+    printHtml('<h1 class="ptitle">' + printLogoHtml() + '修理履歴　' + esc(f.range.title) + '　<small>' + esc(S.D.settings['自社名']) + '　' + esc(S.D.today) + ' 作成</small></h1>' + printFilterNote('rep') +
+      '<div class="report-print stack">' + repReportHtml(f, { print: true }) + '</div>');
+  },
+  noop: function () {},
+  setJump: function (el) { var t = $(el.dataset.to); if (t) t.scrollIntoView({ block: 'start', behavior: 'smooth' }); },
+  alertCat: function (el) { S.q['alert.cat'] = el.dataset.cat; render(); },
+  alertAll: function () { S.q['alert.all'] = q('alert.all') === '1' ? '' : '1'; render(); },
+  toggleFold: function (el, _p, e) {
+    var name = el.dataset.fold, panel = el.closest('.panel');
+    // 開いているときは、見出しを押したときだけ閉じる（一覧の余白を押しても閉じない）。閉じているときは、カードのどこを押しても開く（v0.47.0）
+    if (panel && panel.classList.contains('open') && e && e.target && !e.target.closest('h2')) return;
+    var now = !foldOpen(name);
+    S.fold = S.fold || {}; S.fold[name] = now;
+    if (panel) {
+      panel.classList.toggle('open', now);
+      var h = panel.querySelector(':scope > h2[data-fold]');
+      if (h) h.setAttribute('aria-expanded', String(now));
+    }
+  },
+  alertDone: function () { S.q['alert.done'] = q('alert.done') === '1' ? '' : '1'; render(); },
+  resolveAlert: function (el) {
+    el.disabled = true;
+    call('resolveAlert', { key: el.dataset.key }).then(function (r) { setAlerts(r.alerts); toast('対応済みにしました'); })
+      .catch(function (e) { el.disabled = false; failToast(e); if (e && e.error === 'notfound') { S.alertsStale = true; render(); } });
+  },
+  unresolveAlert: function (el) {
+    el.disabled = true;
+    call('unresolveAlert', { key: el.dataset.key }).then(function (r) { setAlerts(r.alerts); toast('要対応に戻しました'); })
+      .catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  openAlert: function (el) {
+    var a = S.alerts.filter(function (x) { return x.key === el.dataset.id; })[0];
+    if (!a) return;
+    if (a.targetType === 'customer') { S.creds = null; go('customer', { customerId: a.targetId, sub: 'activities' }); return; }
+    var rec = findRecord(a.targetType, a.targetId);
+    if (!rec && RECORD_GROUP[a.targetType] && !S.have[RECORD_GROUP[a.targetType]]) {
+      // 開く記録の種類のデータが、まだ届いていない。届いたら、もう一度開く
+      toast('読み込んでいます…');
+      ensureGroups([RECORD_GROUP[a.targetType]]).then(function () { if (S.D && S.have[RECORD_GROUP[a.targetType]]) ACT.openAlert(el); });
+      return;
+    }
+    if (rec) { if (window.__previewOff || !S.D.schema[a.targetType]) openForm(a.targetType, rec, null); else previewRecord(a.targetType, rec); }
+    else if (a.customerId) { S.creds = null; go('customer', { customerId: a.customerId, sub: 'activities' }); }   // 古くて一覧に読み込んでいない対応は、顧客の画面で見る
+  },
+  stopRelease: function (el) {
+    confirmDialog('配るのをやめる', '収集ツールは、このあと自動で更新しなくなります（入っているツールはそのまま動きます）。', 'やめる', true, '戻る').then(function (yes) {
+      if (!yes) return;
+      el.disabled = true;
+      call('saveToolRelease', { file: '' }).then(function () {
+        S.release = null; toast('配るのをやめました');
+        var box = $('releaseBox'); if (box) box.innerHTML = releaseHtml();
+      }).catch(function (e) { el.disabled = false; failToast(e); });
+    });
+  },
+  sendAlertMail: function (el) {
+    el.disabled = true;
+    call('sendAlertMailNow', {}).then(function (r) { el.disabled = false; toast('要対応 ' + r.count + '件を、通知先 ' + r.to + '件に送りました'); })
+      .catch(function (e) { el.disabled = false; failToast(e); });
+  },
+
+  openCustomer: function (el) { S.creds = null; S.files = null; S.report = null; S.reportNote = ''; go('customer', { customerId: el.dataset.id, sub: 'devices' }); },
+  newRecord: function (el) {
+    var preset = S.view === 'customer' ? { '顧客ID': S.customerId, lockCustomer: true } : null;
+    openForm(el.dataset.key, null, preset);
+  },
+  editRecord: function (el, key) {
+    var rec = findRecord(key, el.dataset.id);
+    if (!rec && !S.all && RECORD_GROUP[key] && !S.have[RECORD_GROUP[key]]) {
+      // その種類のデータが、まだ届いていない（要対応から開いたときなど）。届いたら開く
+      var wantId = el.dataset.id;
+      toast('読み込んでいます…');
+      ensureGroups([RECORD_GROUP[key]]).then(function () { if (S.D && S.have[RECORD_GROUP[key]] && findRecord(key, wantId)) ACT.editRecord({ dataset: { id: wantId } }, key); });
+      return;
+    }
+    if (!rec || rec._pending) return;                        // 返事を待っている記録（IDがまだ仮）は開かない
+    if (window.__previewOff || !S.D.schema[key]) openForm(key, rec, null); else previewRecord(key, rec);
+  },
+  editNow: function (el) {
+    var key = el.dataset.key, rec = findRecord(key, el.dataset.id);
+    if (!rec || rec._pending) return;
+    closeModal(el);
+    openForm(key, rec, null);
+  },
+  deleteRecord: function (el) {
+    var key = el.dataset.key, id = el.dataset.id, schema = S.D.schema[key];
+    var delMsg = key === 'device' ? id + '（仮受付のPC）を削除します。収集ツールの情報も一緒に消えます。\n同じPCがもう一度送ってくると、また仮受付に入ります。元には戻せません。\n（削除した内容は、変更履歴シートに残ります）' : id + ' を削除します。元には戻せません。\n（削除した内容は、変更履歴シートに残ります）';
+    confirmDialog(schema.label + 'を削除', delMsg, '削除する', true).then(function (yes) {
+      if (!yes) return;
+      var idField = schema.idField;
+      if (key === 'credential') {
+        // 認証情報は、返事を待ってから消す
+        call(DELETE_FN[key], { id: id }).then(function () {
+          if (S.creds) S.creds.list = S.creds.list.filter(function (c) { return c[idField] !== id; });
+          closeModal(el); toast('削除しました'); S.alertsStale = true; render();
+        }).catch(failToast);
+        return;
+      }
+      // ---- 先に画面から消す。サーバーでだめだったら、元の場所に戻す
+      var listNow = function () { return S.D[COLLECTION[key]]; };
+      var list = listNow();
+      var at = -1, rec = null;
+      for (var i = 0; i < list.length; i++) if (list[i][idField] === id) { at = i; rec = list[i]; break; }
+      var kept = { custActs: [], allocations: null, diag: null };
+      if (key === 'device' && S.D.diagnostics) { kept.diag = S.D.diagnostics; S.D.diagnostics = S.D.diagnostics.filter(function (g) { return g['機器ID'] !== id; }); }
+      if (at !== -1) list.splice(at, 1);
+      if (key === 'activity') {
+        S.D.activityTotal -= 1;
+        Object.keys(S.custActs).forEach(function (c) {
+          var l = S.custActs[c];
+          for (var j = l.length - 1; j >= 0; j--) if (l[j][idField] === id) kept.custActs.push([c, j, l.splice(j, 1)[0]]);
+        });
+      }
+      if (key === 'license') { kept.allocations = S.D.allocations; S.D.allocations = S.D.allocations.filter(function (a) { return a['ライセンスID'] !== id; }); }
+      reindex();
+      // 削除する記録の窓は、下書きに残さない（その記録の下書きがあれば、それも消す）
+      var dwrap = el.closest('.overlay');
+      if (dwrap) dwrap._noDraft = true;
+      draftsAll().forEach(function (d) { if (d.key === key && d.id === id) draftDropId(d.did); });
+      closeModal(el);
+      render();
+      call(DELETE_FN[key], { id: id }).then(function (r) {
+        if (!S.D) return;
+        if (key === 'activity') {
+          S.actRange = {};
+          (r.clearedRepairIds || []).forEach(function (rid) { var rep = findRecord('repair', rid); if (rep) rep['元の対応ID'] = ''; });
+        }
+        S.alertsStale = true;
+        if (PHOTO_LABEL[key]) { if (photoCount(key, id)) S.files = null; delete S.D.photoCounts[photoCountKey(key, id)]; }
+        toast('削除しました');
+        softRender();
+      }).catch(function (e) {
+        if (!S.D) return;
+        if (rec && at !== -1 && !listNow().some(function (r) { return r[idField] === id; })) listNow().splice(Math.min(at, listNow().length), 0, rec);
+        if (key === 'activity') {
+          S.D.activityTotal += 1;
+          kept.custActs.forEach(function (k) { if (S.custActs[k[0]]) S.custActs[k[0]].splice(Math.min(k[1], S.custActs[k[0]].length), 0, k[2]); });
+        }
+        if (kept.allocations) S.D.allocations = kept.allocations;
+        if (kept.diag) S.D.diagnostics = kept.diag;
+        reindex();
+        softRender();
+        if (e && e.error === 'unauthorized') return;
+        toast('削除できませんでした。' + ((e && e.message) || ''), true);
+      });
+    });
+  },
+
+  openAlloc: function (el) { openAlloc(el.dataset.id); },
+  addAlloc: function (el) {
+    el.disabled = true;
+    call('addAllocation', { licenseId: $('allocBody').dataset.license, deviceId: el.dataset.device }).then(function (r) {
+      S.D.allocations.push(r.allocation); reindex(); refreshAlloc();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  removeAlloc: function (el) {
+    el.disabled = true;
+    call('removeAllocation', { allocationId: el.dataset.id }).then(function (r) {
+      S.D.allocations = S.D.allocations.filter(function (a) { return a['割当ID'] !== r.id; }); reindex(); refreshAlloc();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+
+  revealCred: function (el) {
+    el.disabled = true;
+    call('revealCredential', { id: el.dataset.id }).then(function (r) {
+      if (!S.creds) return;
+      S.creds.shown[r.id] = { password: r.password, serialKey: r.serialKey };
+      $('credList').innerHTML = credentialsHtml();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+  hideCred: function (el) { delete S.creds.shown[el.dataset.id]; $('credList').innerHTML = credentialsHtml(); },
+  copyCred: function (el) {
+    var shown = S.creds && S.creds.shown[el.dataset.id];
+    if (shown) copyText(el.dataset.field === 'パスワード' ? shown.password : shown.serialKey);
+  },
+  editCred: function (el) {
+    var rec = findRecord('credential', el.dataset.id);
+    if (!rec) return;
+    el.disabled = true;
+    // 編集は今の値を見ながら行うので、先に中身を読み込む（表示と同じく変更履歴に残る）
+    call('revealCredential', { id: el.dataset.id }).then(function (r) {
+      el.disabled = false;
+      var full = {};
+      Object.keys(rec).forEach(function (k) { full[k] = rec[k]; });
+      full['パスワード'] = r.password; full['シリアルキー'] = r.serialKey;
+      openForm('credential', full, null);
+    }).catch(function (e) { el.disabled = false; failToast(e); });
+  },
+
+  issuePortal: function (el) {
+    var run = function () {
+      call('issuePortalToken', { customerId: S.customerId }).then(function (r) {
+        upsert(S.D.customers, '顧客ID', r.record); reindex();
+        $('portalBox').innerHTML = portalHtml(r.record);
+        showPortalUrl(r);
+        toast('URLを発行しました');
+      }).catch(failToast);
+    };
+    if (el.dataset.again) {
+      confirmDialog('URLを作り直す', '作り直すと、いまお客様に渡しているURLは使えなくなります。', '作り直す', true).then(function (yes) { if (yes) run(); });
+    } else run();
+  },
+  showPortalUrl: function () { call('getPortalUrl', { customerId: S.customerId }).then(showPortalUrl).catch(failToast); },
+  copyPortalUrl: function () { copyText($('portalUrlText').textContent); },
+
+  toggleOption: function (el) {
+    call('setOptionActive', { category: el.dataset.cat, value: el.dataset.value, active: el.dataset.active !== '1' }).then(function (r) {
+      S.D.options = r.options; keepScroll(render);
+    }).catch(failToast);
+  },
+  newStaff: function () { openStaffForm(null); },
+  editStaff: function (el) { openStaffForm((S.staff || []).filter(function (s) { return s['スタッフID'] === el.dataset.id; })[0]); },
+  resetStaff: function (el) {
+    var id = el.dataset.id;
+    confirmDialog('パスワード再設定', id + ' のパスワードを仮パスワードに戻します。\nこの人がいまログイン中なら、ログアウトされます。', '再設定する', false).then(function (yes) {
+      if (!yes) return;
+      call('resetStaffPassword', { staffId: id, remember: rememberNow() }).then(function (r) { tempPasswordDialog(id, r.tempPassword); }).catch(failToast);
+    });
+  },
+  copyTempPw: function () { copyText($('tempPw').textContent); }
+};
+
+// 「ひとこと」の吹き出し：メモのある行・カードにカーソルを当てると出る（v0.103.0）
+(function () {
+  var tip = null, cur = null;
+  var timer = 0;
+  function hide() { clearTimeout(timer); if (tip) { tip.remove(); tip = null; } cur = null; }
+  function hideLater() { clearTimeout(timer); timer = setTimeout(hide, 250); }
+  function place(x, y) {
+    if (!tip) return;
+    var w = tip.offsetWidth, h = tip.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+    var left = Math.min(Math.max(8, x + 14), vw - w - 8), top = y + 6;
+    if (top + h > vh - 8) top = Math.max(8, y - h - 12);
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+  }
+  function show(el, x, y) {
+    hide();
+    cur = el;
+    tip = document.createElement('div'); tip.id = 'memoTip'; tip.setAttribute('role', 'tooltip');
+    tip.innerHTML = linkify(el.getAttribute('data-memo'));
+    tip.classList.toggle('haslink', !!tip.querySelector('a'));
+    document.body.appendChild(tip);
+    place(x, y);
+  }
+  document.addEventListener('mouseover', function (e) {
+    var el = e.target.closest ? e.target.closest('[data-memo]') : null;
+    if (e.target.closest && e.target.closest('#memoTip')) { clearTimeout(timer); return; }
+    if (!el) { if (cur) (tip && tip.classList.contains('haslink') ? hideLater : hide)(); return; }
+    clearTimeout(timer);
+    if (el !== cur) show(el, e.clientX, e.clientY);
+  });
+  // スクロールで消えたあと、カーソルが動いたら、また出す
+  document.addEventListener('mousemove', function (e) {
+    if (tip) { if (!tip.classList.contains('haslink')) place(e.clientX, e.clientY); return; }
+    var el = e.target.closest ? e.target.closest('[data-memo]') : null;
+    if (el) show(el, e.clientX, e.clientY);
+  });
+  document.addEventListener('mouseleave', hide);
+  document.addEventListener('scroll', hide, true);
+  document.addEventListener('mousedown', function (e) { if (e.target.closest && e.target.closest('#memoTip')) return; hide(); });
+  document.addEventListener('focusin', function (e) {
+    var el = e.target.closest ? e.target.closest('[data-memo]') : null;
+    if (!el || el === cur) return;
+    var r = el.getBoundingClientRect();
+    show(el, r.left + 20, r.bottom - 10);
+  });
+  document.addEventListener('focusout', hide);
+})();
+document.addEventListener('click', function (e) {
+  if (e.target.closest && e.target.closest('a.ulink')) return;      // 文章の中のリンクは、そのまま開く（行の編集は開かない。v0.99.0）
+  var chip = e.target.closest('[data-chip]');
+  if (chip) {
+    var set = chip.closest('.chipset'), cform = chip.closest('form');
+    var hidden = cform.elements[set.dataset.chips];
+    var on = chip.getAttribute('aria-pressed') === 'true';
+    clearFormMsg(cform);
+    if (on && set.dataset.required) return;          // 必須の項目は、選び直しだけ（外せない）
+    hidden.value = on ? '' : chip.dataset.chip;
+    Array.prototype.forEach.call(set.querySelectorAll('[data-chip]'), function (b) { b.setAttribute('aria-pressed', String(!on && b === chip)); });
+    if (set.dataset.chips === '対象区分') {
+      Array.prototype.forEach.call(cform.querySelectorAll('select[data-dep]'), function (sel) { sel.dataset.touched = '1'; });
+      refreshDependents(cform);
+    }
+    return;
+  }
+  var pick = e.target.closest('[data-pick]');
+  if (pick) {
+    var picker = pick.closest('.picker'), pform = pick.closest('form');
+    picker.querySelector('input[type="hidden"]').value = pick.dataset.pick;
+    picker.querySelector('.picked b').textContent = custName(pick.dataset.pick);
+    picker.querySelector('.picked').hidden = false;
+    picker.querySelector('.pick-search').hidden = true;
+    clearFormMsg(pform);
+    Array.prototype.forEach.call(pform.querySelectorAll('select[data-dep]'), function (sel) { sel.dataset.touched = '1'; });
+    refreshDependents(pform);
+    var nextEl = pform.querySelector('select[data-dep]:not(:disabled), [data-chip], textarea');
+    if (nextEl) nextEl.focus();
+    return;
+  }
+  var tok = e.target.closest('[data-token]');
+  if (tok) {
+    var sug = tok.closest('.suggest');
+    var inputEl = tok.closest('form').elements[sug.dataset.suggest];
+    var list = splitTokens(inputEl.value), at = list.indexOf(tok.dataset.token);
+    if (at === -1) list.push(tok.dataset.token); else list.splice(at, 1);
+    inputEl.value = list.join('、');
+    tok.setAttribute('aria-pressed', String(at === -1));
+    return;
+  }
+  // 行の中のリンク（「開く」など）を押したときは、行を押した扱いにしない
+  var anchor = e.target.closest('a[href]');
+  if (anchor && !anchor.dataset.act) return;
+  var el = e.target.closest('[data-act]');
+  if (!el || el.disabled) return;
+  var parts = el.dataset.act.split(':');
+  var fn = ACT[parts[0]];
+  if (fn) fn(el, parts[1], e);
+});
+document.addEventListener('keydown', function (e) {
+  // Ctrl+K（Mac は ⌘K）：入力の欄に、リンクを入れる（v0.99.0）
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K') && e.target && e.target.matches && e.target.matches('textarea, input[type="text"]') &&
+      e.target.closest('form, .dialog') && !LINK_SKIP_NAMES[e.target.name] && !e.target.closest('[data-nolink]') && e.target.id !== 'askInput' && e.target.id !== 'linkLabel' && e.target.id !== 'linkUrl') {
+    e.preventDefault();
+    insertLinkInto(e.target);
+    return;
+  }
+  if (e.key === 'Escape' && $('modals').children.length) { closeModal(null); return; }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('[data-act="toggleFold"]')) { e.preventDefault(); e.target.click(); return; }
+  if (e.key === 'Enter' && e.target.matches && e.target.matches('tr.click')) e.target.click();
+  // レイアウト図：選んだ図形を、キーで消す・少し動かす。Ctrl+A で全部を選ぶ（文字を打っている間は効かせない）
+  if (L && L.edit && L.data && !$('modals').children.length && !(e.target.matches && e.target.matches('input, textarea, select'))) {
+    var move = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault();
+      L.sels = []; L.data.elements.forEach(function (x, i) { if (!x.lock && !x.hide) L.sels.push(i); }); L.pt = -1;
+      drawLayoutBox();
+    } else if (e.key === 'Escape' && L.sels.length) { ACT.layoutSelectNone(); }
+    else if (L.sels.length && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); ACT.layoutRemove(); }
+    else if (L.sels.length && move) {
+      e.preventDefault();
+      var picked = L.sels.map(function (i) { return L.data.elements[i]; }).filter(function (x) { return x && !x.lock; });
+      var origs = picked.map(layClone);
+      var wasSnap = L.snap; L.snap = true;            // キーは、いつも1マスずつ
+      var m = layGroupDelta(origs, move[0], move[1]);
+      L.snap = wasSnap;
+      if (!m[0] && !m[1]) return;
+      layoutPushUndo();
+      picked.forEach(function (x, n) { layShift(x, origs[n], m[0], m[1]); });
+      layoutChanged();
+    }
+  }
+  if (e.key === 'Enter' && e.target.dataset && e.target.dataset.picksearch) {
+    e.preventDefault();
+    var only = e.target.parentNode.querySelectorAll('[data-pick]');
+    if (only.length === 1) only[0].click();   // 候補が1件に絞れていたら、それを選ぶ
+  }
+});
+
+// 絞り込み
+function clearFormMsg(form) {
+  var m = form && form.dataset && form.dataset.form ? form.querySelector('.msg') : null;
+  if (m) m.hidden = true;
+}
+function onFilter(e) {
+  var t = e.target;
+  if (t.dataset && t.dataset.q) {
+    // 同じ値なら作り直さない。入力欄からカーソルが外れたときの change で一覧を作り直すと、
+    // そのとき押していた行が差し替わって、1回目のクリックが効かなくなる
+    if (q(t.dataset.q, null) === t.value) return;
+    S.q[t.dataset.q] = t.value;
+    if (t.dataset.q === 'project.mode') { render(); return; }
+    refreshList(); return;
+  }
+  if (t.dataset && (t.dataset.permonth || t.dataset.perfrom || t.dataset.perto)) {
+    if (e.type !== 'change') return;                 // 打っている途中では動かさない
+    var per = perState(t.dataset.permonth || t.dataset.perfrom || t.dataset.perto);
+    if (t.dataset.permonth) { if (/^\d{4}-\d{2}$/.test(t.value)) per.month = t.value; }
+    else if (isYmd(t.value)) { if (t.dataset.perfrom) per.from = t.value; else per.to = t.value; }
+    render();
+    return;
+  }
+  if (t.dataset && t.dataset.layprop && L.data && L.data.elements[L.sel]) {
+    var lp = t.dataset.layprop, lel = L.data.elements[L.sel];
+    var pick = lp === 'kind' || lp === 'deviceId';          // 選ぶ欄（種類・機器）は、選ぶたびに1回ぶん
+    if (pick && e.type !== 'change') return;
+    if (lp === 'kind' && !NET_KINDS[t.value]) return;
+    if (lp === 'deviceId' && t.value && !IDX.dev[t.value]) return;
+    if (pick) layoutPushUndo();
+    else if (L.textUndo !== L.sel) { layoutPushUndo(); L.textUndo = L.sel; }   // 1つの図形の文字を打っている間は、元に戻す1回ぶん
+    lel[lp === 'ip' || lp === 'note' || pick ? lp : 'text'] = t.value;
+    if (!L.dirty) { L.dirty = true; var saveBtn = document.querySelector('[data-act="layoutSave"]'); if (saveBtn) saveBtn.disabled = false; }
+    if (pick) drawLayoutBox(); else drawLayoutCanvas();
+    return;
+  }
+  if (t.dataset && t.dataset.reportnote) {
+    S.reportNote = t.value;
+    var sheet = $('reportSheet');
+    if (sheet && S.report && S.report.data) sheet.innerHTML = reportHtml(S.report.data, S.reportNote);
+    return;
+  }
+  if (e.type === 'input') clearFormMsg(t.form);
+  if (t.dataset && t.dataset.picksearch) {
+    t.parentNode.querySelector('.pick-list').innerHTML = pickListHtml(t.value);
+    return;
+  }
+  if (t.name === '預かり品' && t.form) {
+    var tokens = splitTokens(t.value);
+    Array.prototype.forEach.call(t.form.querySelectorAll('.suggest[data-suggest="預かり品"] [data-token]'), function (b) {
+      b.setAttribute('aria-pressed', String(tokens.indexOf(b.dataset.token) !== -1));
+    });
+  }
+}
+document.addEventListener('input', onFilter);
+document.addEventListener('input', function (e) {
+  if (e.target && e.target.id === 'setFind') { filterSettings(e.target.value); return; }
+  var t = e.target;
+  if (t && t.dataset && t.dataset.homeq) { S.homeQ = t.value; drawHomeHits(); }
+  if (t && t.dataset && t.dataset.pq) { var pst = pState(t.dataset.pq); pst.q = t.value; pst.n = P_STEP; pDraw(t.dataset.pq); }
+  if (t && t.dataset && t.dataset.mtgmemo) mtgState().memos[mtgMemoKey()] = t.value;
+  if (t && t.dataset && t.dataset.mmq) { S.mm.q = t.value; var box = $('mmCustList'); if (box) box.innerHTML = mmCustListHtml(); }
+  if (t && t.dataset && t.dataset.mmnote) S.mm.notes[t.dataset.mmnote] = t.value;
+});
+// 入力の途中の内容を、端末に下書きとして残す（打つ・選ぶ・押すのあと、少し待ってから）
+['input', 'change', 'click'].forEach(function (type) {
+  document.addEventListener(type, function (e) {
+    var form = e.target && e.target.closest ? e.target.closest('form[data-form]') : null;
+    if (form) draftLater(form);
+  });
+});
+// ページが隠れる・閉じられる前に、待っている下書きをすぐ書く（スマホは、ほかのアプリに切り替えるとページが捨てられることがある）
+document.addEventListener('toggle', function (e) {
+  var d = e.target;
+  if (d && d.matches && d.matches('details.setgrp') && d.dataset.g) S.setOpen[d.dataset.g] = d.open;
+}, true);
+window.addEventListener('pagehide', draftFlush);
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') draftFlush(); });
+document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (t && t.dataset && t.dataset.pjmove) { movePj(t.dataset.pjmove, t.value); return; }
+  if (t.dataset && (t.dataset.q || t.dataset.permonth || t.dataset.perfrom || t.dataset.perto || t.dataset.layprop)) { onFilter(e); return; }
+  if (t.dataset && t.dataset.photofile) { onPhotoFiles(t); return; }
+  if (t.dataset && t.dataset.attachfile) { onAttachFiles(t); return; }
+  if (t.dataset && t.dataset.scanfile) { var sf = t.files && t.files[0]; t.value = ''; scanUseFile(sf); return; }
+  if (t.id === 'logoFile') {
+    var logoFile = t.files && t.files[0];
+    t.value = '';
+    if (!logoFile) return;
+    shrinkLogo(logoFile).then(function (dataUrl) { return call('saveLogo', { dataUrl: dataUrl }); }).then(function (r) {
+      S.D.logo = r.logo; showBrand(); toast('ロゴを入れました'); render();
+    }).catch(failToast);
+    return;
+  }
+  if (t.id === 'layImage') {
+    var file = t.files && t.files[0];
+    if (!file) return;
+    if (['image/png', 'image/jpeg', 'image/gif', 'image/webp'].indexOf(file.type) === -1) { toast('背景に使える画像は PNG・JPEG・GIF・WebP です。', true); return; }
+    if (file.size > S.D.layoutImageMaxBytes) { toast('画像が大きすぎます。' + Math.floor(S.D.layoutImageMaxBytes / 1024 / 1024) + 'MBまでにしてください。', true); return; }
+    var layoutId = L.id;
+    readFileBase64(file).then(function (base64) { return call('saveLayoutImage', { layoutId: layoutId, mimeType: file.type, base64: base64 }); }).then(function (r) {
+      if (L.id !== layoutId) return;
+      L.data.imageBase64 = r.imageBase64; L.data.imageMimeType = r.imageMimeType; L.data.imageMissing = false;
+      var cur = L.list.filter(function (l) { return l['レイアウトID'] === layoutId; })[0]; if (cur) cur.hasImage = true;
+      toast('背景の画像を入れました'); drawLayoutBox(); measureLayoutImage();
+    }).catch(failToast);
+    return;
+  }
+  if (t.dataset && t.dataset.reportmonth) {
+    if (/^\d{4}-\d{2}$/.test(t.value) && t.value <= S.D.today.slice(0, 7)) { S.reportMonth = t.value; $('reportBox').innerHTML = reportBoxHtml(); loadReport(); }
+    return;
+  }
+  var form = t.form;
+  if (form && form.dataset.form && S.D.schema[form.dataset.form]) {
+    if (t.dataset.dep) t.dataset.touched = '1';
+    if (t.name === '対象区分') {
+      Array.prototype.forEach.call(form.querySelectorAll('select[data-dep]'), function (sel) { sel.dataset.touched = '1'; });
+      refreshDependents(form);
+    }
+    // 修理：機器を選んだら、空いている型番とシリアルを台帳から入れる
+    if (t.name === '機器ID' && form.dataset.form === 'repair' && IDX.dev[t.value]) {
+      var picked = IDX.dev[t.value];
+      if (form.elements['型番'] && !form.elements['型番'].value) form.elements['型番'].value = picked['機種名'] || '';
+      if (form.elements['シリアル'] && !form.elements['シリアル'].value) form.elements['シリアル'].value = picked['シリアル'] || '';
+    }
+  }
+});
+
+document.addEventListener('submit', function (e) {
+  var form = e.target;
+  if (form.id === 'loginForm') return;
+  e.preventDefault();
+  if (form.classList.contains('settings-form')) {
+    var values = {};
+    Array.prototype.forEach.call(form.querySelectorAll('[data-setting]'), function (el) { values[el.dataset.setting] = el.value; });
+    var catBoxes = form.querySelectorAll('input[data-alertcat]');
+    if (catBoxes.length) values['要対応に出さない種類'] = Array.prototype.filter.call(catBoxes, function (x) { return !x.checked; }).map(function (x) { return x.dataset.alertcat; }).join(',');
+    call('saveSettings', { values: values }).then(function (r) {
+      var D = S.D;
+      D.settings = r.settings;
+      D.licenseWarnDays = Number(r.settings['ライセンス期限の手前日数']);
+      D.warrantyWarnDays = Number(r.settings['保証期限の手前日数']);
+      D.canReveal = D.me.isAdmin || r.settings['スタッフに認証情報を見せる'] !== 'いいえ';
+      showBrand();
+      D.rentalOn = r.settings['レンタル機器を使う'] !== 'いいえ';
+      D.bizOn = r.settings['営業・案件ツール（テスト版）を使う'] !== 'いいえ';
+      D.repairLongDays = Number(r.settings['修理の長期化の日数']) || 0;
+      if (!D.me.startView) D.startView = START_KEY[r.settings['開いた直後の画面']] ? r.settings['開いた直後の画面'] : D.startViews[0];
+      S.alertsStale = true; S.files = null; S.cal = null;
+      // RSS の設定を保存したときの表示（読みにいくのは、毎朝の処理か「いますぐ更新」）
+      D.feed = { rss: { on: r.settings['RSSで自動取得する'] !== 'いいえ' && r.settings['Windows情報を取り込む'] !== 'いいえ', status: D.feed && D.feed.rss ? D.feed.rss.status : null }, hours: (function (h) { h = parseInt(h, 10); return h >= 1 && h <= 6 ? h : 6; })(r.settings['配信を確かめる間隔（時間）']) };
+      toast(form.dataset.done); render();
+    }).catch(failToast);
+    return;
+  }
+  if (form.id === 'releaseForm') {
+    var btn = form.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    call('saveToolRelease', { file: $('relFile').value, version: $('relVersion').value, notes: $('relNotes').value }).then(function (r) {
+      S.release = r.release || null; if (r.release) toast('v' + r.release.version + ' を登録しました');
+      var box = $('releaseBox'); if (box) box.innerHTML = releaseHtml();
+    }).catch(function (e) { btn.disabled = false; failToast(e); });
+    return;
+  }
+  if (form.classList.contains('optform')) {
+    var value = form.querySelector('.optvalue').value;
+    call('addOption', { category: form.dataset.cat, value: value }).then(function (r) {
+      S.D.options = r.options; toast('足しました'); keepScroll(render);
+    }).catch(failToast);
+    return;
+  }
+  var kind = form.dataset.form;
+  var msg = form.querySelector('.msg');
+  var showErr = function (err) { if (err && err.error === 'unauthorized') return; msg.textContent = (err && err.message) || 'うまくいきませんでした。'; msg.hidden = false; };
+  if (kind === 'staff') {
+    var isNew = form.dataset.new === '1';
+    var data = { 'スタッフID': form.elements['スタッフID'].value, '表示名': form.elements['表示名'].value, '権限': form.elements['権限'].value, '有効': form.elements['有効'].value };
+    call('saveStaff', { isNew: isNew, data: data }).then(function (r) {
+      closeModal(form);
+      if (S.staff) upsert(S.staff, 'スタッフID', r.staff);
+      S.D.staffNames = (S.staff || []).filter(function (s) { return s['有効'] === 'はい'; }).map(function (s) { return s['表示名']; });
+      render();
+      if (r.tempPassword) tempPasswordDialog(r.staff['スタッフID'], r.tempPassword); else toast('保存しました');
+    }).catch(showErr);
+    return;
+  }
+  if (kind === 'printcustomer') {
+    var popt = {};
+    ['info', 'devices', 'licenses', 'layouts', 'gone', 'notes'].forEach(function (n) { popt[n] = form.querySelector('[name="' + n + '"]').checked; });
+    if (!popt.info && !popt.devices && !popt.licenses && !popt.layouts) { showErr({ message: '印刷するものを、1つは選んでください。' }); return; }
+    var pid = S.customerId;
+    var submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    (popt.layouts ? loadLayoutsForPrint(pid) : Promise.resolve([])).then(function (layouts) {
+      if (S.customerId !== pid || !IDX.cust[pid]) return;
+      if (popt.layouts && !layouts.length && !popt.info && !popt.devices && !popt.licenses) { submitBtn.disabled = false; showErr({ message: 'この顧客には、レイアウト図がまだありません。' }); return; }
+      closeModal(form);
+      printHtml(customerPrintHtml(pid, popt, layouts));
+    }).catch(function (e) { submitBtn.disabled = false; showErr(e); });
+    return;
+  }
+  if (kind === 'wininfopaste') {
+    var pasteBtn = form.querySelector('button[type="submit"]');
+    if (pasteBtn.disabled) return;
+    pasteBtn.disabled = true;
+    // 送った時点の行（返事の行番号は、これに対するもの）
+    var lines = $('wi_text').value.split(/\r?\n/).map(function (l) { return l.trim(); }).filter(function (l) { return l && l.charAt(0) !== '#'; });
+    call('importWinInfo', { text: lines.join('\n') }).then(function (r) {
+      pasteBtn.disabled = false;
+      S.D.wininfo = r.wininfo;
+      if (r.errors.length) {
+        // 読めなかった行だけを残して、理由を出す（直して、もう一度「登録する」）
+        $('wi_text').value = r.errors.map(function (e) { return lines[e.line - 1] || ''; }).join('\n');
+        showErr({ message: r.added + '件を登録しました' + (r.skipped ? '（登録済み ' + r.skipped + '件は飛ばしました）' : '') + '。読めなかった ' + r.errors.length + '行を残しています：' + r.errors.map(function (e) { return e.message; }).filter(function (m, i, all) { return all.indexOf(m) === i; }).join(' ／ ') });
+        S.renderPending = true;
+        return;
+      }
+      closeModal(form);
+      toast(r.added + '件を登録しました' + (r.skipped ? '（登録済み ' + r.skipped + '件は飛ばしました）' : ''));
+      render();
+    }).catch(function (e) { pasteBtn.disabled = false; showErr(e); });
+    return;
+  }
+  if (kind === 'myprefs') {
+    call('saveMyStartView', { startView: $('my_start').value }).then(function (r) {
+      var D = S.D;
+      D.me.startView = r.startView;
+      S.q['pref.confirm'] = $('my_confirm').value;
+      S.q['pref.intro'] = $('my_intro').value;
+      var picked = []; [0, 1, 2, 3].forEach(function (i) { var v = $('my_b' + i).value; if (v && picked.indexOf(v) === -1) picked.push(v); });
+      S.q['pref.bnav'] = picked.join(','); sendView(); render();
+      D.startView = r.startView || (START_KEY[D.settings['開いた直後の画面']] ? D.settings['開いた直後の画面'] : D.startViews[0]);
+      closeModal(form); toast('保存しました。次に開いたときは「' + D.startView + '」から始まります');
+    }).catch(showErr);
+    return;
+  }
+  if (kind === 'password') {
+    if ($('pw_new').value !== $('pw_new2').value) { showErr({ message: '新しいパスワードが2回で違っています。' }); return; }
+    call('changeMyPassword', { current: $('pw_cur').value, next: $('pw_new').value, remember: rememberNow(), ticket: S.ticket || '', keep: keepGet(KEEP_CHOICE_KEY) === '1' }).then(function (r) {
+      if (r && r.resume) { urlTicketWrite(r.resume); ticketAt = Date.now(); }
+      closeModal(form); toast('パスワードを変更しました');
+    }).catch(showErr);
+    return;
+  }
+  if (S.D && S.D.schema[kind]) submitRecordForm(form, false);
+});
+
+// ===========================================================================
+// 起動
+// ===========================================================================
+(function start() {
+  showBrand();
+  var saved = '';
+  try { saved = sessionStorage.getItem(TOKEN_KEY) || ''; } catch (e) { saved = ''; }
+  fillLoginForm();
+  if (/^[0-9a-f]{64}$/.test(saved)) {
+    // セッションが切れていたら、call() の中で自動ログイン（覚えてあれば）かログイン画面に進む
+    // URLの券を先に読んでから始める（読む前に終わってログイン画面になると、古い券が残るため）
+    urlTicketRead(function (t) {
+      S.ticket = t;
+      boot(saved).catch(function () { if (!autoBusy && !resumeBusy && !autoLogin()) toLogin(''); });
+    });
+  } else {
+    // 画面の中の保存が使えない・消えていたら、URLの券で戻す（v0.19.0）
+    urlTicketRead(function (ticket) {
+      if (ticket) { resumeFromTicket(ticket); return; }
+      if (!autoLogin()) { toLogin(''); ($('loginId').value ? $('loginPw') : $('loginId')).focus(); }
+    });
+  }
+})();
+</script>
+
+<script>
+/** 選んでいる図形の「ロック」「隠す」を、まとめて入れ替える（全部が入っていたら外す。回線は対象外） */
+function layoutFlag(key) {
+  var list = L.data.elements, ids = L.sels.filter(function (i) { return list[i] && list[i].type !== 'link'; });
+  if (!ids.length) return;
+  var allOn = ids.every(function (i) { return list[i][key]; });
+  layoutPushUndo();
+  ids.forEach(function (i) { if (allOn) delete list[i][key]; else list[i][key] = true; });
+  layoutChanged();
+  toast(key === 'lock' ? (allOn ? 'ロックを外しました' : 'ロックしました。図の上では動かせません（一覧から外せます）') : (allOn ? '表示しました' : '隠しました。編集の画面には薄く出ます'));
+}
+</script>

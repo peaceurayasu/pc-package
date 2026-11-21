@@ -1,6 +1,7 @@
 // サーバー側（.gs）の、Google のサービスを使わない部分のテスト。実行：npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, existsSync } from 'node:fs';
 import { loadGas } from './gas.mjs';
 
 const G = loadGas();
@@ -96,41 +97,6 @@ test('画面の状態：cleanViewState_ は決めた形だけ残す', () => {
   assert.deepEqual(plain(G.cleanViewState_('壊れた値')), { q: {}, sort: {}, per: {} });
 });
 
-test('配信ファイル：INFO・TIP・コメント・不正な行を分ける', () => {
-  const r = plain(G.parseFeed_([
-    '﻿# コメント',
-    'INFO｜2026-10-04｜更新プログラム｜重要｜KB0000 で印刷できない｜回避策あり｜https://example.com/a',
-    '2026-10-05|ドライバー|通常|タイトルだけ',
-    'TIP｜Win + V｜クリップボードの履歴',
-    'TIP｜見出しだけ',
-    'INFO｜足りない',
-    '',
-    'x'.repeat(2000)
-  ].join('\r\n')));
-  assert.equal(r.infos.length, 2);
-  assert.deepEqual(r.infos[0], { '日付': '2026-10-04', '種類': '更新プログラム', '重要度': '重要', 'タイトル': 'KB0000 で印刷できない', '内容': '回避策あり', 'リンク': 'https://example.com/a' });
-  assert.equal(r.infos[1]['種類'], 'ドライバー');
-  assert.deepEqual(r.tips, [['Win + V', 'クリップボードの履歴']]);
-  assert.equal(r.bad, 3);
-});
-
-test('配信ファイル：知らない種類・重要度は「その他」「通常」にし、長いタイトルは切る', () => {
-  const r = plain(G.parseFeed_('2026-10-05|ふしぎ|超重要|' + 'あ'.repeat(80)));
-  assert.equal(r.infos[0]['種類'], 'その他');
-  assert.equal(r.infos[0]['重要度'], '通常');
-  assert.equal(r.infos[0]['タイトル'].length, 60);
-});
-
-test('ドライブのURL・IDから、フォルダー・ファイルのIDを取り出す', () => {
-  const id = '1AbCdEfGhIjKlMnOpQrStUv';
-  assert.equal(G.feedFolderId_('https://drive.google.com/drive/folders/' + id + '?usp=sharing'), id);
-  assert.equal(G.feedFolderId_(id), id);
-  assert.equal(G.feedFolderId_('https://example.com/'), '');
-  assert.equal(G.releaseFileId_('https://drive.google.com/file/d/' + id + '/view'), id);
-  assert.equal(G.releaseFileId_('https://drive.google.com/open?id=' + id), id);
-  assert.equal(G.releaseFileId_('短い'), '');
-});
-
 test('収集ツール：使えないシリアルを見分ける', () => {
   for (const s of ['', 'abc', 'Default string', 'To be filled by O.E.M.', '0000000', '取得失敗', 'System Serial Number']) assert.equal(G.isJunkSerial_(s), true, s);
   assert.equal(G.isJunkSerial_('5CD1234XYZ'), false);
@@ -187,21 +153,6 @@ test('要対応：「対応済み」は、判定値が同じで、再表示日�
   assert.equal(G.isAlertResolved_(alert, null, settings, '2026-10-02'), false);
 });
 
-test('PCの健康チェック：収集ツールの値から、気になることを拾う', () => {
-  const opt = { today: '2026-10-31', freeMin: 20, staleDays: 45 };
-  const issues = plain(G.healthIssues_({
-    'Cドライブ空き': '8.5', 'ディスク関連イベント': '■ EventID 7', 'バッテリー状態': '劣化状況: 設計容量比 72%',
-    'Windows Update': '保留中の更新: 6 件\n最終更新（2026/08/01）', 'クラッシュダンプ': 'クラッシュダンプ 2件検出',
-    '前回との比較': '・メモリ 16GB → 8GB\n・スタートアップ +1', '受信日時': '2026-09-01 10:00'
-  }, opt));
-  const texts = issues.map((i) => i.level + ':' + i.text);
-  assert.deepEqual(texts, [
-    'danger:Cドライブの空きが 8.5GB', 'danger:ディスクに異常の記録', 'warn:バッテリーの劣化（72%）', 'warn:更新が 6件たまっている',
-    'warn:Windows Update が 91日 当たっていない', 'warn:ブルースクリーンの記録', 'warn:前回より：メモリ 16GB → 8GB', 'warn:収集ツールの情報が 60日 届いていない'
-  ]);
-  assert.deepEqual(plain(G.healthIssues_({ 'Cドライブ空き': '120', 'クラッシュダンプ': 'クラッシュダンプなし', '受信日時': '2026-10-30 08:00' }, opt)), []);
-});
-
 test('月次レポート：月の指定を確かめ、月末を出す', () => {
   assert.equal(G.monthEnd_('2026-02'), '2026-02-28');
   assert.equal(G.monthEnd_('2028-02'), '2028-02-29');
@@ -235,22 +186,6 @@ test('レイアウト図：知らない種類・ほかの顧客の機器は捨�
   }
 });
 
-test('変更履歴の保管：頭から続けて古い行だけを数える', () => {
-  const stamps = ['2025-01-01 09:00', '2025-06-30 23:59', '2025-07-01 00:00', '2024-12-31 10:00'];
-  assert.equal(G.auditOldCount_(stamps, '2025-07-01', 100), 2);     // 新しい行で止まる（その後ろの古い行は数えない）
-  assert.equal(G.auditOldCount_(stamps, '2025-07-01', 1), 1);       // 上限
-  assert.equal(G.auditOldCount_(['', '2020-01-01 00:00'], '2025-07-01', 100), 0);   // 日時の無い行で止まる
-  assert.equal(G.auditOldCount_([], '2025-07-01', 100), 0);
-});
-
-test('変更履歴の保管：残す日数の設定を読む', () => {
-  assert.equal(G.auditKeepDays_({ '変更履歴を残す日数': '365' }), 365);
-  assert.equal(G.auditKeepDays_({ '変更履歴を残す日数': '0' }), 0);
-  assert.equal(G.auditKeepDays_({ '変更履歴を残す日数': 'だめ' }), 0);
-  assert.equal(G.auditKeepDays_({ '変更履歴を残す日数': '999999' }), 36500);
-  assert.equal(G.auditKeepDays_({}), 0);
-});
-
 test('設定の既定値と、画面から変えられる種類が食い違っていない', () => {
   const keys = new Set(plain(G.SETTING_DEFAULTS).map((d) => d[0]));
   for (const k of Object.keys(plain(G.SETTING_TYPES))) assert.ok(keys.has(k), '既定値が無い設定：' + k);
@@ -262,4 +197,67 @@ test('キャッシュの部品：もとになるシートは、どれも実在�
     for (const s of sheets) assert.ok(order.has(s), part + ' → ' + s);
   }
   for (const name of order) assert.ok(plain(G.SCHEMA)[name], '列の定義が無いシート：' + name);
+});
+
+
+test('ドライブのURL・IDから、ファイルのIDを取り出す（収集ツールの配布）', () => {
+  const id = '1AbCdEfGhIjKlMnOpQrStUv';
+  assert.equal(G.releaseFileId_('https://drive.google.com/file/d/' + id + '/view'), id);
+  assert.equal(G.releaseFileId_('https://drive.google.com/open?id=' + id), id);
+  assert.equal(G.releaseFileId_(id), id);
+  assert.equal(G.releaseFileId_('短い'), '');
+});
+
+test('RSS：記事の文字から、タグ・CDATA・文字参照を取りのぞく', () => {
+  assert.equal(G.rssText_('<![CDATA[<p>Windows &amp; Office</p>]]>'), 'Windows & Office');
+  assert.equal(G.rssText_('&lt;b&gt;太字&lt;/b&gt;'), '太字');
+  assert.equal(G.rssText_('&#x30C6;&#12473;&#x30C8;'), 'テスト');
+  assert.equal(G.rssText_(null), '');
+});
+
+test('RSS：RSS 2.0 と Atom の記事を読み、日付の読めない記事と https 以外のリンクは捨てる', () => {
+  const rss = '<rss><channel>' +
+    '<item><title>KB5001234 で印刷できない</title><link>https://example.com/a</link><pubDate>Mon, 03 Nov 2026 10:00:00 +0900</pubDate><description>回避策あり</description></item>' +
+    '<item><title>日付なし</title><link>https://example.com/b</link></item>' +
+    '<item><title>http のリンク</title><link>http://example.com/c</link><pubDate>Tue, 04 Nov 2026 09:00:00 +0900</pubDate></item>' +
+    '</channel></rss>';
+  const items = plain(G.parseRss_(rss));
+  assert.equal(items.length, 2);
+  assert.equal(items[0].title, 'KB5001234 で印刷できない');
+  assert.equal(items[0].date, '2026-11-03');
+  assert.equal(items[0].link, 'https://example.com/a');
+  assert.equal(items[1].link, '');
+  const atom = plain(G.parseRss_('<feed><entry><title>Atom の記事</title><link rel="alternate" href="https://example.com/x"/><updated>2026-11-05T01:00:00Z</updated></entry></feed>'));
+  assert.equal(atom.length, 1);
+  assert.equal(atom[0].link, 'https://example.com/x');
+});
+
+test('RSS：記事の種類を決める', () => {
+  assert.equal(G.rssKind_('Intel のドライバー更新'), 'ドライバー');
+  assert.equal(G.rssKind_('KB5001234 を配信'), '更新プログラム');
+  assert.equal(G.rssKind_('新しいノートPCが発売'), 'その他');
+});
+
+test('ファイルの版：FILE_MANIFEST のファイルが全部あり、中の版の印と一致する（差し替え漏れ・古いファイルの混入を見つける）', () => {
+  const manifest = plain(G.FILE_MANIFEST);
+  assert.ok(Object.keys(manifest).length > 0);
+  const versions = plain(G.FILE_VERSIONS_);
+  for (const [name, want] of Object.entries(manifest)) {
+    assert.ok(existsSync(name), name + ' が無い');
+    const got = name.endsWith('.gs') ? versions[name] : ((/@file-version (\d+\.\d+\.\d+)/.exec(readFileSync(name, 'utf8')) || [])[1]);
+    assert.equal(got, want, name + ' の版が FILE_MANIFEST と違う');
+  }
+  // FILE_MANIFEST の版の、いちばん新しいものが APP_VERSION
+  const newest = Object.values(manifest).sort((a, b) => a.split('.').map(Number).reduce((r, v, i) => r || v - b.split('.').map(Number)[i], 0)).pop();
+  assert.equal(G.APP_VERSION, newest);
+});
+
+test('管理画面：Admin.html が読み込む部品は、どれも実在し、中に <? が入っていない', () => {
+  const admin = readFileSync('Admin.html', 'utf8');
+  const used = [...admin.matchAll(/<\?!= include_\('(\w+)'\) \?>/g)].map((m) => m[1]);
+  assert.ok(used.includes('AdminCss') && used.includes('AdminCore'));
+  for (const name of used) {
+    assert.ok(existsSync(name + '.html'), name + '.html が無い');
+    assert.ok(!readFileSync(name + '.html', 'utf8').includes('<?'), name + '.html の中に <? があると、そのまま画面に出てしまう');
+  }
 });

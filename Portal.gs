@@ -6,6 +6,7 @@
  * - 何を見せるかは、顧客ごとの「ポータル表示」で選ぶ（お知らせだけは、公開していれば常に出す）
  * - 公開関数：getPortalData / getPortalLayout / getPortalReport
  */
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Portal.gs'] = '0.111.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function pick_(row, names) {
   const out = {};
@@ -122,6 +123,12 @@ function getPortalData(params) {
           return { name: r['ファイル名'], size: r['サイズ'], date: String(r['登録日時']).slice(0, 10), url: 'https://drive.google.com/file/d/' + r['DriveファイルID'] + '/view' };
         }).reverse();
     }
+    if (tabs.indexOf('開発') !== -1) {
+      // 「お客様に見せる」にした開発案件だけ（テスト版。v0.81.0）
+      out.projects = readTable_(SHEET_PROJECTS).rows.filter(function (r) { return mine(r) && r['お客様に見せる'] === YES; })
+        .sort(function (a, b) { return compareDesc_(String(a['登録日時']), String(b['登録日時'])); })
+        .map(function (r) { return pick_(r, ['案件名', '種類', '状態', '納期', '次にやること', 'WebアプリのURL']); });
+    }
     if (tabs.indexOf('レポート') !== -1) out.reportMonths = portalReportMonths_(customer);
     return out;
   });
@@ -145,6 +152,10 @@ function getPortalLayout(params) {
     const full = layoutPayload_(row);
     const elements = [];
     full.elements.forEach(function (el) {
+      if (el.type === 'net') {       // 幹線図の記号：IP・メモ・機器との結びつきは、お客様ページには渡さない（名前と種類だけ）
+        elements.push({ type: 'net', id: el.id, kind: el.kind, x: el.x, y: el.y, size: el.size, text: el.text });
+        return;
+      }
       if (el.type !== 'pin') { elements.push(el); return; }
       const d = label[String(el.deviceId)];
       if (d) elements.push({ type: 'pin', x: el.x, y: el.y, label: d.text, kind: d.kind });

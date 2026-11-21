@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
+<meta name="file-version" content="@file-version 0.122.0">
 <head>
 <meta charset="utf-8">
 <base target="_top">
@@ -58,7 +59,7 @@ td.body { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 220px; }
 .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 7px 14px; min-height: 38px; }
 select { font: inherit; border: 1px solid #c3ccd6; border-radius: 6px; padding: 7px 10px; background: var(--panel); min-height: 38px; }
 /* レイアウト図（管理画面と同じ描き方） */
-.lay-canvas { position: relative; width: 100%; aspect-ratio: 4 / 3; border: 1px solid #c3ccd6; background: #fff; overflow: hidden; container-type: inline-size; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.lay-canvas { position: relative; width: 100%; aspect-ratio: 4 / 3; border: 1px solid #c3ccd6; background: #fff; overflow: hidden; container-type: inline-size; isolation: isolate; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .lay-canvas > img.lay-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
 .lay-canvas > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .lay-el { position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center; text-align: center; color: #18222d; line-height: 1.25; font-size: 1.3cqw; }
@@ -71,6 +72,18 @@ select { font: inherit; border: 1px solid #c3ccd6; border-radius: 6px; padding: 
 .lay-el.t-counter { border: 0.18cqw solid #5b6876; background-color: #e9edf2; border-radius: 1.2cqw; }
 .lay-el.t-copier { border: 0.18cqw solid #3d4854; background-color: #d5dbe2; border-radius: 0.5cqw; box-shadow: inset 0 0.9cqw 0 #aab4bf; }
 .lay-el.t-text { white-space: nowrap; justify-content: flex-start; }
+.lay-el.t-pin.k-net { background: #b36b00; }
+.lay-el.t-pin.k-srv { background: #3d4854; }
+.lay-el.t-pin.k-prn { background: #7a5c2e; }
+.lay-el.t-net { transform: translate(-50%, -50%); flex-direction: column; white-space: nowrap; gap: 0.12em; }
+.lay-el.t-net .nb { background: var(--nc, #5b6876); color: #fff; font-weight: 700; border-radius: 0.35em; padding: 0.28em 0.65em; min-width: 2.2em; text-align: center; line-height: 1.1; border: 0.08em solid rgba(255, 255, 255, .75); box-shadow: 0 0.1em 0.25em rgba(20, 30, 42, .3); }
+.lay-el.t-net .nn { font-size: 0.62em; font-weight: 600; background: rgba(255, 255, 255, .88); padding: 0 0.3em; border-radius: 0.3em; }
+.lay-linklabel { position: absolute; transform: translate(-50%, -50%); font-size: 1.15cqw; line-height: 1.3; background: rgba(255, 255, 255, .92); padding: 0 0.5cqw; border: 1px solid #c3ccd6; border-radius: 0.4cqw; white-space: nowrap; pointer-events: none; color: #18222d; }
+.lay-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 8px 2px 0; font-size: 12px; line-height: 1.4; color: #3d4854; }
+.lay-legend[hidden] { display: none; }
+.lay-legend .lk { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.lay-legend svg.sw { width: 30px; height: 8px; flex: none; overflow: visible; }
+.lay-legend .nbk { display: inline-block; min-width: 30px; text-align: center; color: #fff; font-weight: 700; border-radius: 4px; padding: 0 4px; font-size: 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .lay-el.t-icon { flex-direction: column; transform: translate(-50%, -50%); white-space: nowrap; }
 .lay-el.t-icon small { font-size: 1.2cqw; }
 .lay-el.t-pin { transform: translate(-50%, -50%); background: var(--brand); color: #fff; border-radius: 999px; padding: 0.3cqw 1cqw; white-space: nowrap; font-weight: 600; }
@@ -185,6 +198,18 @@ function esc(v) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
 }
+/** [表示名](https://…) と https://… を押せるリンクにする。ほかの文字は、そのまま文字として出す */
+function linkify(text) {
+  var s = String(text === null || text === undefined ? '' : text), out = '', last = 0, m;
+  var re = /\[([^\]\n]{1,80})\]\((https?:\/\/[^\s)]{1,500})\)|(https?:\/\/[^\s<>"'）」』]{1,500})/g;
+  while ((m = re.exec(s))) {
+    var url = m[2] || m[3], tail = '';
+    if (!m[2]) { var t = /[.,;:!?、。]+$/.exec(url); if (t) { tail = t[0]; url = url.slice(0, -tail.length); } }
+    out += esc(s.slice(last, m.index)) + '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + esc(m[1] || url) + '</a>' + esc(tail);
+    last = m.index + m[0].length;
+  }
+  return out + esc(s.slice(last));
+}
 function pill(text, kind) { return '<span class="pill' + (kind ? ' ' + kind : '') + '">' + esc(text) + '</span>'; }
 function daysUntil(ymd) {
   if (!ymd) return null;
@@ -210,7 +235,7 @@ function table(heads, rows, empty) {
     '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
 }
 
-var LABEL = { '機器': '機器', 'ライセンス': 'ライセンス', '修理': '修理の状況', '対応': '対応の履歴', 'レイアウト': 'レイアウト図', '資料': '資料', 'レポート': '月次レポート' };
+var LABEL = { '機器': '機器', 'ライセンス': 'ライセンス', '修理': '修理の状況', '開発': '開発の進み具合', '対応': '対応の履歴', 'レイアウト': 'レイアウト図', '資料': '資料', 'レポート': '月次レポート' };
 var LAY = { id: '', data: null, ratio: 4 / 3, failed: false };
 var REP = { month: '', data: null, failed: '' };
 function fileSizeText(n) {
@@ -221,32 +246,68 @@ function gas(fn, params, onOk, onNg) {
   google.script.run.withSuccessHandler(function (r) { if (r && r.ok) onOk(r); else onNg((r && r.message) || '読み込めませんでした。'); })
     .withFailureHandler(function () { onNg('通信に失敗しました。少し待ってから、もう一度試してください。'); })[fn](params);
 }
+// 幹線図の記号と回線（管理画面と同じ見た目。IP・メモ・機器との結びつきは、サーバーが渡さない）
+var NET_KINDS = {
+  onu: ['ONU', '回線終端装置（ONU）', '#17508f'], router: ['RT', 'ルーター', '#2d6a4f'], fw: ['FW', 'UTM・ファイアウォール', '#b3261e'],
+  hub: ['SW', 'スイッチ・HUB', '#0f766e'], ap: ['AP', '無線アクセスポイント', '#b36b00'], nas: ['NAS', 'NAS', '#6b4e9b'],
+  server: ['SV', 'サーバー', '#3d4854'], mfp: ['複合', '複合機', '#7a5c2e'], port: ['LAN', '情報コンセント', '#5b6876']
+};
+var NET_ORDER = ['onu', 'router', 'fw', 'hub', 'ap', 'nas', 'server', 'mfp', 'port'];
+var LINK_ORDER = ['wan', 'trunk', 'lan', 'wifi'];
+var LINK_KINDS = { wan: ['外部回線（光など）', '#17508f', 3, ''], trunk: ['幹線', '#b3261e', 4.2, ''], lan: ['LAN', '#2d6a4f', 2, ''], wifi: ['無線', '#b36b00', 2, '8 7'] };
+function layoutLegendHtml(data, fit) {
+  var nets = {}, links = {}, any = false;
+  data.elements.forEach(function (x) { if (x.type === 'net') { nets[x.kind] = true; any = true; } else if (x.type === 'link') { links[x.kind] = true; any = true; } });
+  if (!any) return '';
+  var html = '<div class="lay-legend" style="' + fit + '">';
+  NET_ORDER.filter(function (k) { return nets[k]; }).forEach(function (k) { html += '<div class="lk"><span class="nbk" style="background:' + NET_KINDS[k][2] + '">' + esc(NET_KINDS[k][0]) + '</span>' + esc(NET_KINDS[k][1]) + '</div>'; });
+  LINK_ORDER.filter(function (k) { return links[k]; }).forEach(function (k) {
+    var s = LINK_KINDS[k];
+    html += '<div class="lk"><svg class="sw" viewBox="0 0 36 9" aria-hidden="true"><line x1="0" y1="4.5" x2="36" y2="4.5" stroke="' + s[1] + '" stroke-width="' + (s[2] * 1.2) + '"' + (s[3] ? ' stroke-dasharray="' + s[3] + '"' : '') + '></line></svg>' + esc(s[0]) + '</div>';
+  });
+  return html + '</div>';
+}
 /** レイアウト図の中身（管理画面の layoutInnerHtml と同じ描き方。ピンは名前で届く） */
 function layoutHtml(data, ratio) {
   var H = 1000 / ratio;
   var html = data.imageBase64 ? '<img class="lay-bg" alt="" src="data:' + esc(data.imageMimeType) + ';base64,' + esc(data.imageBase64) + '">' : '';
   var lines = '', boxes = '';
-  data.elements.forEach(function (el) {
+  var svgZ = function (zi, inner) { return '<svg class="lay-svg" style="z-index:' + zi + '" viewBox="0 0 1000 ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + inner + '</svg>'; };
+  var netAt = {};
+  data.elements.forEach(function (x) { if (x.type === 'net') netAt[x.id] = x; });
+  data.elements.forEach(function (el, i) {
+    if (el.hide) return;      // 隠した図形は出さない（v0.105.0）
+    if (el.type === 'link') {
+      var na = netAt[el.a], nb = netAt[el.b], ls = LINK_KINDS[el.kind] || LINK_KINDS.lan;
+      if (!na || !nb || na.hide || nb.hide) return;
+      lines += svgZ(0, '<line x1="' + (Number(na.x) * 10) + '" y1="' + (Number(na.y) * H / 100) + '" x2="' + (Number(nb.x) * 10) + '" y2="' + (Number(nb.y) * H / 100) + '" stroke="' + ls[1] + '" stroke-width="' + (ls[2] * 1.6) + '" stroke-linecap="round"' + (ls[3] ? ' stroke-dasharray="' + ls[3] + '"' : '') + '></line>');
+      if (el.text) boxes += '<div class="lay-linklabel" style="z-index:0;left:' + ((Number(na.x) + Number(nb.x)) / 2) + '%;top:' + ((Number(na.y) + Number(nb.y)) / 2) + '%">' + esc(el.text) + '</div>';
+      return;
+    }
     if (el.type === 'line' || el.type === 'arrow') {
       var x1 = el.x1 * 10, y1 = el.y1 * H / 100, x2 = el.x2 * 10, y2 = el.y2 * H / 100;
       var color = el.color || '#5b6876', w = (el.width || 2) * 1.6;
-      lines += '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + esc(color) + '" stroke-width="' + w + '" stroke-linecap="round"></line>';
+      var ln = '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="' + esc(color) + '" stroke-width="' + w + '" stroke-linecap="round"></line>';
       if (el.type === 'arrow') {
         var ang = Math.atan2(y2 - y1, x2 - x1), len = 10 + w * 3, spread = 0.45;
-        lines += '<polygon points="' + x2 + ',' + y2 + ' ' + (x2 - len * Math.cos(ang - spread)) + ',' + (y2 - len * Math.sin(ang - spread)) + ' ' + (x2 - len * Math.cos(ang + spread)) + ',' + (y2 - len * Math.sin(ang + spread)) + '" fill="' + esc(color) + '"></polygon>';
+        ln += '<polygon points="' + x2 + ',' + y2 + ' ' + (x2 - len * Math.cos(ang - spread)) + ',' + (y2 - len * Math.sin(ang - spread)) + ' ' + (x2 - len * Math.cos(ang + spread)) + ',' + (y2 - len * Math.sin(ang + spread)) + '" fill="' + esc(color) + '"></polygon>';
       }
+      lines += svgZ(i, ln);
       return;
     }
     if (el.type === 'poly') {
       if (!Array.isArray(el.points)) return;
-      lines += '<polyline points="' + el.points.map(function (p) { return (Number(p[0]) * 10) + ',' + (Number(p[1]) * H / 100); }).join(' ') + '" fill="none" stroke="' + esc(el.color || '#5b6876') +
-        '" stroke-width="' + ((Number(el.width) || 2) * 1.6) + '" stroke-linecap="round" stroke-linejoin="round"></polyline>';
+      lines += svgZ(i, '<polyline points="' + el.points.map(function (p) { return (Number(p[0]) * 10) + ',' + (Number(p[1]) * H / 100); }).join(' ') + '" fill="none" stroke="' + esc(el.color || '#5b6876') +
+        '" stroke-width="' + ((Number(el.width) || 2) * 1.6) + '" stroke-linecap="round" stroke-linejoin="round"></polyline>');
       return;
     }
-    var style = 'left:' + Number(el.x) + '%;top:' + Number(el.y) + '%;';
+    var style = 'z-index:' + i + ';left:' + Number(el.x) + '%;top:' + Number(el.y) + '%;';
     var r = Number(el.r) || 0;
     if (el.type === 'pin') {
-      boxes += '<div class="lay-el t-pin' + (el.kind === 'デスクトップ' ? ' k-desktop' : el.kind === 'ノート' ? '' : ' k-other') + '" style="' + style + '">' + esc(el.label) + '</div>';
+      boxes += '<div class="lay-el t-pin' + (el.kind === 'デスクトップ' ? ' k-desktop' : el.kind === 'ノート' ? '' : el.kind === 'ネットワーク機器' ? ' k-net' : (el.kind === 'NAS' || el.kind === 'サーバー') ? ' k-srv' : el.kind === 'プリンター' ? ' k-prn' : ' k-other') + '" style="' + style + '">' + esc(el.label) + '</div>';
+    } else if (el.type === 'net') {
+      var nk = NET_KINDS[el.kind] || NET_KINDS.port;
+      boxes += '<div class="lay-el t-net" style="' + style + 'font-size:' + (Number(el.size) * 0.06) + 'cqw;--nc:' + nk[2] + '"><span class="nb">' + esc(nk[0]) + '</span><span class="nn">' + esc(el.text || nk[1]) + '</span></div>';
     } else if (el.type === 'text') {
       boxes += '<div class="lay-el t-text" style="' + style + 'font-size:' + (Number(el.size) * 0.1) + 'cqw;' + (el.color ? 'color:' + esc(el.color) + ';' : '') + (r ? 'transform:rotate(' + r + 'deg);' : '') + '">' + esc(el.text) + '</div>';
     } else if (el.type === 'icon') {
@@ -255,8 +316,9 @@ function layoutHtml(data, ratio) {
       boxes += '<div class="lay-el t-' + el.type + '" style="' + style + 'width:' + Number(el.w) + '%;height:' + Number(el.h) + '%;' + (el.color ? 'background-color:' + esc(el.color) + ';' : '') + (r ? 'transform:rotate(' + r + 'deg);' : '') + '">' + esc(el.text) + '</div>';
     }
   });
-  return '<div class="lay-canvas" style="aspect-ratio:' + ratio + ';max-width:max(300px, calc((100vh - 120px) * ' + ratio + '));margin:0 auto;background-color:' + esc(data.backgroundColor) + '">' + html +
-    '<svg viewBox="0 0 1000 ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + lines + '</svg>' + boxes + '</div>';
+  var fit = 'max-width:max(300px, calc((100vh - 120px) * ' + ratio + '));margin:0 auto;';
+  return '<div class="lay-canvas" style="aspect-ratio:' + ratio + ';' + fit + 'background-color:' + esc(data.backgroundColor) + '">' + html +
+    lines + boxes + '</div>' + layoutLegendHtml(data, fit);
 }
 function openLayout(id) {
   LAY = { id: id, data: null, ratio: 4 / 3, failed: false };
@@ -291,11 +353,11 @@ function reportHtml(d, note) {
     '<div class="rsum">' + sum(d.summary.activities, '対応') + sum(d.summary.maintenances, '保守の実施') + sum(d.summary.repairsReceived, '修理の受付') + sum(d.summary.repairsDone, '修理の完了') + sum(d.summary.devices, '管理している機器') + '</div>' +
     '<h2>対応したこと' + (d.summary.kinds.length ? '（' + d.summary.kinds.map(function (k) { return esc(k.name) + ' ' + Number(k.count) + '件'; }).join('・') + '）' : '') + '</h2>' +
     (d.activities.length ? tbl(['日付', '種別', '内容', '状況'], d.activities.map(function (a) {
-      return '<tr><td class="nowrap">' + esc(a['受付日']) + '</td><td class="nowrap">' + esc(a['対応種別']) + (a['インシデント種別'] ? '<br><small>' + esc(a['インシデント種別']) + '</small>' : '') + '</td><td class="body">' + esc(a['内容']) + '</td><td class="nowrap">' + esc(a['ステータス']) + '</td></tr>';
+      return '<tr><td class="nowrap">' + esc(a['受付日']) + '</td><td class="nowrap">' + esc(a['対応種別']) + (a['インシデント種別'] ? '<br><small>' + esc(a['インシデント種別']) + '</small>' : '') + '</td><td class="body">' + linkify(a['内容']) + '</td><td class="nowrap">' + esc(a['ステータス']) + '</td></tr>';
     })) : none('この月の対応はありませんでした。')) +
     '<h2>保守の実施</h2>' +
     (d.maintenances.length ? tbl(['日付', '種別', '内容'], d.maintenances.map(function (m) {
-      return '<tr><td class="nowrap">' + esc(m['実施日']) + '</td><td class="nowrap">' + esc(m['種別']) + '</td><td class="body">' + esc(m['内容']) + '</td></tr>';
+      return '<tr><td class="nowrap">' + esc(m['実施日']) + '</td><td class="nowrap">' + esc(m['種別']) + '</td><td class="body">' + linkify(m['内容']) + '</td></tr>';
     })) : none('この月の保守の実施はありませんでした。')) +
     '<h2>修理</h2>' +
     (d.repairs.length ? tbl(['受付日', '件名', '種別', '状況', '完了日'], d.repairs.map(function (x) {
@@ -314,7 +376,7 @@ function reportHtml(d, note) {
 }
 var RENDER = {
   '機器': function () {
-    return table(['種類', '利用者', 'メーカー・機種', 'シリアル', '設置場所', '購入日', '保証期限'], P.devices.map(function (d) {
+    return table(['種類', '利用者', 'メーカー・機種', 'シリアル', '設置場所', 'キッティング日／購入日', '保証期限'], P.devices.map(function (d) {
       return '<tr><td class="nowrap">' + esc(d['種類']) + (d['状況'] === '未使用' ? ' ' + pill('未使用') : '') + '</td>' +
         '<td>' + esc(d['利用者']) + (d['部署'] ? '<span class="minor">' + esc(d['部署']) + '</span>' : '') + '</td>' +
         '<td>' + esc(d['機種名']) + (d['メーカー'] ? '<span class="minor">' + esc(d['メーカー']) + '</span>' : '') + '</td>' +
@@ -336,6 +398,14 @@ var RENDER = {
         '<td class="nowrap">' + esc(r['種別']) + '</td><td>' + esc(r['預かり品']) + '</td><td class="nowrap">' + statusPill(r['ステータス']) + '</td>' +
         '<td class="nowrap">' + (r['完了日'] ? esc(r['完了日']) : '—') + '</td></tr>';
     }), '修理の記録はありません。');
+  },
+  '開発': function () {
+    return table(['案件', '種類', '状態', '納期', '次にやること'], (P.projects || []).map(function (r) {
+      var wu = typeof r['WebアプリのURL'] === 'string' && /^https:\/\/[^\s"'<>\\]+$/.test(r['WebアプリのURL']) ? r['WebアプリのURL'] : '';
+      return '<tr><td>' + (wu ? '<a href="' + esc(wu) + '" target="_blank" rel="noopener noreferrer">' + esc(r['案件名']) + '</a>' : esc(r['案件名'])) + '</td>' +
+        '<td class="nowrap">' + esc(r['種類']) + '</td><td class="nowrap">' + statusPill(r['状態']) + '</td></td>' +
+        '<td class="nowrap">' + (r['納期'] ? esc(r['納期']) : '—') + '</td><td>' + esc(r['次にやること']) + '</td></tr>';
+    }), '開発中の案件はありません。');
   },
   'レイアウト': function () {
     if (!P.layouts.length) return '<p class="empty">レイアウト図はまだありません。</p>';
@@ -361,7 +431,7 @@ var RENDER = {
   '対応': function () {
     return table(['受付日', '種別', '内容', '状況'], P.activities.map(function (a) {
       return '<tr><td class="nowrap">' + esc(a['受付日']) + '</td><td class="nowrap">' + esc(a['対応種別']) + (a['インシデント種別'] ? '<span class="minor">' + esc(a['インシデント種別']) + '</span>' : '') + '</td>' +
-        '<td class="body">' + esc(a['内容']) + '</td><td class="nowrap">' + statusPill(a['ステータス']) + '</td></tr>';
+        '<td class="body">' + linkify(a['内容']) + '</td><td class="nowrap">' + statusPill(a['ステータス']) + '</td></tr>';
     }), '対応の記録はありません。');
   }
 };
@@ -375,7 +445,7 @@ function render() {
 }
 
 // ---- まとめて印刷（印刷・PDFにする）。見せている内容から、印刷するものを選んで1つにまとめる ----
-var PRINTABLE = ['機器', 'ライセンス', '修理', '対応', 'レイアウト', '資料'];   // 月次レポートは、レポートのタブの「印刷する」で印刷する
+var PRINTABLE = ['機器', 'ライセンス', '修理', '開発', '対応', 'レイアウト', '資料'];   // 月次レポートは、レポートのタブの「印刷する」で印刷する
 var PRINT = { busy: false, cancelled: false, layouts: {} };
 /** 前の「まとめて印刷」の中身が残っていたら片づける（印刷が終わった合図を出さないブラウザがある） */
 function clearPrintArea() { document.body.classList.remove('printing'); $('printArea').innerHTML = ''; }
