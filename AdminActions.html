@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.128.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.129.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -1572,11 +1572,13 @@ var ACT = {
     box.focus();
   },
 
-  tileOpenActs: function () {
+  mtgOpenList: function (el) { var w = openModal(mtgOpenListHtml(el.dataset.kind === 'repair' ? 'repair' : 'activity')); var dlg = w.querySelector('.dialog'); if (dlg) dlg.classList.add('wide'); },
+  tileOpenActs: function (el) {
+    if (el && el.closest && el.closest('.overlay')) closeModal(el);
     ['act.kind', 'act.inc', 'act.cust', 'act.staff', 'act.text'].forEach(function (k) { S.q[k] = ''; });
     S.q['act.status'] = 'open'; perState('act').mode = 'all'; go('activities');
   },
-  tileOpenReps: function () { S.q['rep.status'] = 'open'; S.q['rep.cust'] = ''; S.q['rep.text'] = ''; go('repairs'); },
+  tileOpenReps: function (el) { if (el && el.closest && el.closest('.overlay')) closeModal(el); S.q['rep.status'] = 'open'; S.q['rep.cust'] = ''; S.q['rep.text'] = ''; go('repairs'); },
   clearFind: function () { S.q['home.find'] = ''; var i = $('q_home_find'); if (i) i.value = ''; refreshList(); },
   actOpenTile: function () { S.q['act.status'] = q('act.status') === 'open' ? '' : 'open'; render(); },
   qChip: function (el) { S.q[el.dataset.q] = el.dataset.v; refreshList(); },

@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.127.3';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.129.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -947,8 +947,36 @@ function mtgAvgTile(acts) {
 /** 未完了のカード（期間に関係なく全部。7日以上たっているものの数を添える） */
 function mtgOpenTile(label, list, key) {
   var old = list.filter(function (r) { return mtgDays(String(r['受付日']).slice(0, 10)) >= MTG_STALE_DAYS; }).length;
-  return '<div class="mtile' + (list.length ? ' warn' : '') + '"><span class="ml">' + esc(label) + '</span><b>' + list.length + '<small>件</small></b>' +
-    '<span class="ms">' + (list.length ? (old ? MTG_STALE_DAYS + '日以上たっている ' + old + '件' : '7日以内のものだけ') : 'ありません') + '</span></div>';
+  var inner = '<span class="ml">' + esc(label) + '</span><b>' + list.length + '<small>件</small></b>' +
+    '<span class="ms">' + (list.length ? (old ? MTG_STALE_DAYS + '日以上たっている ' + old + '件' : '7日以内のものだけ') : 'ありません') + '</span>';
+  // 1件でもあれば、押すと一覧の窓が開く（v0.129.0）
+  if (!list.length) return '<div class="mtile">' + inner + '</div>';
+  return '<button type="button" class="mtile mtile-btn warn" data-act="mtgOpenList" data-kind="' + esc(key) + '" title="押すと、' + esc(label) + 'の一覧が開きます">' +
+    inner + '<span class="mgo">一覧を見る →</span></button>';
+}
+/**
+ * 未完了の対応・修理の一覧（ミーティングのタイルを押したときの窓。v0.129.0）。古いものから並べる。行を押すと、その記録が開く。
+ * @param {string} kind 'activity' か 'repair'
+ */
+function mtgOpenListHtml(kind) {
+  var D = S.D, isAct = kind === 'activity';
+  var list = (isAct ? D.activities.filter(isOpenActivity) : D.repairs.filter(isOpenRepair)).slice()
+    .sort(function (a, b) { return cmp(String(a['受付日']), String(b['受付日'])) || cmp(a[isAct ? '対応ID' : '修理ID'], b[isAct ? '対応ID' : '修理ID']); });
+  var title = isAct ? '未完了の対応' : '未完了の修理';
+  var rows = list.map(function (r) {
+    var d = String(r['受付日'] || '').slice(0, 10), days = d ? mtgDays(d) : null;
+    var age = days === null ? '' : pill(days <= 0 ? '今日' : days + '日', days >= MTG_STALE_DAYS ? 'warn' : '');
+    var text = isAct ? r['内容'] : r['件名'];
+    return '<tr data-act="editRecord:' + kind + '" data-id="' + esc(r[isAct ? '対応ID' : '修理ID']) + '"' + memoAttr(r) + '>' +
+      '<td class="nowrap">' + esc(d ? mdw(d) : '—') + '</td><td class="nowrap">' + age + '</td><td class="nowrap">' + esc(custName(r['顧客ID'])) + '</td>' +
+      '<td class="clamp" title="' + esc(text) + '"><span>' + (isAct ? linkify(text) : esc(text)) + '</span>' + (!isAct && r['型番'] ? '<span class="minor">' + esc(r['型番']) + '</span>' : '') + '</td>' +
+      '<td class="nowrap">' + esc(r[isAct ? '受付スタッフ' : '担当スタッフ'] || '') + '</td><td>' + statusPill(r['ステータス']) + '</td></tr>';
+  });
+  return '<header><h2>' + esc(title) + ' <span class="sub">' + list.length + '件・古い順</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+    '<div class="body">' + (rows.length
+      ? '<p class="note" style="margin:0 0 8px">行を押すと、その' + (isAct ? '対応' : '修理') + 'が開きます。</p><div class="scroll"><table class="mtbl"><thead><tr><th>受付日</th><th>経過</th><th>顧客</th><th>' + (isAct ? '内容' : '件名') + '</th><th>担当</th><th>状態</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>'
+      : '<p class="mempty">' + esc(title) + 'はありません。</p>') + '</div>' +
+    '<footer><span class="grow"></span><button type="button" class="btn" data-act="' + (isAct ? 'tileOpenActs' : 'tileOpenReps') + '">' + (isAct ? '対応履歴' : '修理履歴') + 'の画面で見る</button><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>';
 }
 /** 今月の定期保守の実施状況（有効な定期保守の顧客のうち、今月やった・まだの顧客）。① のタイルと、その下の「まだの顧客」の帯で使う（v0.72.0） */
 function mtgMaintState() {

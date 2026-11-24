@@ -1,5 +1,5 @@
 <style>
-:root { --file-version: "@file-version 0.127.3"; }
+:root { --file-version: "@file-version 0.129.0"; }
 /* 配置の考え方：上に固定の帯（名前・画面の切り替え・利用者）、その下は1本の列。一覧は表、編集は重ねた窓。 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
@@ -706,6 +706,10 @@ details.rest[open] > summary { margin-bottom: 10px; }
 .mmonth { border-color: #c9daf0; }
 .mmonth h2 { background: var(--brand-soft); }
 .mtile.warn b { color: var(--danger); }
+/* v0.129.0：未完了のタイルは押せる（一覧の窓が開く） */
+button.mtile-btn { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+button.mtile-btn:hover { border-color: var(--brand); background: var(--brand-soft); }
+.mtile .mgo { margin-top: 4px; font-size: 12px; font-weight: 700; color: var(--brand); }
 .mh3 { font-size: 14px; margin: 14px 0 6px; }
 .mh3 .sub { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; }
 .mlast { border-left: 3px solid var(--brand); background: var(--panel); padding: 8px 12px; margin-bottom: 8px; cursor: pointer; line-height: 1.6; }
