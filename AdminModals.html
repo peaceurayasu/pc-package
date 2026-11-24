@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.127.2';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1345,10 +1345,9 @@ function fieldHtml(key, f, value, ctx) {
   } else if (f.type === 'longtext') {
     input = '<textarea' + common + (f.max ? ' maxlength="' + f.max + '"' : '') + ' rows="' + (f.name === '内容' ? 5 : 3) + '">' + esc(value) + '</textarea>' +
       (key === 'activity' && f.name === '内容' ? phrasesHtml() : '');
-  } else if (f.type === 'date') {
-    input = '<input type="date"' + common + ' value="' + esc(value) + '">';
-  } else if (f.type === 'datetime') {
-    input = '<input type="datetime-local"' + common + ' value="' + esc(String(value).replace(' ', 'T')) + '">';
+  } else if (f.type === 'date' || f.type === 'datetime') {
+    // v0.130.0：日付は、ふつうの文字の欄。「20260426」「4/26」のように打つと、欄を離れたときに 2026-04-26 に直る（datefield.js）
+    input = dateFieldHtml(f.type, common, value);
   } else if (f.type === 'number') {
     input = '<input type="number" min="0" step="1" inputmode="numeric"' + common + ' value="' + esc(value) + '">';
   } else if (f.type === 'select') {
@@ -1622,6 +1621,86 @@ function licCredRestore(form, cred) {
   Object.keys(cred).forEach(function (k) { var i = form.querySelector('[data-cred="' + k + '"]'); if (i) i.value = cred[k]; });
 }
 
+// ---------------------------------------------------------------------------
+// 日付・日時の欄（v0.130.0）
+//   ふつうの文字の欄にして、数字だけでも打てるようにする。欄を離れたとき（と保存の前）に、決めた形に直す。
+//     日付：20260426 → 2026-04-26、0426 や 4/26 → 今年の 4月26日、2026/4/26 → 2026-04-26
+//     日時：202604261030 → 2026-04-26 10:30、20260426 1030 → 同じ、1030 や 10:30 → 受付日（無ければ今日）の 10:30
+//   横の📅を押すと、カレンダーからも選べる（ブラウザの日付の画面を使う）。
+// ---------------------------------------------------------------------------
+function dateFieldHtml(kind, common, value) {
+  var v = String(value || '').replace('T', ' ');
+  return '<span class="datefield"><input type="text" inputmode="numeric" autocomplete="off" data-datefmt="' + kind + '"' + common + ' value="' + esc(v) + '"' +
+    ' placeholder="' + (kind === 'date' ? '例：20260426' : '例：202604261030 または 1030') + '">' +
+    '<button type="button" class="btn small datepick" data-act="datePick" tabindex="-1" aria-label="カレンダーから選ぶ" title="カレンダーから選ぶ">📅</button>' +
+    '<input type="' + (kind === 'date' ? 'date' : 'datetime-local') + '" class="datepicker" tabindex="-1" aria-hidden="true"></span>';
+}
+function zen2han(s) { return String(s || '').replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }).replace(/[／．。、ー－―]/g, function (c) { return '／．'.indexOf(c) !== -1 ? '/' : (c === '。' || c === '、' ? '.' : '-'); }).replace(/：/g, ':').replace(/　/g, ' '); }
+function ymdOk(y, m, d) {
+  y = +y; m = +m; d = +d;
+  if (y < 1900 || y > 2200 || m < 1 || m > 12 || d < 1) return '';
+  var dt = new Date(y, m - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return '';
+  return y + '-' + pad2(m) + '-' + pad2(d);
+}
+/** 日付の文字を 'yyyy-MM-dd' にする。空なら ''、読めなければ null */
+function normDateText(raw) {
+  var s = zen2han(raw).trim().replace(/[年月]/g, '/').replace(/日/g, '');
+  if (!s) return '';
+  var year = (S.D && S.D.today ? S.D.today : new Date().getFullYear() + '').slice(0, 4), m;
+  if ((m = /^(\d{4})(\d{2})(\d{2})$/.exec(s))) return ymdOk(m[1], m[2], m[3]) || null;
+  if ((m = /^(\d{2})(\d{2})$/.exec(s))) return ymdOk(year, m[1], m[2]) || null;
+  if ((m = /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/.exec(s))) return ymdOk(m[1], m[2], m[3]) || null;
+  if ((m = /^(\d{1,2})[-\/.](\d{1,2})$/.exec(s))) return ymdOk(year, m[1], m[2]) || null;
+  return null;
+}
+/** 時刻の文字を 'HH:mm' にする。読めなければ null */
+function normTimeText(raw) {
+  var s = zen2han(raw).trim().replace(/時/g, ':').replace(/分/g, ''), m;
+  if ((m = /^(\d{1,2})(\d{2})$/.exec(s)) || (m = /^(\d{1,2}):(\d{1,2})$/.exec(s)) || (m = /^(\d{1,2}):?$/.exec(s))) {
+    var h = +m[1], mi = m[2] === undefined ? 0 : +m[2];
+    return h <= 23 && mi <= 59 ? pad2(h) + ':' + pad2(mi) : null;
+  }
+  return null;
+}
+/** 日時の文字を 'yyyy-MM-dd HH:mm' にする。時刻だけなら baseDate（無ければ今日）の日付で。空なら ''、読めなければ null */
+function normDateTimeText(raw, baseDate) {
+  var s = zen2han(raw).trim().replace('T', ' ');
+  if (!s) return '';
+  var m = /^(\d{8})(\d{4})$/.exec(s.replace(/\s+/g, ''));
+  if (m) { var d0 = normDateText(m[1]), t0 = normTimeText(m[2]); return d0 && t0 ? d0 + ' ' + t0 : null; }
+  var parts = s.split(/\s+/);
+  if (parts.length === 2) { var d1 = normDateText(parts[0]), t1 = normTimeText(parts[1]); return d1 && t1 ? d1 + ' ' + t1 : null; }
+  if (parts.length === 1) {
+    var t2 = normTimeText(s);
+    if (t2 && !/^\d{8}$/.test(s)) return (normDateText(baseDate || '') || (S.D ? S.D.today : '')) + ' ' + t2;
+  }
+  return null;
+}
+/** 欄の文字を直す。直せないときは赤くして false */
+function normDateField(el) {
+  var form = el.form;
+  var base = form && form.elements['受付日'] ? normDateText(form.elements['受付日'].value) : '';
+  var v = el.dataset.datefmt === 'date' ? normDateText(el.value) : normDateTimeText(el.value, base);
+  var bad = v === null;
+  if (!bad) el.value = v;
+  el.classList.toggle('bad', bad);
+  el.title = bad ? (el.dataset.datefmt === 'date' ? '日付は 20260426 や 4/26 の形で入れてください' : '日時は 202604261030、または時刻だけ 1030 の形で入れてください') : '';
+  return !bad;
+}
+document.addEventListener('focusout', function (e) { if (e.target && e.target.dataset && e.target.dataset.datefmt) normDateField(e.target); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target && e.target.dataset && e.target.dataset.datefmt) normDateField(e.target); }, true);
+// カレンダーで選んだら、文字の欄に入れる
+document.addEventListener('change', function (e) {
+  var pk = e.target;
+  if (!pk.classList || !pk.classList.contains('datepicker')) return;
+  var box = pk.closest('.datefield'), txt = box && box.querySelector('[data-datefmt]');
+  if (!txt || !pk.value) return;
+  txt.value = pk.value.replace('T', ' ');
+  normDateField(txt);
+  txt.dispatchEvent(new Event('input', { bubbles: true }));
+});
+
 // 保存の前に、変えたところを見せる種類（v0.30.0）
 var DIFF_KEYS = { device: 1, license: 1, customer: 1, repair: 1, rental: 1, loan: 1, maintenance: 1, staff: 0 };
 /** 項目の値を、画面で見る形にする（顧客・機器はIDでなく名前） */
@@ -1643,7 +1722,7 @@ function sameValue(a, b) {
 }
 /** 前の記録と、窓に入っている値の違い → [{label, before, after}] */
 /** スマホの下のメニュー：自分で選んだ4つ（選んでいなければ、PC管理・対応・修理・ライセンス） */
-var BNAV_CHOICES = [['customers', 'PC管理'], ['activities', '対応'], ['repairs', '修理'], ['licenses', 'ライセンス'], ['meeting', 'ミーティング'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ']];
+var BNAV_CHOICES = [['customers', '顧客情報'], ['activities', '対応'], ['repairs', '修理'], ['licenses', 'ライセンス'], ['meeting', 'ミーティング'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ']];
 function bnavOptions() { return BNAV_CHOICES.filter(function (c) { return navVisible(c[0]); }); }
 function bnavList() {
   var opts = bnavOptions(), byId = {}, out = [];
@@ -1777,6 +1856,14 @@ function submitRecordForm(form, next) {
   var key = form.dataset.form;
   var schema = S.D.schema[key];
   var msg = form.querySelector('.msg');
+  // 日付の欄を、決めた形に直す。直せない欄があれば、保存しない（v0.130.0）
+  var badDate = Array.prototype.filter.call(form.querySelectorAll('[data-datefmt]'), function (el) { return !normDateField(el); })[0];
+  if (badDate) {
+    msg.textContent = badDate.title; msg.hidden = false;
+    var dbox = badDate.closest('details'); if (dbox) dbox.open = true;
+    badDate.focus();
+    return;
+  }
   // 必須の空欄は、サーバーに送る前に知らせる
   var missing = schema.fields.filter(function (f) {
     var el = form.elements[f.name];

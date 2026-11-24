@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.129.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -761,7 +761,7 @@ var ACT = {
     openModal('<header><h2>自分の設定</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
       '<form data-form="myprefs" novalidate><div class="body"><p class="msg" hidden></p>' +
       '<div class="field"><label for="my_start">開いた直後の画面</label><select id="my_start">' +
-        optionsHtml([['', '全体の設定に合わせる（いまは「' + common + '」）']].concat(D.startViews.filter(function (n) { return navVisible(START_KEY[n]); })), D.me.startView || '') + '</select>' +
+        optionsHtml([['', '全体の設定に合わせる（いまは「' + startLabel(common) + '」）']].concat(D.startViews.filter(function (n) { return navVisible(START_KEY[n]); }).map(function (n) { return [n, startLabel(n)]; })), D.me.startView || '') + '</select>' +
         '<span class="note">ログインした直後に開く画面です。自分のぶんだけ変わります。スマホでは、いつも「入力」の画面から始まります。</span></div>' +
       '<div class="field"><label>絞り込み・並び替え</label>' +
         '<span class="note">各画面の絞り込み・検索の文字・並び替え・期間の種類（週ごと／月ごと など）は、自動で覚えます。次に開いたとき、パソコンでもスマホでも同じ状態で始まります。</span>' +
@@ -1572,6 +1572,17 @@ var ACT = {
     box.focus();
   },
 
+  // 対応・修理の「集計」を開く・たたむ（スタッフごとに覚える。v0.130.0）
+  toggleStats: function () { S.q['pref.stats'] = statsOpen() ? '' : '1'; sendView(); render(); },
+  // 日付の欄の横の📅：ブラウザのカレンダーを開く（選んだら、文字の欄に入る。v0.130.0）
+  datePick: function (el) {
+    var box = el.closest('.datefield'), txt = box && box.querySelector('[data-datefmt]'), pk = box && box.querySelector('.datepicker');
+    if (!txt || !pk) return;
+    normDateField(txt);
+    pk.value = txt.classList.contains('bad') ? '' : String(txt.value || '').replace(' ', 'T');
+    try { if (pk.showPicker) { pk.showPicker(); return; } } catch (e) { /* 使えないブラウザは、下で */ }
+    pk.focus(); pk.click();
+  },
   mtgOpenList: function (el) { var w = openModal(mtgOpenListHtml(el.dataset.kind === 'repair' ? 'repair' : 'activity')); var dlg = w.querySelector('.dialog'); if (dlg) dlg.classList.add('wide'); },
   tileOpenActs: function (el) {
     if (el && el.closest && el.closest('.overlay')) closeModal(el);
@@ -2253,7 +2264,7 @@ document.addEventListener('submit', function (e) {
       var picked = []; [0, 1, 2, 3].forEach(function (i) { var v = $('my_b' + i).value; if (v && picked.indexOf(v) === -1) picked.push(v); });
       S.q['pref.bnav'] = picked.join(','); sendView(); render();
       D.startView = r.startView || (START_KEY[D.settings['開いた直後の画面']] ? D.settings['開いた直後の画面'] : D.startViews[0]);
-      closeModal(form); toast('保存しました。次に開いたときは「' + D.startView + '」から始まります');
+      closeModal(form); toast('保存しました。次に開いたときは「' + startLabel(D.startView) + '」から始まります');
     }).catch(showErr);
     return;
   }

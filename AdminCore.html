@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.128.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -526,6 +526,8 @@ function snapCatchUp(groups) {
 var PENDING_NAME = '仮受付（未割り当て）';
 /** その顧客IDが「仮受付（未割り当て）」か */
 function isPendingCust(customerId) { var c = customerId && IDX.cust[customerId]; return !!c && c['顧客名'] === PENDING_NAME; }
+/** 開いた直後の画面の、画面に出す名前（設定に入っている値「PC管理」は、v0.130.0 から「顧客情報」と出す） */
+function startLabel(v) { return v === 'PC管理' ? '顧客情報' : v; }
 var START_KEY = { 'PC管理': 'customers', '対応履歴': 'activities', '修理履歴': 'repairs', 'ライセンス': 'licenses', 'レンタル': 'rentals', '案件・営業': 'projects', 'ミーティング': 'meeting', 'お知らせ': 'notices' };
 
 /** ログインの返事を画面に入れる。控えが温かいとき、パソコンは、残り全部も同じ返事で届く（v0.20.0。もう1往復しない） */
