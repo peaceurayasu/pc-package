@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.134.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.135.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -95,11 +95,11 @@ var P_CARD = {
       devLabel(id) || id, [custName(d['顧客ID']), d['設置場所'], d['利用者']].filter(function (x) { return x; }).join('・'), isPendingCust(d['顧客ID']) ? 'unassigned' : '', memoText(d));
   },
   act: function (a) {
-    return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + quickDoneHtml('activity', a, 'span') + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + (a['会議で共有'] === 'はい' ? ' ' + pill('共有', 'brand') : '') + photoMark('activity', a['対応ID']),
+    return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + quickDoneHtml('activity', a, 'span') + (a._pending ? ' ' + pill('保存中…', 'warn') : '') + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + (a['会議で共有'] === 'はい' ? ' ' + pill('共有', 'brand') : '') + photoMark('activity', a['対応ID']),
       custName(a['顧客ID']) + (a['機器ID'] ? '　' + devLabel(a['機器ID']) : ''), a['内容'], '', memoText(a));
   },
   rep: function (r) {
-    return pCard('editRecord:repair', r['修理ID'], esc(r['受付日']) + ' ' + statusPill(r['ステータス']) + quickDoneHtml('repair', r, 'span') + (r['種別'] ? ' ' + esc(r['種別']) : '') + photoMark('repair', r['修理ID']),
+    return pCard('editRecord:repair', r['修理ID'], esc(r['受付日']) + ' ' + statusPill(r['ステータス']) + quickDoneHtml('repair', r, 'span') + (r._pending ? ' ' + pill('保存中…', 'warn') : '') + (r['種別'] ? ' ' + esc(r['種別']) : '') + photoMark('repair', r['修理ID']),
       r['件名'], [custName(r['顧客ID']), r['預かり品'], r['型番']].filter(function (x) { return x; }).join('・'), '', memoText(r));
   },
   lic: function (l) {
@@ -402,6 +402,44 @@ function draftLater(form) {
   setTimeout(function () { form._draftWait = false; draftTimers = draftTimers.filter(function (f) { return f !== form; }); draftSync(form); }, DRAFT_DELAY);
 }
 function draftFlush() { draftTimers.forEach(function (form) { try { draftSync(form); } catch (e) { /* 閉じる途中でも止めない */ } }); }
+/**
+ * v0.135.0：もう保存されている下書き（中身が、いまの記録と同じ）か。
+ *   保存の返事の前にページが閉じられた（スマホでほかのアプリに切り替えた、など）ときに、保存できているのに「入力の途中」が残っていた
+ */
+function draftStale(d) {
+  var schema = S.D.schema[d.key];
+  if (!schema || !COLLECTION[d.key]) return false;
+  var keys = Object.keys(d.data).filter(function (k) { return k !== schema.idField && d.data[k] !== '' && d.data[k] !== null && d.data[k] !== undefined; });
+  var same = function (r) {
+    return !!r && !r._pending && keys.every(function (k) { var v = r[k]; if (Array.isArray(v)) v = v.join(','); return String(v === null || v === undefined ? '' : v) === String(d.data[k]); });
+  };
+  if (d.id) return same(findRecord(d.key, d.id));
+  if (keys.length < 2) return false;      // 中身がほとんど無い新しい記録の下書きは、ほかの記録とたまたま同じになるので比べない
+  var list = (S.D[COLLECTION[d.key]] || []).slice();
+  if (d.key === 'activity') Object.keys(S.custActs || {}).forEach(function (c) { list = list.concat(S.custActs[c] || []); });
+  if (d.data['顧客ID']) list = list.filter(function (r) { return r['顧客ID'] === d.data['顧客ID']; });
+  return list.some(same);
+}
+/** 出してよい下書き（送っている最中のもの・もう保存されているものは出さない。保存されているものは、ここで消す） */
+function draftsLive() {
+  var all = draftsAll(), live = all.filter(function (d) { return !S.sending[d.did] && !draftStale(d); });
+  var gone = all.filter(function (d) { return !S.sending[d.did] && live.indexOf(d) === -1; });
+  if (gone.length) draftsWrite(all.filter(function (d) { return gone.indexOf(d) === -1; }));
+  return live;
+}
+/** 保存できたときに、同じ記録の古い下書きを片づける（「続きから」を使わずに入れ直したときに、古い下書きが残り続けていた） */
+function draftDropSameAs(key, id, custId, keepDid) {
+  var all = draftsAll(), open = {};
+  // 開いている窓（「続けて入力」で開いた次の窓など）の下書きは消さない
+  Array.prototype.forEach.call(document.querySelectorAll('#modals form[data-form]'), function (f) { if (f._draftId) open[f._draftId] = true; });
+  var left = all.filter(function (d) {
+    if (d.did === keepDid || S.sending[d.did] || open[d.did] || d.key !== key) return true;
+    if (id && d.id === id) return false;
+    if (!d.id && !id && (!d.data['顧客ID'] || d.data['顧客ID'] === custId)) return false;
+    return true;
+  });
+  if (left.length !== all.length) draftsWrite(left);
+}
 function draftWhen(d) {
   var t = new Date(d.at);
   return (t.getMonth() + 1) + '/' + t.getDate() + ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes());
@@ -420,7 +458,7 @@ function draftLabel(d) {
 /** 画面のいちばん上に出す「入力の途中のものがあります」。窓が開いていないときだけ */
 function draftBarHtml() {
   // いま送っている最中のもの（返事待ち）は出さない
-  var list = draftsAll().filter(function (d) { return !S.sending[d.did]; });
+  var list = draftsLive();
   if (!list.length) return '';
   return '<div class="draftbar" id="draftBar"><div class="cap">入力の途中のものがあります</div>' + list.map(function (d) {
     return '<div class="d"><span class="t">' + esc(draftLabel(d)) + '<small>' + esc(draftWhen(d)) + '</small>' +

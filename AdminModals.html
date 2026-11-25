@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.133.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.135.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1548,7 +1548,7 @@ function openForm(key, rec, preset) {
   if (key === 'rental' && !isNew) extra = '<div class="box" id="rtHist">' + rentalHistoryHtml(id) + '</div>';
   if (key === 'loan' && !isNew) extra = '<div class="row"><button type="button" class="btn small" data-act="printLoan" data-id="' + esc(id) + '">' + (rec['返却日'] ? '返却確認書を印刷' : '貸出書を印刷') + '</button></div>';
   // 同じ種類（同じ記録）の入力しかけが残っていたら、窓の上で知らせる
-  var offer = draftOpening ? null : draftsAll().filter(function (d) { return d.key === key && d.id === (id || ''); })[0];
+  var offer = draftOpening ? null : draftsLive().filter(function (d) { return d.key === key && d.id === (id || ''); })[0];      // v0.135.0：送っている最中・もう保存されたものは出さない
   var offerHtml = offer ? '<div class="draft-offer"><span class="t">入力しかけの内容があります（' + esc(draftWhen(offer)) + '）</span>' +
     '<button type="button" class="btn small primary" data-act="draftOpen" data-draft="' + esc(offer.did) + '">続きから</button>' +
     '<button type="button" class="btn small" data-act="draftDrop" data-draft="' + esc(offer.did) + '">捨てる</button></div>' : '';
@@ -2049,6 +2049,8 @@ function submitRecordForm(form, next) {
   // v0.126.0：窓はもう閉じて一覧にも出しているので、返事を待つ間も画面は止めない（「保存中…」で操作できなくなっていた）
   call(SAVE_FN[key], cred ? { data: data, cred: cred } : { data: data }, 'nolock').then(function (r) {
     if (draftId) { draftDropId(draftId); delete S.sending[draftId]; }     // 保存できたので、下書き（保存の途中）は先に消す
+    // v0.135.0：「続きから」を使わずに入れ直したときの、同じ記録の古い下書きも消す（新しい記録は、同じ顧客のもの）
+    if (S.D && S.token === saveTok) draftDropSameAs(key, before ? id : '', data['顧客ID'] || '', draftId);
     if (!S.D || S.token !== saveTok) return;     // ログアウト・入り直しのあとに届いた返事は、新しいログインには入れない
     S.timing.save = Date.now() - saveT0; S.timing.saveSrv = r.srvMs;     // いちばん下の「読み込み：…」の行に、最後の保存にかかった時間を出す（v0.18.0）
     if (r.cred && S.creds && S.creds.customerId === r.cred['顧客ID']) { upsert(S.creds.list, '認証ID', r.cred); delete S.creds.shown[r.cred['認証ID']]; }

@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.132.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.135.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -247,9 +247,20 @@ function setBusy(on, fn) {
   busyCount = Math.max(0, busyCount + (on ? 1 : -1));
   $('busy').hidden = busyCount === 0;
   // v0.123.0：データの読み込み（裏で続きを読むもの）では画面を止めない。止めると、読み込みの途中に操作できなくなる
+  if (fn === '__nolock') saveChip(on);
   if (on && BUSY_NO_LOCK[fn]) { lockFree++; }
   else if (!on && fn && BUSY_NO_LOCK[fn]) { lockFree = Math.max(0, lockFree - 1); }
   busyLock(busyCount - lockFree > 0, BUSY_NO_LOCK[fn] ? '' : fn);
+}
+// v0.135.0：画面を止めない保存（窓を閉じて先に一覧へ出したもの・「✓ 完了」）の間は、右下に小さく「保存中…」を出す（操作はできる）
+var saveChipCount = 0, saveChipTimer = null;
+function saveChip(on) {
+  saveChipCount = Math.max(0, saveChipCount + (on ? 1 : -1));
+  var el = document.getElementById('saveChip');
+  if (!el) { el = document.createElement('div'); el.id = 'saveChip'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite'); el.hidden = true; el.innerHTML = '<span class="blspin"></span><span class="t">保存中…</span>'; document.body.appendChild(el); }
+  clearTimeout(saveChipTimer);
+  if (saveChipCount > 0) { el.querySelector('.t').textContent = saveChipCount > 1 ? '保存中…（' + saveChipCount + '件）' : '保存中…'; el.hidden = false; }
+  else saveChipTimer = setTimeout(function () { el.hidden = true; }, 150);
 }
 var BUSY_NO_LOCK = { __nolock: 1, warmAfterSave: 1, getBootstrap: 1, getViewChanges: 1, getChanges: 1, getAlerts: 1, loadGroupBatch: 1, getCustomerActivities: 1, listPhotos: 1 };
 var lockFree = 0;
