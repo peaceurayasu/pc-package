@@ -326,3 +326,16 @@ test('仮パスワード：「仮ではない」と覚えたあとに、印を�
     g.rowsWhere_ = real;
   }
 });
+
+test('スマホに渡す対応履歴：完了していないものと、直近90日のものだけ', () => {
+  const today = G.todayYmd_();
+  const p = today.split('-').map(Number);
+  const ago = (n) => { const d = new Date(p[0], p[1] - 1, p[2] - n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const list = [
+    { '対応ID': 'A1', '受付日': ago(5), 'ステータス': '完了' },
+    { '対応ID': 'A2', '受付日': ago(90), 'ステータス': '完了' },
+    { '対応ID': 'A3', '受付日': ago(91), 'ステータス': '完了' },
+    { '対応ID': 'A4', '受付日': ago(400), 'ステータス': '対応中' }
+  ];
+  assert.deepEqual(plain(G.liteActivities_(list)).map((a) => a['対応ID']), ['A1', 'A2', 'A4']);
+});

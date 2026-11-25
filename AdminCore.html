@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.132.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -695,7 +695,7 @@ function loadGroup(g, quiet) {
   if (groupBusy[g]) return groupBusy[g];
   var token = S.token, epoch = S.epoch, asked = Date.now();
   S.asked[g] = asked;
-  var mine = call('getBootstrap', { part: 'rest', groups: [g] }, quiet).then(function (rest) {
+  var mine = call('getBootstrap', { part: 'rest', lite: isPhone(), groups: [g] }, quiet).then(function (rest) {
     if (groupBusy[g] === mine) delete groupBusy[g];
     if (S.D && S.token === token && S.epoch === epoch && !S.have[g]) applyRest(rest, asked, [g]);
   }, function (e) {
@@ -717,7 +717,7 @@ function loadGroupBatch(list, quiet) {
   if (want.length === 1) return Promise.all(waits.concat([loadGroup(want[0], quiet)]));
   var token = S.token, epoch = S.epoch, asked = Date.now();
   want.forEach(function (g) { S.asked[g] = asked; });
-  var mine = call('getBootstrap', { part: 'rest', groups: want }, quiet).then(function (rest) {
+  var mine = call('getBootstrap', { part: 'rest', lite: isPhone(), groups: want }, quiet).then(function (rest) {
     want.forEach(function (g) { if (groupBusy[g] === mine) delete groupBusy[g]; });
     if (!(S.D && S.token === token && S.epoch === epoch)) return;
     var fresh = want.filter(function (g) { return !S.have[g]; });
@@ -774,7 +774,7 @@ function boot(token) {
   var coreOk = null, coreDone = new Promise(function (resolve) { coreOk = resolve; });
   early.forEach(function (g) {
     var asked = Date.now();
-    var mine = call('getBootstrap', { part: 'rest', groups: [g] }).then(function (rest) {
+    var mine = call('getBootstrap', { part: 'rest', lite: isPhone(), groups: [g] }).then(function (rest) {
       return coreDone.then(function (ok) {
         if (groupBusy[g] === mine) delete groupBusy[g];
         if (ok && S.D && S.token === token && S.epoch === epoch && !S.have[g]) applyRest(rest, asked, [g]);

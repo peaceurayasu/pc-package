@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.132.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -8,10 +8,42 @@ var FILE_VERSION_ADMINVIEWS = '@file-version 0.131.0';   // このファイル�
 // v0.130.0：「入力」（記録するだけの画面。スマホと同じ）を一番左に。「PC管理」は「顧客情報」に名前を変えた（設定に入っている値は「PC管理」のまま）
 var NAV = [
   ['home', '入力'], ['customers', '顧客情報'], ['activities', '対応'], ['repairs', '修理'], ['meeting', 'ミーティング'],
-  ['licenses', 'ライセンス'], ['rentals', 'レンタル'], ['projects', '案件・営業（テスト版）'], ['notices', 'お知らせ'], ['settings', '設定']
+  ['licenses', 'ライセンス'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ'], ['settings', '設定']
 ];
 // rest が届くまで中身を出せない画面
-var NAV_MORE = ['notices', 'settings'];     // 上のメニューの「その他」に入れる画面（v0.37.0）
+var NAV_MORE = ['notices', 'settings'];
+/**
+ * 上のメニューが入りきらないとき（ロゴがある・案件・営業を使う・画面が狭い）、右から順に「その他」の中へ移す（v0.132.0）。
+ * いま開いている画面のボタンは、なるべく外に残す。
+ */
+function fitNav() {
+  var nav = $('nav');
+  if (!nav || isPhone() || !nav.offsetWidth) return;
+  var guard = 0;
+  while (nav.scrollWidth > nav.clientWidth + 1 && guard++ < 12) {
+    var btns = Array.prototype.filter.call(nav.children, function (x) { return x.tagName === 'BUTTON'; });
+    var victim = btns.filter(function (b) { return b.getAttribute('aria-current') !== 'page'; }).pop();
+    if (!victim) break;
+    var more = $('navMore');
+    if (!more) {
+      nav.insertAdjacentHTML('beforeend', '<details class="navmore" id="navMore"><summary>その他 ▾</summary><div class="navpop"></div></details>');
+      more = $('navMore');
+    }
+    more.querySelector('.navpop').insertBefore(victim, more.querySelector('.navpop').firstChild);
+    if (victim.getAttribute('aria-current') === 'page') more.classList.add('on');
+  }
+}
+var fitNavTimer = null;
+// 窓の幅を変えたら、メニューを並べ直す（PC だけ。入力中・窓を開いているときは、描き直さない）
+window.addEventListener('resize', function () {
+  clearTimeout(fitNavTimer);
+  fitNavTimer = setTimeout(function () {
+    if (!S.D || isPhone() || !$('shell') || $('shell').hidden || $('modals').children.length) return;
+    var a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;
+    render();
+  }, 250);
+});     // 上のメニューの「その他」に入れる画面（v0.37.0）
 // 見出しの絵文字（元のPC管理ダッシュボードに合わせた。文字は変えず、表示だけで付ける。v0.46.0）
 var VIEW_ICON = { customers: '🏢', activities: '🛠', repairs: '🔧', meeting: '👥', licenses: '🔑', rentals: '📦', projects: '🧩', notices: '📢', settings: '⚙️', devices: '💻', customer: '🏢', audit: '🕒', mmaint: '🧰', home: '✏️' };
 var HEAD_ICON = [['対応の多い', '🏢'], ['完了していない', '⏳'], ['月ごと', '📈'], ['内訳', '🧾'], ['週のまとめ', '📊'], ['先月', '📊'], ['対応履歴', '🛠'], ['対応したこと', '🛠'], ['修理', '🔧'], ['定期保守', '📋'], ['保守', '🧰'],
@@ -254,6 +286,7 @@ function render() {
   var navWasOpen = $('navMore') && $('navMore').open;
   $('nav').innerHTML = navMain.map(navBtn).join('') + (navRest.length
     ? '<details class="navmore' + (navRest.some(function (n) { return n[0] === current; }) ? ' on' : '') + '" id="navMore"' + (navWasOpen ? ' open' : '') + '><summary>その他 ▾</summary><div class="navpop">' + navRest.map(navBtn).join('') + '</div></details>' : '');
+  fitNav();
   var bl = bnavList();
   $('bnav').innerHTML = [bl[0], bl[1], ['', ''], bl[2], bl[3]].map(function (n) {
     if (!n[0]) return '<button type="button" class="add" data-act="plusInput"' + (current === 'home' || current === 'mmaint' ? ' aria-current="page"' : '') + '><i>＋</i>入力</button>';
@@ -279,7 +312,8 @@ function render() {
     // 画面の説明は、ふだんは隠して「？」で出す（自分の設定で、いつも出すにもできる。v0.108.0）
     if (PAGE_INTRO[S.view]) {
       var showIntro = q('pref.intro', 'hide') === 'show' || S.introOpen === S.view;
-      if (q('pref.intro', 'hide') !== 'show') headEl.insertAdjacentHTML('beforeend', '<button type="button" class="btn small intro-q" data-act="introToggle" aria-pressed="' + showIntro + '" title="この画面の説明" aria-label="この画面の説明">？</button>');
+      // スマホは、📖（マニュアル）の中に説明も出すので、「？」は出さない（v0.132.0。見出しの行が増えないように）
+      if (q('pref.intro', 'hide') !== 'show' && !(isPhone() && HELP[S.view])) headEl.insertAdjacentHTML('beforeend', '<button type="button" class="btn small intro-q" data-act="introToggle" aria-pressed="' + showIntro + '" title="この画面の説明" aria-label="この画面の説明">？</button>');
       if (showIntro) headEl.insertAdjacentHTML('afterend', '<p class="page-intro">' + esc(PAGE_INTRO[S.view]) + '</p>');
     }
   }

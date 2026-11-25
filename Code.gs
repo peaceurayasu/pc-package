@@ -9,7 +9,7 @@
  * 公開関数：doGet / getBootstrap / listActivities
  * （収集ツールからの受信 doPost は Receiver.gs）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.128.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.132.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 /**
  * 初期設定が済んでいるか（シートが全部あるか）。
@@ -325,7 +325,17 @@ function bootGroupDefs_() {
  * 最初の画面のあとに読むぶん（対応履歴・修理・ライセンス・要対応など、残りのシート）。
  * groups を渡すと、そのグループだけ（省略すると、全部）。返事の groups に、入れたグループを書く。
  */
-function bootRest_(me, groups) {
+/**
+ * スマホに渡す対応履歴を、完了していないものと、直近 PHONE_ACT_DAYS 日のものだけにする（v0.132.0。電波が弱い現場で、読み込みを軽く）。
+ * 全体の件数（activityTotal）はそのまま渡すので、画面は「古い分はまだ読んでいない」と分かり、要るとき（期間を選ぶ・顧客の画面）に読む。
+ */
+function liteActivities_(list) {
+  const p = todayYmd_().split('-');
+  const from = Utilities.formatDate(new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) - PHONE_ACT_DAYS), scriptTz_(), 'yyyy-MM-dd');
+  return list.filter(function (a) { return a['ステータス'] !== ACTIVITY_DONE || String(a['受付日'] || '') >= from; });
+}
+
+function bootRest_(me, groups, lite) {
   const started = Date.now();
   const defs = bootGroupDefs_();
   let want = Object.keys(defs);
@@ -346,7 +356,7 @@ function bootRest_(me, groups) {
   if (has('lic')) { out.licenses = parts.licenses; out.allocations = parts.allocations; out.rentals = parts.rentals; out.loans = parts.loans; }
   if (has('rep')) out.repairs = parts.repairs;
   if (has('act')) {
-    out.activities = parts.activities.activities;
+    out.activities = lite === true ? liteActivities_(parts.activities.activities) : parts.activities.activities;
     out.activityTotal = parts.activities.activityTotal;
     out.activityMonthCounts = parts.activities.activityMonthCounts;
   }
@@ -382,7 +392,7 @@ function getBootstrap(params) {
     cachePrime_();
     const part = params && params.part;
     if (part === 'core') return bootCore_(me);
-    if (part === 'rest') return bootRest_(me, params.groups);
+    if (part === 'rest') return bootRest_(me, params.groups, params.lite === true);
     const out = bootCore_(me);
     const rest = bootRest_(me);
     Object.keys(rest).forEach(function (k) { out[k] = rest[k]; });

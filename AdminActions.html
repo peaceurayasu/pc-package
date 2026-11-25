@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.132.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -1606,7 +1606,7 @@ var ACT = {
     var h = helpFor(el.dataset.view);
     if (!h) return;
     openModal('<header><h2>使い方：' + esc(h[0]) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
-      '<div class="body">' + manualHtml(el.dataset.view) + '<h3 style="font-size:14px;margin:14px 0 6px">ポイント</h3><ul class="help-list">' + h[1].map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
+      '<div class="body">' + (isPhone() && PAGE_INTRO[el.dataset.view] ? '<p class="page-intro" style="margin:0">' + esc(PAGE_INTRO[el.dataset.view]) + '</p>' : '') + manualHtml(el.dataset.view) + '<h3 style="font-size:14px;margin:14px 0 6px">ポイント</h3><ul class="help-list">' + h[1].map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
       '<footer><span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>', true, true);
   },
   phrase: function (el) {
