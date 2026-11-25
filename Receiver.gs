@@ -13,7 +13,7 @@
  *
  * 公開関数：doPost / issueReceiveToken / getReceiveInfo / getDeviceDiagnostics
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Receiver.gs'] = '0.111.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Receiver.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function jsonOutput_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
@@ -50,7 +50,7 @@ function normalizeMaker_(raw, options) {
   }
   for (let i = 0; i < MAKER_ALIASES.length; i++) {
     const key = MAKER_ALIASES[i][0];
-    // 'hp' や 'nec' のような短い語は、語の区切りで一致したときだけ当てはめる
+    // 'hp' や 'nec' のような短い語は、語の区切りで一致した時だけ当てはめる
     const hit = key.length <= 3 ? new RegExp('(^|[^a-z])' + key + '([^a-z]|$)').test(s) : s.indexOf(key) !== -1;
     if (hit && active.indexOf(MAKER_ALIASES[i][1]) !== -1) return MAKER_ALIASES[i][1];
   }
@@ -114,7 +114,7 @@ function receiveCore_(e) {
     if (!customer || customer['状態'] !== '有効') throw denied();
     customerId = String(customer['顧客ID']);
 
-    // 同じ顧客からの送りすぎを止める（トークンが漏れたときに、機器を大量に作られないように）
+    // 同じ顧客からの送りすぎを止める（トークンが漏れた時に、機器を大量に作られないように）
     const rateKey = 'rcv_' + customerId;
     const count = Number(cache.get(rateKey)) || 0;
     if (count >= RECEIVE_MAX_PER_10MIN) throw appError_('busy', '送信が多すぎます。しばらく待ってください。');
@@ -159,11 +159,11 @@ function receiveCore_(e) {
     if (!junk) {
       const key = serial.toLowerCase();
       const bySerial = function (list) { return preferLive(list.filter(function (d) { return String(d['シリアル']).trim().toLowerCase() === key; })); };
-      // トークンなし（仮受付）のときは、振り分け済みの機器も含めて、シリアルが同じ機器を探す（v0.66.0）。
+      // トークンなし（仮受付）の時は、振り分け済みの機器も含めて、シリアルが同じ機器を探す（v0.66.0）。
       //   見つかれば、その機器（元の顧客のまま）の診断を更新する。仮受付に重複して作らない
       device = bySerial(tokenless ? allDevices : mine);
     } else {
-      // シリアルが使えないときは、前に同じコンピューター名で受けた機器を探す
+      // シリアルが使えない時は、前に同じコンピューター名で受けた機器を探す
       const name = computerName.toLowerCase();
       const ids = {};
       readTable_(SHEET_DIAGNOSTICS).rows.forEach(function (r) {
@@ -218,8 +218,8 @@ function receiveCore_(e) {
 
 // ---------------------------------------------------------------------------
 // 収集ツールのレポート（v0.25.0）
-//   ツール v1.7.0〜 は、ふつうの送信のあとに、作ったレポート（HTML）を kind:'report' で送ってくる。
-//   その顧客の機器のうち、シリアル（取れないときはコンピューター名）が合う機器に貼り付ける。
+//   ツール v1.7.0〜 は、ふつうの送信の後に、作ったレポート（HTML）を kind:'report' で送ってくる。
+//   その顧客の機器のうち、シリアル（取れない時はコンピューター名）が合う機器に貼り付ける。
 //   ファイルは共有しない（画面からは getDiagReport で中身を読んで、枠の中に出す）。1台に3つまで残す。
 // ---------------------------------------------------------------------------
 function receiveReport_(customerId, payload, tokenless) {
@@ -231,7 +231,7 @@ function receiveReport_(customerId, payload, tokenless) {
   if (head.indexOf('<html') === -1 && head.indexOf('<!doctype html') === -1) throw appError_('invalid', 'レポートの形式が正しくありません。');
 
   return withLock_(function () {
-    // トークンなしのときは、振り分け済みの機器にも貼り付ける（v0.66.0）
+    // トークンなしの時は、振り分け済みの機器にも貼り付ける（v0.66.0）
     const devices = readTable_(SHEET_DEVICES).rows.filter(function (d) { return tokenless || String(d['顧客ID']) === customerId; });
     const devIds = {};
     devices.forEach(function (d) { devIds[String(d['機器ID'])] = d; });
@@ -357,11 +357,11 @@ function getDeviceDiagnostics(params) {
  * しくみ
  *   - 管理者が、Google ドライブに置いた新しい PCInfoTool.exe を「設定」→「収集ツールの配布」で登録する
  *     （ドライブのファイルは、このウェブアプリを動かしているアカウントが開けること。共有は「制限付き」のままでよい）
- *   - 登録のときに SHA-256 を計算して ScriptProperties に持つ（シートには書かない）
+ *   - 登録の時に SHA-256 を計算して ScriptProperties に持つ（シートには書かない）
  *   - ツール（v1.2.0 以降）は GET で問い合わせる
  *       .../exec?action=version&token=受信トークン   … {ok, version, sha256, notes, published}
  *       .../exec?action=download&token=受信トークン  … {ok, version, sha256, data(Base64)}
- *     トークンは、どれかの有効な顧客の「受信トークン」と同じときだけ答える
+ *     トークンは、どれかの有効な顧客の「受信トークン」と同じ時だけ答える
  *
  * 公開関数：getToolRelease / saveToolRelease（どちらも管理者だけ）
  * doGet からの入口は toolUpdateGet_（Code.gs）
@@ -405,7 +405,7 @@ function releaseForClient_(r) {
 }
 
 /**
- * いま配っている版。
+ * 今配っている版。
  * @param {{token:string}} params
  */
 function getToolRelease(params) {
@@ -456,7 +456,7 @@ function saveToolRelease(params) {
     }
     if (file.isTrashed && file.isTrashed()) throw appError_('invalid', 'そのファイルはゴミ箱に入っています。');
     const name = String(file.getName() || '');
-    if (!/\.exe$/i.test(name)) throw appError_('invalid', '.exe のファイルを選んでください（いまのファイル名：' + name + '）。');
+    if (!/\.exe$/i.test(name)) throw appError_('invalid', '.exe のファイルを選んでください（今のファイル名：' + name + '）。');
     const size = file.getSize();
     if (!size) throw appError_('invalid', 'ファイルが空です。');
     if (size > RELEASE_MAX_BYTES) throw appError_('invalid', 'ファイルが大きすぎます（5MBまで）。');
@@ -514,9 +514,9 @@ function toolUpdateGet_(p) {
       console.error('配布ファイルを読めません: ' + err);
       return deny('download');
     }
-    // 登録のあとにファイルを差し替えられた場合は配らない（ツール側の検証でも止まるが、ここで先に止める）
+    // 登録の後にファイルを差し替えられた場合は配らない（ツール側の検証でも止まるが、ここで先に止める）
     if (bytesSha256Hex_(bytes) !== r.sha256) {
-      console.error('配布ファイルが登録のあとに変わっています。登録し直してください。');
+      console.error('配布ファイルが登録の後に変わっています。登録し直してください。');
       return deny('changed');
     }
     return jsonOutput_({ ok: true, version: r.version, sha256: r.sha256, data: Utilities.base64Encode(bytes) });
@@ -532,10 +532,10 @@ function toolUpdateGet_(p) {
 /**
  * Feed.gs … Windows情報と Tips の自動更新のまとめ役（v0.76.0 で、ドライブの配信フォルダーは廃止した）
  *
- * いまの自動更新は RSS だけ（Rss.gs）。このファイルには、次のものがある。
+ * 今の自動更新は RSS だけ（Rss.gs）。このファイルには、次のものがある。
  *   - addWinInfoRows_ … Windows情報をまとめて足す（RSS と「まとめて貼り付け」が使う）
  *   - addTipRows_ / tipsForClient_ … Tips の追加と、画面に渡す Tips
- *   - refreshFeed … 画面を開いたときに、裏で呼ばれる（新しい Tips を足す・RSS を読む）
+ *   - refreshFeed … 画面を開いた時に、裏で呼ばれる（新しい Tips を足す・RSS を読む）
  *
  * 取り込んだ Windows情報は、「顧客に見せる：いいえ」で入る。スタッフが確かめてから「はい」にする。
  *
@@ -638,7 +638,7 @@ function tipsForClient_(settings) {
       .map(function (r) { return { t: String(r['見出し']).slice(0, TIPS_TITLE_MAX), b: String(r['説明']).slice(0, TIPS_BODY_MAX) }; });
   } catch (e) { list = []; }
   if (!list.length) list = WINDOWS_TIPS.map(function (x) { return { t: x[0], b: x[1] }; });
-  // キャッシュに入る大きさ（日本語は1文字が3バイトほど）のときだけ、おぼえておく。入らなくても、画面は出す
+  // キャッシュに入る大きさ（日本語は1文字が3バイトほど）の時だけ、おぼえておく。入らなくても、画面は出す
   const json = JSON.stringify(list);
   if (json.length < 30000) {
     try { cache.put(TIPS_CACHE_KEY, json, 600); } catch (e) { /* おぼえられなくても続ける */ }
@@ -646,7 +646,7 @@ function tipsForClient_(settings) {
   return list;
 }
 
-/** RSS を確かめる間隔（秒）。設定「配信を確かめる間隔（時間）」1〜6、変なら6時間（force で読むときは待たない） */
+/** RSS を確かめる間隔（秒）。設定「配信を確かめる間隔（時間）」1〜6、変なら6時間（force で読む時は待たない） */
 function feedCheckSeconds_(settings) {
   const h = parseInt(settings && settings['配信を確かめる間隔（時間）'], 10);
   return isFinite(h) && h >= 1 && h <= 6 ? h * 3600 : 21600;
@@ -674,7 +674,7 @@ function dropOldFeedLeftovers_() {
 }
 
 /**
- * 新しい Tips を足し、RSS を読む（毎朝の通知の処理と「いますぐ更新」。画面を開いたときには読まない。v0.77.0）。
+ * 新しい Tips を足し、RSS を読む（毎朝の通知の処理と「いますぐ更新」。画面を開いた時には読まない。v0.77.0）。
  * @return {{added:number, tips:number, rss:Object, message:string}} added は足した Windows情報、tips は足した Tips
  */
 function refreshFeedCore_(force) {
@@ -686,7 +686,7 @@ function refreshFeedCore_(force) {
 }
 
 /**
- * 自動更新を確かめる（スタッフ）。画面を開いたときに、裏で呼ばれる。force:true は「いますぐ更新」。
+ * 自動更新を確かめる（スタッフ）。画面を開いた時に、裏で呼ばれる。force:true は「いますぐ更新」。
  * @param {{token:string, force:boolean}} params
  */
 function refreshFeed(params) {
@@ -696,7 +696,7 @@ function refreshFeed(params) {
     const r = refreshFeedCore_(p.force !== false);
     const settings = getSettings_();
     const out = { checked: r.rss.checked, added: r.added, addedTips: r.tips, message: r.message, feed: feedForClient_(settings) };
-    // 何か足したときだけ、新しい一覧を返す
+    // 何か足した時だけ、新しい一覧を返す
     out.wininfo = sortWinInfo_(readTable_(SHEET_WININFO).rows).map(function (x) { return publicRecord_(x); });
     out.tips = tipsForClient_(settings);
     return out;
@@ -714,7 +714,7 @@ function refreshFeed(params) {
  *   2. 記事のタイトル・概要に、設定の「RSSの言葉」（不具合・ドライバー／セキュリティ／PCパーツ）が入っているものだけを選ぶ。
  *      どの媒体がどの言葉を使うかは、媒体ごとの groups で決める。言葉は設定で変えられる。
  *   3. 日付＋タイトルが同じものは入れない。入るのは「顧客に見せる：いいえ」（スタッフが確かめてから「はい」）。
- *   4. 確かめるのは、スタッフが画面を開いたとき（設定の間隔に1回まで）と、毎朝の通知の処理のとき。
+ *   4. 確かめるのは、スタッフが画面を開いたとき（設定の間隔に1回まで）と、毎朝の通知の処理の時。
  *
  * 使えないもの
  *   X（旧Twitter）… 無料で安定して使える RSS が無い。
@@ -885,7 +885,7 @@ function refreshRssCore_(force) {
   const showInfo = settings['取り込んだWindows情報をお客様に見せる'] === YES ? YES : NO;
   const props = PropertiesService.getScriptProperties();
 
-  // 媒体を全部いっしょに読む（順番に読むと遅い）。fetchAll が丸ごと失敗したら、1つずつ読み直して、どこがだめか分ける
+  // 媒体を全部一緒に読む（順番に読むと遅い）。fetchAll が丸ごと失敗したら、1つずつ読み直して、どこがだめか分ける
   const sources = rssSources_(settings);
   const request = function (src) { return { url: src.url, muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PCKanri-RSS)' } }; };
   let responses = null;
@@ -939,7 +939,7 @@ function refreshRssCore_(force) {
 
 /**
  * 「外部サービスへの接続」の承認を出す（v0.73.1）。スプレッドシートのメニュー、または Apps Script のエディタで
- * この関数を選んで「実行」すると、承認の画面が出る。承認したあと、窓の杜の RSS を1回読んで、結果を知らせる。
+ * この関数を選んで「実行」すると、承認の画面が出る。承認した後、窓の杜の RSS を1回読んで、結果を知らせる。
  */
 function authorizeRss() {
   let msg;

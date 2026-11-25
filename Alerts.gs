@@ -19,7 +19,7 @@
  * 公開関数：getAlerts / resolveAlert / unresolveAlert / sendAlertMailNow
  *           runDailyAlerts（時間のトリガー用）/ setupDailyTrigger / removeDailyTrigger（メニュー用）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.123.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function settingInt_(settings, key, fallback, max) {
   const n = parseInt(settings[key], 10);
@@ -50,7 +50,7 @@ function oneLine_(text, max) {
 }
 
 /**
- * いまの状況から、出すべきアラートを全部作る（対応済みかどうかは見ない）。
+ * 今の状況から、出すべきアラートを全部作る（対応済みかどうかは見ない）。
  * @return {Array<Object>} {key, category, level, customerId, targetType, targetId, title, detail, sig}
  */
 function computeAlerts_() {
@@ -61,7 +61,7 @@ function computeAlerts_() {
 }
 
 // 要対応は、もとになるシートごとに5つに分けて作る（サーバー側の控えも、この単位で持つ。
-// たとえば対応を1件足したときは「対応から」のぶんだけ作り直せばよく、機器診断などを読み直さずに済む）
+// たとえば対応を1件足した時は「対応から」のぶんだけ作り直せばよく、機器診断などを読み直さずに済む）
 const ALERT_PART_NAMES = ['alertsLicense', 'alertsRental', 'alertsDevice', 'alertsRepair', 'alertsActivity', 'alertsBiz'];
 
 function alertSources_() {
@@ -71,7 +71,7 @@ function alertSources_() {
   };
 }
 
-/** 要対応を作るときに、どの種類でも使うもの（設定・今日の日付・顧客） */
+/** 要対応を作る時に、どの種類でも使うもの（設定・今日の日付・顧客） */
 function alertContext_() {
   const settings = getSettings_();
   const today = todayYmd_();
@@ -103,7 +103,7 @@ function alertsLicense_(ctx) {
     const c = ctx.customers[id], due = String(c['契約更新日'] || '');
     if (!due || !live(id) || c['保守契約'] === 'なし') return;
     const d = dayDiff_(today, due);
-    if (d < -30 || d > renewDays) return;          // 過ぎて1か月たったら出さない（更新日を直すのを忘れたときのため、少しだけ残す）
+    if (d < -30 || d > renewDays) return;          // 過ぎて1か月たったら出さない（更新日を直すのを忘れた時のため、少しだけ残す）
     push('renewal', 'customer', id, id, d < 0 ? 'danger' : 'warn', '保守契約の更新',
       (d < 0 ? '更新日をすぎています（' + due + '）。更新したら「契約更新日」を次の年に直してください' : '更新日まであと' + d + '日（' + due + '）。保守のご報告書を作ってお持ちしましょう'), due);
   });
@@ -212,7 +212,7 @@ function alertsDevice_(ctx) {
     if (!g || dev['状況'] !== '使用中' || !live(dev['顧客ID'])) return;
     const name = [dev['利用者'], dev['機種名']].filter(function (x) { return x; }).join(' / ') || g['コンピューター名'] || String(dev['機器ID']);
     const received = String(g['受信日時']).slice(0, 10);
-    // ツールは、異常があるときだけ「■ EventID …」の形で送ってくる（無いときは「なし」など）
+    // ツールは、異常がある時だけ「■ EventID …」の形で送ってくる（無い時は「なし」など）
     if (diskOn && /EventID/.test(String(g['ディスク関連イベント']))) {
       push('disk', 'device', dev['機器ID'], dev['顧客ID'], 'danger', name, oneLine_(g['ディスク関連イベント'], 80), received);
     }
@@ -350,7 +350,7 @@ function alertsFromParts_(parts) {
 // ---------------------------------------------------------------------------
 // 公開関数：画面から
 // ---------------------------------------------------------------------------
-/** いまの要対応アラート。@param {{token:string}} params */
+/** 今の要対応アラート。@param {{token:string}} params */
 function getAlerts(params) {
   return api_(function () {
     cachePrime_();
@@ -411,14 +411,14 @@ function alertRecipients_(settings) {
   return String(settings['通知先メール'] || '').split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x; });
 }
 
-/** 通知メールの件名と本文を作る。fresh は新しく出たもの、openCount はいま出ている全部の数 */
+/** 通知メールの件名と本文を作る。fresh は新しく出たもの、openCount は今出ている全部の数 */
 function buildAlertMail_(settings, fresh, openCount, isTest) {
   const customers = {};
   readTable_(SHEET_CUSTOMERS).rows.forEach(function (c) { customers[String(c['顧客ID'])] = c['顧客名']; });
   const company = settings['自社名'] ? settings['自社名'] + ' ' : '';
   const subject = '【' + company + APP_NAME + '】要対応 ' + (isTest ? fresh.length + '件（送信テスト）' : '新着' + fresh.length + '件') +
-    (!isTest && openCount > fresh.length ? '（ほかに継続' + (openCount - fresh.length) + '件）' : '');
-  const lines = [isTest ? 'いま出ている要対応の一覧です（送信テスト）。' : '新しく出た要対応のお知らせです。', ''];
+    (!isTest && openCount > fresh.length ? '（他に継続' + (openCount - fresh.length) + '件）' : '');
+  const lines = [isTest ? '今出ている要対応の一覧です（送信テスト）。' : '新しく出た要対応のお知らせです。', ''];
   let used = 0;
   ALERT_CATEGORIES.forEach(function (cat) {
     const items = fresh.filter(function (a) { return a.category === cat[0]; });
@@ -441,7 +441,7 @@ function buildAlertMail_(settings, fresh, openCount, isTest) {
 }
 
 /**
- * 毎朝の処理の本体。アラート状態シートをいまの状況に合わせ、新しく出たものがあればメールを送る。
+ * 毎朝の処理の本体。アラート状態シートを今の状況に合わせ、新しく出たものがあればメールを送る。
  * @return {{fresh:number, open:number, sent:boolean}}
  */
 function dailyAlertsCore_() {
@@ -455,7 +455,7 @@ function dailyAlertsCore_() {
     alerts.forEach(function (a) { active[a.key] = a; });
 
     // もう出ていないアラートの行は消す（次に同じものが出たら「新着」として扱うため）。下の行から消す
-    // 設定で「出さない」にしている種類の行は残す（また出すようにしたとき、対応済み・通知済みを覚えているように）
+    // 設定で「出さない」にしている種類の行は残す（また出すようにした時、対応済み・通知済みを覚えているように）
     const hidden = hiddenAlertCategories_(getSettings_());
     Object.keys(states)
       .filter(function (key) { return !active[key] && hidden.indexOf(String(key).split(':')[0]) === -1; })
@@ -520,7 +520,7 @@ function runDailyAlerts(e) {
   } catch (err) {
     console.error('毎朝のアラート処理でエラー: ' + (err && err.stack ? err.stack : err));
   }
-  // RSS も、ここで確かめる（だれも画面を開かない日でも、取り込まれるように）。
+  // RSS も、ここで確かめる（誰も画面を開かない日でも、取り込まれるように）。
   // 前の版で「毎朝の通知」を設定したままの人は、1時間ごとの RSS のトリガーが無いので、ここで足す（v0.113.0）
   try { ensureFeedTrigger_(); } catch (err) { console.warn('RSS のトリガーを足せませんでした: ' + err); }
   try {
@@ -537,7 +537,7 @@ function runDailyAlerts(e) {
 }
 
 /**
- * いま出ている要対応を、通知先にメールで送ってみる（管理者）。通知済みの印は付けない。
+ * 今出ている要対応を、通知先にメールで送ってみる（管理者）。通知済みの印は付けない。
  * @param {{token:string}} params
  */
 function sendAlertMailNow(params) {
@@ -619,10 +619,10 @@ function removeDailyTrigger() {
 // ---------------------------------------------------------------------------
 // GAS を起こしておく（v0.21.0）
 //   時間のトリガーで30分ごとに呼ぶ。WARM_FROM_HOUR〜WARM_TO_HOUR の間だけ、画面に渡すデータの控え（キャッシュ）を作っておく。
-//   控えは1時間で切れるので、だれも使わない時間が続いたあとでも、ログインがすぐ終わる（シートを読まずに済む）。
+//   控えは1時間で切れるので、誰も使わない時間が続いた後でも、ログインがすぐ終わる（シートを読まずに済む）。
 //   それ以外の時間は、時刻を見てすぐ終わる（ほとんど時間を使わない）。
 // ---------------------------------------------------------------------------
-/** 控えを作っておく（だれのログインでもない。画面に渡す部品だけ） */
+/** 控えを作っておく（誰のログインでもない。画面に渡す部品だけ） */
 function warmUpCore_() {
   cachePrime_();
   bootParts_(['customers', 'devices', 'diagnostics', 'licenses', 'allocations', 'repairs', 'activities', 'maintenances', 'memos', 'notices',
@@ -661,7 +661,7 @@ function setupWarmTrigger() {
   ScriptApp.newTrigger(WARM_TRIGGER_FUNCTION).timeBased().everyMinutes(WARM_EVERY_MINUTES).create();
   try { warmUpCore_(); } catch (err) { console.warn('起こしておく処理でエラー: ' + err); }
   ui.alert('毎日 ' + WARM_FROM_HOUR + '時台〜' + (WARM_TO_HOUR - 1) + '時台のあいだ、' + WARM_EVERY_MINUTES + '分ごとに、画面のデータの控えを作っておくようにしました。\n\n' +
-    'しばらくだれも使わなかったあとでも、ログインが速くなります。時間を変えたいときは、Config.gs の WARM_FROM_HOUR／WARM_TO_HOUR。');
+    'しばらく誰も使わなかった後でも、ログインが速くなります。時間を変えたい時は、Config.gs の WARM_FROM_HOUR／WARM_TO_HOUR。');
 }
 
 /** メニュー：起こしておくのをやめる */
@@ -677,7 +677,7 @@ function removeWarmTrigger() {
 /**
  * Report.gs … お客様向けの月次レポート
  *
- * 1顧客・1か月ぶんの「やったこと」と「いまの状態」をまとめる。画面で見て、ブラウザの印刷でPDFにする。
+ * 1顧客・1か月ぶんの「やったこと」と「今の状態」をまとめる。画面で見て、ブラウザの印刷でPDFにする。
  * お客様に渡すものなので、備考・社内メモ・認証情報・修理の内容（社内向けの書き方になりやすい）は入れない。
  *
  * 公開関数：getMonthlyReport（お客様ページ用の getPortalReport は Portal.gs）
@@ -784,8 +784,8 @@ function getMonthlyReport(params) {
 
 // ---------------------------------------------------------------------------
 // 月次レポートを、お客様ページに出す（v0.30.0）
-//   設定「レポートは公開した月だけ見せる」が「はい」のとき、お客様ページに出るのは、ここで公開した月だけ。
-//   公開した月と、そのときの「ひとこと」は、スクリプトのプロパティに顧客ごとに持つ（シートの列は増やさない）
+//   設定「レポートは公開した月だけ見せる」が「はい」の時、お客様ページに出るのは、ここで公開した月だけ。
+//   公開した月と、その時の「ひとこと」は、スクリプトのプロパティに顧客ごとに持つ（シートの列は増やさない）
 // ---------------------------------------------------------------------------
 // 1つの月を1つのプロパティにする（1つのプロパティは9KBまで。まとめて持つと、ひとことが長いと入らなくなるため）
 function reportPubKey_(customerId, month) { return REPORT_PUB_PREFIX + String(customerId) + '_' + month; }
@@ -853,12 +853,12 @@ function publishReport(params) {
  *
  *   カレンダーは読み取りだけ。予定を足したり直したりはしない。
  *   このスクリプトを動かしているアカウントが、そのカレンダーを見られること（共有されていること）が要る。
- *   初めて使うときは、Google の「承認」（カレンダーを見る権限）が1回要る。
+ *   初めて使う時は、Google の「承認」（カレンダーを見る権限）が1回要る。
  */
 
 const CAL_MAX_DAYS = 45;          // 一度に取れる期間（日）
 const CAL_MAX_EVENTS = 150;       // 一度に返す予定の数
-const CAL_CACHE_SECONDS = 300;    // 同じ期間を続けて開いたときの控え（5分）
+const CAL_CACHE_SECONDS = 300;    // 同じ期間を続けて開いた時の控え（5分）
 const CAL_DEFAULT_WORDS = '納品,搬入,設置,キッティング';
 
 /** 全角の数字を半角にする */
@@ -887,12 +887,12 @@ function calIds_(raw) {
   return String(raw || '').split(/[,、\s]+/).map(function (x) { return x.trim(); }).filter(function (x) { return x; }).slice(0, 10);
 }
 
-/** カレンダーを開く。見つからない・権限が無いときは、画面に出すエラーにする */
+/** カレンダーを開く。見つからない・権限が無い時は、画面に出すエラーにする */
 function openCalendar_(id) {
   let cal;
   try { cal = CalendarApp.getCalendarById(id); } catch (e) {
     console.error('カレンダーを開けませんでした: ' + (e && e.stack ? e.stack : e));
-    throw appError_('calendar', 'カレンダーを開けませんでした。初めて使うときは、スクリプトの「承認」（カレンダーの権限）が要ります。');
+    throw appError_('calendar', 'カレンダーを開けませんでした。初めて使う時は、スクリプトの「承認」（カレンダーの権限）が要ります。');
   }
   return cal || null;
 }
@@ -979,7 +979,7 @@ function getCalendarWeek(params) {
     const settings = getSettings_();
     const r = calendarEvents_(settings, from, to);
     if (!r) return { configured: false, from: from, to: to, events: [] };
-    // 納品以外の予定は、設定で「出す」にしたときだけ。出さないものは、サーバーから画面へも送らない（v0.62.0）
+    // 納品以外の予定は、設定で「出す」にした時だけ。出さないものは、サーバーから画面へも送らない（v0.62.0）
     const all = settings['納品以外の予定も出す'] === YES;
     const events = all ? r.events : r.events.filter(function (e) { return e.delivery; });
     const shown = String(settings['カレンダーの表示名'] || '').trim() || r.name || '';
@@ -990,7 +990,7 @@ function getCalendarWeek(params) {
 /**
  * メニュー（またはスクリプトエディタ）から1回だけ実行する：Google に「カレンダーを見る権限」を許可してもらう（v0.61.2）。
  * 中身はカレンダーの一覧を数えるだけ（読むだけ・何も変えない。何も返さない）。初めて実行すると、許可の画面が出る。
- * エディタから実行したときは画面（メニュー）が使えないので、結果は「実行ログ」に出る（v0.61.3）。
+ * エディタから実行した時は画面（メニュー）が使えないので、結果は「実行ログ」に出る（v0.61.3）。
  */
 /**
  * v0.118.0：定期保守の予定を「書き込めるか」を確かめる。
@@ -1013,7 +1013,7 @@ function calendarWriteCheck_() {
       if (!cal) { out.push('✕ ' + id + '：見つかりません'); return; }
       const t = new Date(2000, 0, 1, 9, 0);
       const ev = cal.createEvent('【PC管理パッケージ】書き込みの確認（すぐ消えます）', t, new Date(t.getTime() + 60000));
-      try { ev.deleteEvent(); } catch (e) { /* 消せなくても、書き込めることはわかった */ }
+      try { ev.deleteEvent(); } catch (e) { /* 消せなくても、書き込めることは分かった */ }
       out.push('◯ ' + (cal.getName() || id) + '：予定を入れられます');
     } catch (e) {
       const m = String(e && e.message ? e.message : e);
@@ -1046,7 +1046,7 @@ function authorizeCalendar() {
     msg += '\n\n' + calendarWriteCheck_();
   } catch (e) {
     console.error('カレンダーの権限を確かめられませんでした: ' + (e && e.stack ? e.stack : e));
-    msg = 'カレンダーを読めませんでした。README の「承認が出ないとき」を見てください。\n' + String(e && e.message ? e.message : e).slice(0, 200);
+    msg = 'カレンダーを読めませんでした。README の「承認が出ない時」を見てください。\n' + String(e && e.message ? e.message : e).slice(0, 200);
   }
   console.log(msg);
   try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* エディタやウェブからは画面が使えない。ログだけ */ }
@@ -1150,12 +1150,12 @@ function planMaintenance(params) {
     try { return planMaintenance_(params); } catch (e) { throw maintErr_(e, '日程の案を作れませんでした'); }
   });
 }
-/** v0.117.0：思わぬエラーのとき、原因の文を画面に出す（「サーバーでエラー」だけだと直せないため） */
+/** v0.117.0：思わぬエラーの時、原因の文を画面に出す（「サーバーでエラー」だけだと直せないため） */
 function maintErr_(e, what) {
   if (e && e.appCode) return e;
   console.error(what + ': ' + (e && e.stack ? e.stack : e));
   const msg = String(e && e.message ? e.message : e).slice(0, 200);
-  if (/permission|権限|authoriz/i.test(msg)) return appError_('calendar', what + '。予定を入れる権限がありません。Apps Script のエディタで関数「authorizeCalendar」を選んで「実行」し、承認の画面でカレンダーの項目（予定の表示・編集…）すべてにチェックを入れて許可してください。そのあと、ウェブアプリを新しいバージョンでデプロイし直してください。（' + msg.slice(0, 80) + '）');
+  if (/permission|権限|authoriz/i.test(msg)) return appError_('calendar', what + '。予定を入れる権限がありません。Apps Script のエディタで関数「authorizeCalendar」を選んで「実行」し、承認の画面でカレンダーの項目（予定の表示・編集…）全てにチェックを入れて許可してください。その後、ウェブアプリを新しいバージョンでデプロイし直してください。（' + msg.slice(0, 80) + '）');
   return appError_('server', what + '。（原因：' + msg + '）');
 }
 function planMaintenance_(params) {
@@ -1348,7 +1348,7 @@ function registerMaintenancePlan_(params) {
       if (ids.indexOf(String(it.calendarId)) === -1) { out.skipped.push({ customerId: it.customerId, reason: '設定に無いカレンダー' }); return; }
       const cal = calCache[it.calendarId] !== undefined ? calCache[it.calendarId] : (calCache[it.calendarId] = openCalendar_(it.calendarId));
       if (!cal) { out.skipped.push({ customerId: it.customerId, reason: 'カレンダーが見つからない' }); return; }
-      // 同じ月に、同じ顧客の定期保守の予定がもうあれば入れない（2回押したとき）。
+      // 同じ月に、同じ顧客の定期保守の予定がもうあれば入れない（2回押した時）。
       // v0.123.0：月ごとに、設定のカレンダー全部を1回だけ読む（前は1件ごとに読んでいて、件数が多いと遅かった。
       //   別のカレンダー（担当）に入っている予定も2重とみなす）
       const done = monthDone(date.slice(0, 7));

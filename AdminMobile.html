@@ -1,13 +1,13 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.137.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.138.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
 //   探す欄と、押しやすいカードの一覧だけ。押すと、これまでと同じ編集の窓（顧客は顧客の画面）が開く。
 // ===========================================================================
 var P_STEP = 50;
-var P_DEF = { cust: '', dev: '', pcmode: 'dev', act: 'open', rep: 'open', lic: 'soon' };
+var P_DEF = { cust: '', dev: '', pcmode: 'dev', act: 'open', rep: 'open', lic: 'all' };      // v0.138.0：ライセンスは、最初は「全て」
 function pState(key) {
   S.p = S.p || {};
   if (!S.p[key]) S.p[key] = { f: P_DEF[key], q: '', n: P_STEP };
@@ -92,7 +92,7 @@ var P_CARD = {
   dev: function (d) {
     var id = d['機器ID'];
     return pCard('editRecord:device', id, (d['種類'] ? pill(d['種類'], 'brand') : '') + (isPendingCust(d['顧客ID']) ? pill('仮受付', 'warn') : '') + (d['状況'] === '未使用' ? pill('未使用') : ''),
-      devLabel(id) || id, [custName(d['顧客ID']), d['設置場所'], d['利用者']].filter(function (x) { return x; }).join('・'), isPendingCust(d['顧客ID']) ? 'unassigned' : '', memoText(d));
+      devLabel(id) || id, [custName(d['顧客ID']), d['設置場所'], d['利用者'], devStamp(d) ? '更新 ' + devStamp(d).slice(5, 16).replace('-', '/') : ''].filter(function (x) { return x; }).join('・'), isPendingCust(d['顧客ID']) ? 'unassigned' : '', memoText(d));
   },
   act: function (a) {
     return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + quickDoneHtml('activity', a, 'span') + (a._pending ? ' ' + pill('保存中…', 'warn') : '') + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + (a['会議で共有'] === 'はい' ? ' ' + pill('共有', 'brand') : '') + photoMark('activity', a['対応ID']),
@@ -123,7 +123,7 @@ function pAlertSheetInner() {
   all.forEach(function (a) { counts[a.category] = (counts[a.category] || 0) + 1; });
   if (cat && !counts[cat]) cat = S.pAlertCat = '';
   var list = all.filter(function (a) { return !cat || a.category === cat; });
-  var chips = '<div class="chipset small pacats"><button type="button" data-act="pAlertCat" data-cat="" aria-pressed="' + !cat + '">すべて ' + all.length + '</button>' +
+  var chips = '<div class="chipset small pacats"><button type="button" data-act="pAlertCat" data-cat="" aria-pressed="' + !cat + '">全て ' + all.length + '</button>' +
     S.D.alertCategories.filter(function (c) { return counts[c[0]]; }).map(function (c) {
       return '<button type="button" data-act="pAlertCat" data-cat="' + esc(c[0]) + '" aria-pressed="' + (cat === c[0]) + '">' + esc(c[1]) + ' ' + counts[c[0]] + '</button>';
     }).join('') + '</div>';
@@ -149,22 +149,22 @@ var PHONE_VIEWS = {
     } else if (S.restFailed) {
       alerts = '<p class="note">要対応を読み込めませんでした。<button type="button" class="btn small" data-act="retryRest">もう一度読み込む</button></p>';
     } else alerts = '<p class="note" id="pAlertWait">要対応を読み込んでいます…</p>';
-    // 開いたら、すべての機器を新しい順に出す。顧客から探すときは「顧客から」を押す（v0.78.0）
+    // 開いたら、全ての機器を新しい順に出す。顧客から探す時は「顧客から」を押す（v0.78.0）
     var byCust = pState('pcmode').f === 'cust';
-    return pHead('顧客情報') + pChips('pcmode', [['dev', 'すべての機器'], ['cust', '顧客から']]) + alerts +
+    return pHead('顧客情報') + pChips('pcmode', [['dev', '全ての機器'], ['cust', '顧客から']]) + alerts +
       (byCust ? pBody('cust', '顧客名・ふりがな・電話で探す', null) : pBody('dev', '利用者・機種・シリアル・顧客名で探す（ひらがな可）', null));
   },
   activities: function () {
-    return pHead('対応', 'activity', '対応を記録') + pBody('act', '内容・顧客名・担当で探す（ひらがな可）', [['open', '未完了'], ['month', '直近30日'], ['all', 'すべて']]) +
+    return pHead('対応', 'activity', '対応を記録') + pBody('act', '内容・顧客名・担当で探す（ひらがな可）', [['open', '未完了'], ['month', '直近30日'], ['all', '全て']]) +
       '<p class="note">' + (S.D.activityTotal > S.D.activities.length ? 'スマホでは、完了していない対応と、直近90日の対応だけを読んでいます（軽くするため）。それより前は、顧客の画面か、パソコンの「対応」で見られます。' : '') + '</p>';
   },
   repairs: function () {
     if (pState('rep').f === 'all') ensureFullRepairs();
-    return pHead('修理', 'repair', '修理を受け付け') + pBody('rep', '件名・顧客名・型番・預かり品で探す', [['open', '進行中'], ['all', 'すべて']]) +
-      (S.repLite ? '<p class="note">スマホでは、終わっていない修理と、直近90日の修理だけを読んでいます（軽くするため）。「すべて」を選ぶと、残りも読みます。</p>' : '');
+    return pHead('修理', 'repair', '修理を受け付け') + pBody('rep', '件名・顧客名・型番・預かり品で探す', [['open', '進行中'], ['all', '全て']]) +
+      (S.repLite ? '<p class="note">スマホでは、終わっていない修理と、直近90日の修理だけを読んでいます（軽くするため）。「全て」を選ぶと、残りも読みます。</p>' : '');
   },
   licenses: function () {
-    return pHead('ライセンス', 'license', 'ライセンスを追加') + pBody('lic', '製品名・顧客名で探す（ひらがな可）', [['soon', '期限が近い・切れた'], ['all', 'すべて']]);
+    return pHead('ライセンス', 'license', 'ライセンスを追加') + pBody('lic', '製品名・顧客名で探す（ひらがな可）', [['all', '全て'], ['soon', '期限が近い・切れた']]);
   }
 };
 
@@ -229,7 +229,7 @@ function mmCustListHtml() {
   var recent = recentCustIds();
   var all = S.D.customers.filter(function (c) { return c['状態'] !== '無効' || recent.indexOf(c['顧客ID']) !== -1; });
   var rows, month = String(S.D.today).slice(0, 7);
-  // 今月もう保守をした顧客は、ふだんの一覧には出さない（名前で探せば出る。v0.35.0）
+  // 今月もう保守をした顧客は、普段の一覧には出さない（名前で探せば出る。v0.35.0）
   var doneThisMonth = function (c) { return String(IDX.lastMaint[c['顧客ID']] || '').slice(0, 7) === month; };
   var hiddenN = 0;
   if (text) rows = all.filter(function (c) { return textMatch(text, [c['顧客名'], c['ふりがな'], c['顧客ID']]); });
@@ -254,7 +254,7 @@ function mmDeviceHtml(id, cname, head) {
   var d = IDX.dev[id], done = mmDoneRec(id);
   var g = S.mm.diagFor === id ? S.mm.diag : undefined;      // undefined … 読み込み中、null … 届いていない
   var row = function (label, value, warn) { return value === '' || value === undefined || value === null ? '' : '<dt>' + esc(label) + '</dt><dd>' + (warn ? pill(warn, 'warn') + ' ' : '') + esc(value) + '</dd>'; };
-  // v0.127.0：期限は ESET だけ出す（ほかのライセンスは出さない）
+  // v0.127.0：期限は ESET だけ出す（他のライセンスは出さない）
   var lics = S.D.licenses.filter(function (l) { return l['顧客ID'] === d['顧客ID'] && !l._pending && /eset|イーセット/i.test(l['製品名'] || ''); });
   var licHtml = lics.length ? lics.map(function (l) {
     var mine = (IDX.alloc[l['ライセンスID']] || []).some(function (a) { return a['機器ID'] === id; });
@@ -288,7 +288,7 @@ function mmDeviceHtml(id, cname, head) {
       long('スタートアップ', g['スタートアップ'], false) +
       long('イベント重大の内容（' + (g['イベント重大'] === '' ? '—' : g['イベント重大']) + '件）', g['イベント重大（内容）'], false) +
       long('イベントエラーの内容（' + (g['イベントエラー'] === '' ? '—' : g['イベントエラー']) + '件）', g['イベントエラー（内容）'], false) +
-      long('そのほか（OS・CPU・メモリ・ストレージ・プリンター）', ['コンピューター名', 'IPアドレス', 'OS', 'CPU', 'メモリ', 'ストレージ', 'プリンター情報', 'ツールバージョン']
+      long('その他（OS・CPU・メモリ・ストレージ・プリンター）', ['コンピューター名', 'IPアドレス', 'OS', 'CPU', 'メモリ', 'ストレージ', 'プリンター情報', 'ツールバージョン']
         .filter(function (k) { return g[k] !== '' && g[k] !== undefined; }).map(function (k) { return '■ ' + k + '\n' + g[k]; }).join('\n\n'), false);
   }
   var note = S.mm.notes[id] !== undefined ? S.mm.notes[id] : (done ? done['内容'] : '');
@@ -303,7 +303,7 @@ function mmDeviceHtml(id, cname, head) {
       (done ? '<p class="note">' + (done._pending ? '今日の保守の記録を保存しています…' : '今日の保守の記録（' + esc(done['実施ID']) + '）があります。直すと、その記録の内容が変わります。') + '</p>' : '') +
     '</div></section>';
 }
-/** 開いている機器の、収集ツールの情報を読む（読んである・読んでいる・失敗したときは何もしない。描くたびに呼ばれる） */
+/** 開いている機器の、収集ツールの情報を読む（読んである・読んでいる・失敗した時は何もしない。描くたびに呼ばれる） */
 function mmLoadDiag(id) {
   if (!id || S.mm.diagFor === id || S.mm.loading === id || S.mm.diagErr === id) return;
   S.mm.diagFor = ''; S.mm.diag = null; S.mm.loading = id;
@@ -334,9 +334,9 @@ function mmSummaryText() {
 
 // ===========================================================================
 // 下書き（入力の途中の内容を、この端末に残す）
-//   まちがって閉じた・「戻る」を押した・ページが読み直された、のあとで、「続きから」入れられる。
+//   間違って閉じた・「戻る」を押した・ページが読み直された、の後で、「続きから」入れられる。
 //   残すのは、記録の窓（対応・修理・保守・ライセンス・機器・メモなど）の項目だけ。認証情報と写真は残さない。
-//   3日たったもの・ほかのスタッフのもの・ログアウトしたときは消す。5件まで。
+//   3日たったもの・他のスタッフのもの・ログアウトした時は消す。5件まで。
 // ===========================================================================
 var DRAFT_KEY = 'pcpkg_drafts', DRAFT_MAX = 5, DRAFT_HOURS = 72, DRAFT_DELAY = 400;
 var draftOpening = false, draftTimers = [];
@@ -367,7 +367,7 @@ function draftsAll() {
   }).slice(0, DRAFT_MAX);
 }
 function draftsWrite(list) { keepSet(DRAFT_KEY, list.length && S.D ? JSON.stringify({ staff: S.D.me.id, list: list.slice(0, DRAFT_MAX) }) : ''); }
-/** 古いもの・ほかのスタッフのものを片づける（ログインした直後） */
+/** 古いもの・他のスタッフのものを片づける（ログインした直後） */
 function draftsPurge() { if (keepGet(DRAFT_KEY)) draftsWrite(draftsAll()); }
 function draftById(did) { return draftsAll().filter(function (d) { return d.did === did; })[0] || null; }
 function draftDropId(did) { var all = draftsAll(), left = all.filter(function (d) { return d.did !== did; }); if (left.length !== all.length) draftsWrite(left); }
@@ -379,7 +379,7 @@ function draftPut(form, sent) {
   S.D.schema[key].fields.forEach(function (f) { if (f.type === 'secret') delete data[f.name]; });
   var id = form.dataset.id || '';
   if (id) {
-    // いまある記録の編集は、変えた項目だけを残す（続きから開くときに、ほかの人が直した項目を古い値で戻さないため）
+    // 今ある記録の編集は、変えた項目だけを残す（続きから開く時に、他の人が直した項目を古い値で戻さないため）
     var first = {};
     try { first = JSON.parse(form._initial || '{}'); } catch (e) { first = {}; }
     var keep = form._draftFields || {};
@@ -405,8 +405,8 @@ function draftLater(form) {
 }
 function draftFlush() { draftTimers.forEach(function (form) { try { draftSync(form); } catch (e) { /* 閉じる途中でも止めない */ } }); }
 /**
- * v0.135.0：もう保存されている下書き（中身が、いまの記録と同じ）か。
- *   保存の返事の前にページが閉じられた（スマホでほかのアプリに切り替えた、など）ときに、保存できているのに「入力の途中」が残っていた
+ * v0.135.0：もう保存されている下書き（中身が、今の記録と同じ）か。
+ *   保存の返事の前にページが閉じられた（スマホで他のアプリに切り替えた、など）ときに、保存できているのに「入力の途中」が残っていた
  */
 function draftStale(d) {
   var schema = S.D.schema[d.key];
@@ -416,7 +416,7 @@ function draftStale(d) {
     return !!r && !r._pending && keys.every(function (k) { var v = r[k]; if (Array.isArray(v)) v = v.join(','); return String(v === null || v === undefined ? '' : v) === String(d.data[k]); });
   };
   if (d.id) return same(findRecord(d.key, d.id));
-  if (keys.length < 2) return false;      // 中身がほとんど無い新しい記録の下書きは、ほかの記録とたまたま同じになるので比べない
+  if (keys.length < 2) return false;      // 中身がほとんど無い新しい記録の下書きは、他の記録とたまたま同じになるので比べない
   var list = (S.D[COLLECTION[d.key]] || []).slice();
   if (d.key === 'activity') Object.keys(S.custActs || {}).forEach(function (c) { list = list.concat(S.custActs[c] || []); });
   if (d.data['顧客ID']) list = list.filter(function (r) { return r['顧客ID'] === d.data['顧客ID']; });
@@ -429,7 +429,7 @@ function draftsLive() {
   if (gone.length) draftsWrite(all.filter(function (d) { return gone.indexOf(d) === -1; }));
   return live;
 }
-/** 保存できたときに、同じ記録の古い下書きを片づける（「続きから」を使わずに入れ直したときに、古い下書きが残り続けていた） */
+/** 保存できた時に、同じ記録の古い下書きを片づける（「続きから」を使わずに入れ直した時に、古い下書きが残り続けていた） */
 function draftDropSameAs(key, id, custId, keepDid) {
   var all = draftsAll(), open = {};
   // 開いている窓（「続けて入力」で開いた次の窓など）の下書きは消さない
@@ -457,9 +457,9 @@ function draftLabel(d) {
   var who = src['顧客ID'] ? custName(src['顧客ID']) : '';
   return schema.label + (d.id ? 'の編集' : '') + (who ? '（' + who + '）' : '') + ' ' + (recordTitle(d.key, src) || (d.id || ''));
 }
-/** 画面のいちばん上に出す「入力の途中のものがあります」。窓が開いていないときだけ */
+/** 画面の一番上に出す「入力の途中のものがあります」。窓が開いていない時だけ */
 function draftBarHtml() {
-  // いま送っている最中のもの（返事待ち）は出さない
+  // 今送っている最中のもの（返事待ち）は出さない
   var list = draftsLive();
   if (!list.length) return '';
   return '<div class="draftbar" id="draftBar"><div class="cap">入力の途中のものがあります</div>' + list.map(function (d) {
@@ -477,16 +477,16 @@ function openDraft(d) {
   var run = function () {
     draftWaiting = false;
     if (!S.D || S.token !== token) return;
-    if ($('modals').children.length) return;          // 待っている間に、ほかの窓を開いていた（下書きは残っている）
+    if ($('modals').children.length) return;          // 待っている間に、他の窓を開いていた（下書きは残っている）
     var before = d.id ? findRecord(d.key, d.id) : null;
-    if (d.id && (!before || before._pending)) { toast('もとの記録が見つかりませんでした（消されたか、まだ読み込めていません）。下書きは残してあります。', true); render(); return; }
+    if (d.id && (!before || before._pending)) { toast('元の記録が見つかりませんでした（消されたか、まだ読み込めていません）。下書きは残してあります。', true); render(); return; }
     var data = {};
     Object.keys(d.data).forEach(function (k) { data[k] = d.data[k]; });
     var wrap;
     draftOpening = true;
     try {
       if (before) {
-        // いまの記録に、下書きで変えていた項目だけを重ねる
+        // 今の記録に、下書きで変えていた項目だけを重ねる
         var merged = {};
         Object.keys(before).forEach(function (k) { merged[k] = before[k]; });
         Object.keys(data).forEach(function (k) { merged[k] = data[k]; });
@@ -506,19 +506,19 @@ function openDraft(d) {
     if (before) {
       form._draftFields = {};
       Object.keys(d.data).forEach(function (k) { form._draftFields[k] = true; });
-      // 窓の「もと」は、いまの記録（下書きで変えた項目は、ここから変わっている扱いになる）
+      // 窓の「もと」は、今の記録（下書きで変えた項目は、ここから変わっている扱いになる）
       var first = {};
       try { first = JSON.parse(form._initial || '{}'); } catch (e) { first = {}; }
       Object.keys(d.data).forEach(function (k) { if (before[k] !== undefined) first[k] = Array.isArray(before[k]) ? before[k].join(',') : String(before[k]); });
       form._initial = JSON.stringify(first);
       if ((d.base || '') !== (before['更新日時'] || '')) {
-        form.querySelector('.body').insertAdjacentHTML('afterbegin', '<p class="draft-note" id="draftChanged">下書きを作ったあとに、この記録は更新されています。下書きで変えていた項目だけを重ねてあるので、保存する前に中身を確かめてください。</p>');
+        form.querySelector('.body').insertAdjacentHTML('afterbegin', '<p class="draft-note" id="draftChanged">下書きを作った後に、この記録は更新されています。下書きで変えていた項目だけを重ねてあるので、保存する前に中身を確かめてください。</p>');
       }
     }
     if (form.querySelector('details.rest')) form.querySelector('details.rest').open = true;
   };
   if (draftWaiting) return;
-  // いまある記録の続き・ほかの一覧から選ぶ欄がある種類は、残りのデータが要る（スマホでは、まだ読んでいないことがある）
+  // 今ある記録の続き・他の一覧から選ぶ欄がある種類は、残りのデータが要る（スマホでは、まだ読んでいないことがある）
   var needRest = !S.all && ((d.id && d.key !== 'device' && d.key !== 'customer') || d.key === 'loan' || d.key === 'repair');
   if (needRest) { draftWaiting = true; ensureRest().then(run, run); } else run();
 }
@@ -536,13 +536,13 @@ function noteRecentCust(id) {
 // ===========================================================================
 // 「戻る」（スマホの戻るボタン・ブラウザの戻る）
 //   何もしないと、戻るを押したとたんにページを離れて、入力の途中の内容が消える。
-//   窓が開いている・最初の画面でないときは、履歴に1つ足しておき、戻るを「窓を閉じる／前の画面へ」に使う。
+//   窓が開いている・最初の画面でない時は、履歴に1つ足しておき、戻るを「窓を閉じる／前の画面へ」に使う。
 //   入力の途中なら、閉じる前に確かめる（閉じても、下書きに残る）。
 // ===========================================================================
 var backArmed = false;
 var GAS_HISTORY = (window.google && google.script && google.script.history) || null;
-// ---- 読み直し用の券（v0.19.0）。ページのURLの # のあとに r=… で入れる（サーバーには送られない部分）
-//   画面の中の保存（sessionStorage）が使えないブラウザでも、読み直したときにログインを戻せるように。
+// ---- 読み直し用の券（v0.19.0）。ページのURLの # の後に r=… で入れる（サーバーには送られない部分）
+//   画面の中の保存（sessionStorage）が使えないブラウザでも、読み直した時にログインを戻せるように。
 function parseTicket(h) { var m = /(?:^|[#&])r=([0-9a-f]{64})(?:&|$)/.exec(String(h || '')); return m ? m[1] : ''; }
 function ticketHash() {
   if (!S.ticket) return '';
@@ -604,7 +604,7 @@ function restoreLoc(l) {
     S.mm.dev = l.s && own(IDX.dev, l.s) && IDX.dev[l.s]['顧客ID'] === l.c ? l.s : '';
     render();
   }
-  var y = parseInt(l.y, 10);   // go() で消えるので、このあとで入れる
+  var y = parseInt(l.y, 10);   // go() で消えるので、この後で入れる
   S.restoreY = isFinite(y) && y > 0 ? y : 0;
   S.restoreRec = l.m && /^[a-z]{3,12}:[A-Za-z0-9_-]{1,30}$/.test(l.m) ? l.m : '';
   afterRestore();
@@ -652,12 +652,12 @@ function renewTicketSoon() {
   }).catch(function () { ticketAt = 0; });
 }
 setInterval(renewTicketSoon, 60 * 1000);
-document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') renewTicketSoon(); else if (S.D && typeof snapSave === 'function') snapSave(); });     // 画面を離れるときは、前回のデータをすぐ残す（v0.112.0）
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') renewTicketSoon(); else if (S.D && typeof snapSave === 'function') snapSave(); });     // 画面を離れる時は、前回のデータをすぐ残す（v0.112.0）
 /** 券でログインを戻す。だめなら、覚えてある合言葉か、ログイン画面へ */
 var resumeBusy = false;
 function resumeFromTicket(ticket, failMsg) {
   resumeBusy = true;
-  if (S.D && !S.restoreLoc) { S.restoreLoc = currentLoc(); delete S.restoreLoc.m; }     // 使っている途中なら、いまの場所に戻す（開いている窓は、そのまま残す）
+  if (S.D && !S.restoreLoc) { S.restoreLoc = currentLoc(); delete S.restoreLoc.m; }     // 使っている途中なら、今の場所に戻す（開いている窓は、そのまま残す）
   S.timing = { t0: Date.now() };
   showSplash('ログインを戻しています…');
   S.ticket = ticket;
@@ -676,15 +676,15 @@ function resumeFromTicket(ticket, failMsg) {
 }
 var exitAt = 0, exitLeaving = false;
 function needsBack() { return !!S.D && ($('modals').children.length > 0 || S.view !== rootView() || (isPhone() && !exitLeaving)); }
-/** 入力の途中の窓を閉じるとき、確かめる（「戻る」「×」「やめる」のどれでも同じ。v0.68.0） */
+/** 入力の途中の窓を閉じる時、確かめる（「戻る」「×」「やめる」のどれでも同じ。v0.68.0） */
 function askCloseForm(form) {
-  return confirmDialog('入力の途中です', draftable(form) ? '閉じますか？\n入力した内容は下書きに残るので、あとで「続きから」入れられます。' : '閉じますか？\n閉じると、入力した内容は消えます（認証情報は、下書きに残しません）。',
+  return confirmDialog('入力の途中です', draftable(form) ? '閉じますか？\n入力した内容は下書きに残るので、後で「続きから」入れられます。' : '閉じますか？\n閉じると、入力した内容は消えます（認証情報は、下書きに残しません）。',
     '閉じる', false, '入力に戻る').then(function (yes) {
     if (yes && form.isConnected) closeModal(form);
     return yes;
   });
 }
-/** まだ保存していない入力があるか（ページを閉じる・読み直すときの確かめに使う） */
+/** まだ保存していない入力があるか（ページを閉じる・読み直す時の確かめに使う） */
 function unsavedWork() {
   if (!S.D) return false;
   var forms = $('modals').querySelectorAll('form[data-form]');
@@ -724,14 +724,14 @@ function onBack() {
   else if (S.view === 'mmaint' && S.mm.cust) { S.mm.cust = ''; render(); }
   else if (S.view !== rootView()) go(rootView());
   else {
-    // いちばん最初の画面で「戻る」を押した。スマホは、誤って閉じないよう、2回続けて押したときだけ閉じる（v0.68.0）
+    // 一番最初の画面で「戻る」を押した。スマホは、誤って閉じないよう、2回続けて押した時だけ閉じる（v0.68.0）
     if (isPhone() && !exitLeaving && !(exitAt && Date.now() - exitAt < 2500)) {
       exitAt = Date.now();
       toast('もう一度「戻る」を押すと、アプリを閉じます');
       armBack();
       return;
     }
-    // 戻るものが無いのに履歴だけ残っていた（窓をボタンで閉じたあとなど）。そのまま、もう1つ戻る
+    // 戻るものが無いのに履歴だけ残っていた（窓をボタンで閉じた後など）。そのまま、もう1つ戻る
     exitLeaving = true;
     try { window.history.back(); } catch (e) { /* そのまま */ }
     return;
@@ -751,14 +751,14 @@ VIEWS.customers = function () {
     '<div class="toolbar"><input type="search" id="q_home_find" data-q="home.find" placeholder="シリアル・PC名・利用者・機種・顧客名で、全社の機器を探す（ひらがな可）" value="' + esc(q('home.find')) + '" aria-label="全社の機器を探す">' +
       '<button type="button" class="btn" data-act="nav" data-view="devices">機器の一覧</button></div>' +
     '<div id="found">' + foundHtml() + '</div>' +
-    // 今日やること（要対応・今月の定期保守・社内メモ）を、いちばん上に（v0.38.0）
+    // 今日やること（要対応・今月の定期保守・社内メモ）を、一番上に（v0.38.0）
     (ready ? '<div class="cols todo">' + alertsHtml('') + memosPanelHtml() + regularMaintHtml() + '</div>'
       : '<section class="panel" id="homeWait"><h2>要対応・定期保守・社内メモ</h2>' + notReadyHtml() + '</section>') +
     '<section class="panel" id="custPanel"><h2><span class="grow">顧客</span>' + custViewSwitchHtml() + '<span class="sub">有効 ' + live.length + ' 社・使用中の機器 ' + D.devices.filter(function (d) { return d['状況'] === '使用中'; }).length + ' 台</span><button type="button" class="btn small primary" data-act="newRecord" data-key="customer">＋ 顧客を追加</button></h2>' +
       '<div class="pad filters">' +
         '<div class="toolbar">' +
           '<input type="search" id="q_cust_text" data-q="cust.text" placeholder="顧客の名前・住所で探す（ひらがな可）" value="' + esc(q('cust.text')) + '" aria-label="顧客を探す">' +
-          '<select id="q_cust_state" data-q="cust.state" aria-label="状態">' + optionsHtml([['有効', '有効な顧客'], ['停止', '停止した顧客'], ['all', 'すべて']], q('cust.state', '有効')) + '</select>' +
+          '<select id="q_cust_state" data-q="cust.state" aria-label="状態">' + optionsHtml([['有効', '有効な顧客'], ['停止', '停止した顧客'], ['all', '全て']], q('cust.state', '有効')) + '</select>' +
         '</div>' +
         '<div id="custChips">' + custChipsHtml() + '</div>' +
       '</div>' +
@@ -770,7 +770,7 @@ function custViewSwitchHtml() {
   var t = custAsTable();
   return '<span class="viewswitch" role="group" aria-label="一覧の見え方"><button type="button" data-act="custView" data-v="card" aria-pressed="' + !t + '">カード</button><button type="button" data-act="custView" data-v="table" aria-pressed="' + t + '">表</button></span>';
 }
-/** 表で見るときの列。顧客名・契約・機器・未完了の対応・要対応・最後の保守・地域・電話 */
+/** 表で見る時の列。顧客名・契約・機器・未完了の対応・要対応・最後の保守・地域・電話 */
 function custTableHtml(shown, urgent) {
   var cols = [
     { label: '顧客', cls: 'cname', key: function (c) { return c['ふりがな'] || c['顧客名']; }, html: function (c) { return '<b>' + esc(c['顧客名']) + '</b>' + (c['ふりがな'] ? '<span class="minor">' + esc(c['ふりがな']) + '</span>' : ''); } },
@@ -788,7 +788,7 @@ function custTableHtml(shown, urgent) {
   ];
   return '<div class="ctable">' + tableHtml('custTable', cols, shown, { act: 'openCustomer', id: function (c) { return c['顧客ID']; }, empty: '条件に合う顧客がいません。' }) + '</div>';
 }
-/** 顧客が、いまの絞り込みに当てはまるか。skip に渡した条件（'contract' か 'region'）は見ない */
+/** 顧客が、今の絞り込みに当てはまるか。skip に渡した条件（'contract' か 'region'）は見ない */
 function custMatch(c, skip) {
   var state = q('cust.state', '有効'), contract = q('cust.contract'), region = q('cust.region');
   if (state !== 'all' && c['状態'] !== state) return false;
@@ -797,7 +797,7 @@ function custMatch(c, skip) {
   return textMatch(q('cust.text'), [c['顧客名'], c['ふりがな'], c['住所'], c['先方担当者'], c['顧客ID']]);
 }
 /**
- * 契約・地域のチップ。件数は、ほかの絞り込みを掛けたあとの数にする
+ * 契約・地域のチップ。件数は、他の絞り込みを掛けた後の数にする
  * （「定期保守」を選ぶと、地域の件数は定期保守の顧客だけの数になる。逆も同じ）。
  */
 function custChipsHtml() {
@@ -807,17 +807,17 @@ function custChipsHtml() {
     var counts = {};
     scope.forEach(function (c) { var k = c[field] || '（未設定）'; counts[k] = (counts[k] || 0) + 1; });
     var cur = q(qName);
-    // 出すのは、1件でもある値と、いま選んでいる値（0件になっても、外せるように残す）
+    // 出すのは、1件でもある値と、今選んでいる値（0件になっても、外せるように残す）
     var keys = order.concat(Object.keys(counts).filter(function (k) { return order.indexOf(k) === -1; }).sort())
       .filter(function (k) { return counts[k] || k === cur; });
     if (cur && keys.indexOf(cur) === -1) keys.push(cur);
-    return '<div class="chipset small"><button type="button" data-act="qChip" data-q="' + qName + '" data-v="" aria-pressed="' + (!cur) + '">すべて ' + scope.length + '</button>' +
+    return '<div class="chipset small"><button type="button" data-act="qChip" data-q="' + qName + '" data-v="" aria-pressed="' + (!cur) + '">全て ' + scope.length + '</button>' +
       keys.map(function (k) { return '<button type="button" data-act="qChip" data-q="' + qName + '" data-v="' + esc(k) + '" aria-pressed="' + (cur === k) + '">' + esc(k) + ' ' + (counts[k] || 0) + '</button>'; }).join('') + '</div>';
   };
-  // 地域の行は、地域が2つ以上あるときだけ出す（状態で絞った範囲で数える）
+  // 地域の行は、地域が2つ以上ある時だけ出す（状態で絞った範囲で数える）
   var state = q('cust.state', '有効'), regionsAll = {};
   D.customers.forEach(function (c) { if (state === 'all' || c['状態'] === state) regionsAll[c['地域'] || '（未設定）'] = true; });
-  // 地域は、選択肢に並べた順（選択肢に無い値・未設定は、そのあと）
+  // 地域は、選択肢に並べた順（選択肢に無い値・未設定は、その後）
   var regionOrder = (D.options['地域'] || []).map(function (o) { return o.value; });
   var filtering = q('cust.contract') || q('cust.region') || q('cust.text') || q('cust.state', '有効') !== '有効';
   return '<div class="frow"><span class="flabel">契約</span>' + row('cust.contract', '保守契約', 'contract', ['定期保守', 'スポット保守', 'なし']) + '</div>' +
@@ -836,7 +836,7 @@ function memosPanelHtml() {
   return '<section class="panel fold' + (foldOpen('memo') ? ' open' : '') + '" id="memoPanel" data-act="toggleFold" data-fold="memo"><h2' + foldAttrs('memo') + '><span class="ico">📝</span><span class="grow">社内メモ</span><button type="button" class="btn small" data-act="newRecord" data-key="memo">＋ メモを書く</button>' + foldChev() + '</h2>' +
     '<div class="fsum"><div class="fchips">' + (S.D.memos.length ? fchip('メモ', S.D.memos.length + '件') + (pinned ? fchip('📌 ピン留め', pinned + '件') : '') : fchip('メモはまだありません', undefined, 'idle')) + '</div></div>' +
     tableHtml('dashMemos', [COL.memoBody, COL.memoCustomer, COL.memoBy], list, { act: 'editRecord:memo', id: function (m) { return m['メモID']; }, empty: 'メモはまだありません。お客様には見えない、スタッフどうしの連絡に使えます。' }) +
-    (S.D.memos.length > list.length ? '<p class="more">ピン留めと新しいものから6件。ほかは顧客の画面の「メモ」で見られます。</p>' : '') + '</section>';
+    (S.D.memos.length > list.length ? '<p class="more">ピン留めと新しいものから6件。他は顧客の画面の「メモ」で見られます。</p>' : '') + '</section>';
 }
 /** 今月の定期保守：まだの顧客だけを出す（済んだ顧客は出さない）。全部済んだら、ねぎらいの言葉（v0.38.0） */
 function regularMaintHtml() {
@@ -875,7 +875,7 @@ LISTS.customers = function () {
   var rows = S.D.customers.filter(function (c) { return custMatch(c); });
   rows.sort(function (a, b) { return cmp(a['ふりがな'] || a['顧客名'], b['ふりがな'] || b['顧客名']); });
   if (!rows.length) return '<p class="empty">' + (S.D.customers.length ? '条件に合う顧客がいません。' : 'まだ顧客がいません。「＋ 顧客を追加」から登録してください。') + '</p>';
-  // 赤は「急ぎ（ディスク異常・期限切れなど）」があるときだけ。件数だけのものは落ち着いた色（v0.23.0）
+  // 赤は「急ぎ（ディスク異常・期限切れなど）」がある時だけ。件数だけのものは落ち着いた色（v0.23.0）
   var urgent = {};
   pcAlerts().forEach(function (a) { if (a.level === 'danger') urgent[a.customerId] = (urgent[a.customerId] || 0) + 1; });
   var shown = rows.slice(0, ROW_LIMIT);
@@ -894,7 +894,7 @@ LISTS.customers = function () {
       (meta.length ? '<div class="cc-meta">' + esc(meta.join('・')) + '</div>' : '') + '</div>';
   });
   var cards = cardList.join('');
-  // 地域で「すべて」を選んでいるとき（地域が2つ以上あれば）、地域ごとに見出しをつけて分ける（v0.49.0）
+  // 地域で「全て」を選んでいるとき（地域が2つ以上あれば）、地域ごとに見出しをつけて分ける（v0.49.0）
   var regionOrder = (S.D.options['地域'] || []).map(function (o) { return o.value; });
   var regs = {};
   shown.forEach(function (c) { var k = c['地域'] || '（未設定）'; (regs[k] = regs[k] || []).push(c); });
@@ -963,7 +963,7 @@ VIEWS.customer = function () {
       '<div class="pad yropts"><div class="yrshow"><b>載せるもの：</b>' +
         '<label class="chk"><input type="checkbox" class="yrShow" data-k="value"' + (yrOn(c, 'value') ? ' checked' : '') + '> 保守契約がなかったら（金額）</label>' +
         '<label class="chk"><input type="checkbox" class="yrShow" data-k="sec"' + (yrOn(c, 'sec') ? ' checked' : '') + '> セキュリティの状況</label></div>' +
-        '<label class="chk"><input type="checkbox" id="yrShowBody"' + (S.yrOpt && S.yrOpt.body === true ? ' checked' : '') + '> 主な対応・主な修理に「内容」をすべて載せる（外すと1行目だけ）</label>' +
+        '<label class="chk"><input type="checkbox" id="yrShowBody"' + (S.yrOpt && S.yrOpt.body === true ? ' checked' : '') + '> 主な対応・主な修理に「内容」を全て載せる（外すと1行目だけ）</label>' +
         yrPickBoxHtml(c, 'a', acts) + yrPickBoxHtml(c, 'r', reps) +
       '<label class="fl">担当者からのひとこと（報告書の最後に載ります。保存はしません）<textarea id="yrMsg" rows="3" data-nolink="1" placeholder="例：この1年、大きなトラブルなく運用できました。来年度は古くなったPC 3台の入れ替えをご提案します。">' + esc(S.yrOpt ? S.yrOpt.msg : '') + '</textarea></label></div>' +
       '<div class="pad" id="yearBox">' + yearBoxHtml(c, acts, reps, mnts) + '</div>';
@@ -996,7 +996,7 @@ VIEWS.customer = function () {
 
 /**
  * 顧客の画面のタブ（v0.130.0）。よく使うものだけ並べ、残りは「その他 ▾」の中に入れる（タブが多くて探しにくかったため）。
- * いま開いているタブが「その他」の中なら、「その他」のところにその名前を出す。
+ * 今開いているタブが「その他」の中なら、「その他」のところにその名前を出す。
  */
 var CUST_TABS_MAIN = ['devices', 'activities', 'repairs', 'maint', 'licenses', 'memos'];
 function custTabsHtml(tabs) {
@@ -1008,7 +1008,7 @@ function custTabsHtml(tabs) {
     ? '<details class="tabmore' + (cur ? ' on' : '') + '"><summary role="tab" aria-selected="' + !!cur + '">' + (cur ? esc(cur[1]) : 'その他') + ' ▾</summary><div class="tabpop">' + more.map(btn).join('') + '</div></details>'
     : '') + '</div>';
 }
-// ほかのところを押したら、「その他」のタブの一覧を閉じる
+// 他のところを押したら、「その他」のタブの一覧を閉じる
 document.addEventListener('click', function (e) {
   Array.prototype.forEach.call(document.querySelectorAll('details.tabmore[open]'), function (d) { if (!d.contains(e.target) || e.target.closest('.tabpop button')) d.open = false; });
 }, true);
@@ -1034,7 +1034,7 @@ function yearHtml(c, acts, reps, mnts, opt) {
   var devs = S.D.devices.filter(function (d) { return d['顧客ID'] === c['顧客ID'] && d['状況'] === '使用中'; }).length;
   var maintMonths = maintRow[1].filter(function (v) { return v > 0; }).length;
   var head = '<p class="ynote">' + esc(months[0].replace('-', '年') + '月〜' + months[11].replace('-', '年') + '月') + '　使用中の機器 ' + devs + '台' + (opt.report ? '' : '　定期保守を実施した月：12か月のうち ' + maintMonths + 'か月') +
-    (S.D.activityTotal > S.D.activities.length && !S.custActs[c['顧客ID']] ? '　<span class="note">（対応履歴をすべて読み込み中…）</span>' : '') + '</p>';
+    (S.D.activityTotal > S.D.activities.length && !S.custActs[c['顧客ID']] ? '　<span class="note">（対応履歴を全て読み込み中…）</span>' : '') + '</p>';
   var table = '<div class="tablewrap"><table class="ytbl"><thead><tr><th></th>' + months.map(function (k) { return '<th>' + (+k.slice(5)) + '月' + (k.slice(5) === '01' || k === months[0] ? '<small>' + k.slice(0, 4) + '</small>' : '') + '</th>'; }).join('') + '<th>合計</th></tr></thead><tbody>' +
     rows.map(function (r) {
       return '<tr class="' + r[2] + '"><th>' + r[0] + '</th>' + r[1].map(function (v) {
@@ -1057,7 +1057,7 @@ var YR_KIND = {
   a: { id: '対応ID', type: '対応種別', label: '主な対応', none: 'この1年の対応はありません。' },
   r: { id: '修理ID', type: '種別', label: '主な修理・交換', none: 'この1年の修理・交換はありません。' }
 };
-// v0.125.0：「載せるもの」のはじめの状態。どちらもオフ。ただし保守契約が無い顧客は、金額（保守契約がなかったら）をオン
+// v0.125.0：「載せるもの」の初めの状態。どちらもオフ。ただし保守契約が無い顧客は、金額（保守契約がなかったら）をオン
 function yrRepMeta(r) {
   var meta = [['型番', r['型番']], ['シリアル', r['シリアル']], ['預かり品', r['預かり品']]].filter(function (x) { return x[1]; })
     .map(function (x) { return '<span>' + esc(x[0]) + '：' + esc(x[1]) + '</span>'; }).join('');
@@ -1095,7 +1095,7 @@ function yrLine(a) {
   if (a['件名'] !== undefined && a['修理ID']) first = [a['件名'], first].filter(function (x) { return x; }).join('：');
   return first.slice(0, 60);
 }
-// v0.122.1：内容をすべて（リンクの書き方は文字だけにする。空行はまとめる）。修理は件名を先に
+// v0.122.1：内容を全て（リンクの書き方は文字だけにする。空行はまとめる）。修理は件名を先に
 function yrFull(a) {
   var t = yrText(a).replace(/\n{3,}/g, '\n\n').trim();
   return a['修理ID'] && a['件名'] ? a['件名'] + (t ? '\n' + t : '') : t;
@@ -1104,7 +1104,7 @@ function yrPickerHtml(c, acts) { return yrPickerHtmlFor(c, 'a', acts); }
 function yrPickerHtmlFor(c, k, list0) {
   var list = yrYearList(list0), p = yrPickedFor(c, k, list0), K = YR_KIND[k];
   if (!list.length) return '<p class="note">' + K.none + '</p>';
-  return '<div class="row"><button type="button" class="btn small" data-act="yrPickAll" data-kind="' + k + '" data-on="1">すべて選択</button> <button type="button" class="btn small" data-act="yrPickAll" data-kind="' + k + '" data-on="">すべて解除</button> <button type="button" class="btn small" data-act="yrPickAll" data-kind="' + k + '" data-on="8">新しい8件</button></div>' +
+  return '<div class="row"><button type="button" class="btn small" data-act="yrPickAll" data-kind="' + k + '" data-on="1">全て選択</button> <button type="button" class="btn small" data-act="yrPickAll" data-kind="' + k + '" data-on="">全て解除</button> <button type="button" class="btn small" data-act="yrPickAll" data-kind="' + k + '" data-on="8">新しい8件</button></div>' +
     '<div class="yrpicklist">' + list.map(function (a) {
       return '<label class="chk"><input type="checkbox" class="yrPick" data-kind="' + k + '" data-id="' + esc(a[K.id]) + '"' + (p[a[K.id]] ? ' checked' : '') + '> <span class="nw">' + esc(a['受付日']) + '</span> <span class="nw minor">' + esc(a[K.type] || '') + '</span> ' + esc(yrLine(a) || '（内容なし）') + '</label>';
     }).join('') + '</div>';
@@ -1174,7 +1174,7 @@ function yrCompareHtml(acts, reps, mnts, nA, nR, nM, hasMaint, contract, regular
   // v0.127.1：保守契約・定期保守の話は、その契約の顧客にだけ書く
   var msg = nR < pR ? (regular ? '修理・交換が前の年より減りました。定期保守で早めに手を打てた結果です。' : '修理・交換が前の年より減り、安定して使えるようになっています。')
     : nA < pA ? 'お困りごとのご連絡が前の年より減り、安定して使えるようになっています。'
-    : nA > pA ? (contract ? 'ご相談が増えた分、すぐにお応えできる保守契約がお役に立ちました。' : 'ご相談が増えた1年でした。困ったときは、いつでもお声がけください。') : '前の年と同じくらいのペースで、安定してサポートしています。';
+    : nA > pA ? (contract ? 'ご相談が増えた分、すぐにお応えできる保守契約がお役に立ちました。' : 'ご相談が増えた1年でした。困った時は、いつでもお声がけください。') : '前の年と同じくらいのペースで、安定してサポートしています。';
   return '<section class="yr-sec"><h2>前の年とくらべて</h2><table class="yr-tbl yr-list yr-cmp"><thead><tr><th></th><th>前の年</th><th>この1年</th><th>差</th></tr></thead><tbody>' +
     row('サポート対応', pA, nA, null) + row('修理・交換', pR, nR, true) + (hasMaint ? row('定期保守', pM, nM, false) : '') + '</tbody></table><p class="yr-msgline">' + esc(msg) + '</p></section>';
 }
@@ -1249,7 +1249,7 @@ function yearReportHtml(c, acts, reps, mnts) {
     html += '<section class="yr-sec yr-two"><div><h2>サポートの内訳</h2>' + (ya.length ? top(ya, '対応種別', 6) : '<p class="yr-none">対応はありませんでした。</p>') + '</div>' +
       '<div><h2>修理・交換の内訳</h2>' + (yr.length ? top(yr, '種別', 6) : '<p class="yr-none">修理はありませんでした。安定して動いています。</p>') + '</div></section>';
   }
-  // v0.126.1：「保守契約を続けていただくと」は、グラフ・内訳のすぐ下（このあとの一覧は顧客によって長さが変わるので、前の方に置く）
+  // v0.126.1：「保守契約を続けていただくと」は、グラフ・内訳のすぐ下（この後の一覧は顧客によって長さが変わるので、前の方に置く）
   // 7. 継続でお約束すること
   html += '<section class="yr-sec yr-keep"><h2>保守契約を続けていただくと</h2><div class="yr-cards">' +
     '<div><b>🛠 困ったらすぐ相談</b>電話・メール・訪問で、PCやネットワークの困りごとに対応します。</div>' +
@@ -1257,7 +1257,7 @@ function yearReportHtml(c, acts, reps, mnts) {
       : '') +      // v0.127.1：定期保守でない顧客には、定期保守のカードは出さない
     '<div><b>📋 機器を一元管理</b>PC・ライセンス・保証の期限を管理し、切れる前にお知らせします。</div>' +
     '<div><b>🔁 入れ替えもおまかせ</b>新しいPCの選定・設定・データ移行まで、まとめてお手伝いします。</div></div></section>';
-  // 5. 主な対応（選んだときだけ）
+  // 5. 主な対応（選んだ時だけ）
   var pk = yrPicked(c, acts);
   var picks = yrYearActs(acts).filter(function (a) { return pk[a['対応ID']]; });
   if (picks.length) {
@@ -1291,7 +1291,7 @@ function yearReportHtml(c, acts, reps, mnts) {
   var props = [];
   if (old5.length) props.push(['PCの入れ替え', '使い始めて5年以上のPCが ' + old5.length + '台あります。故障や動作の遅さが出やすい時期です。計画的な入れ替えをご提案します。', tbl(['機器（利用者）', 'キッティング日／購入日', '使用年数'], devRows(old5))]);
   if (old4.length) props.push(['入れ替えの計画', '4年をすぎたPCが ' + old4.length + '台あります。来年度の予算に入れておくと安心です。', tbl(['機器（利用者）', 'キッティング日／購入日', '使用年数'], devRows(old4))]);
-  if (warr.length) props.push(['メーカー保証', 'この1年で保証が切れる機器が ' + warr.length + '台あります。切れたあとの故障も、保守契約で手配いたします。', tbl(['機器（利用者）', '保証期限'], warr.map(function (d) { return [devName(d) + (d['利用者'] ? '（' + d['利用者'] + '）' : ''), d['保証期限']]; }))]);
+  if (warr.length) props.push(['メーカー保証', 'この1年で保証が切れる機器が ' + warr.length + '台あります。切れた後の故障も、保守契約で手配いたします。', tbl(['機器（利用者）', '保証期限'], warr.map(function (d) { return [devName(d) + (d['利用者'] ? '（' + d['利用者'] + '）' : ''), d['保証期限']]; }))]);
   if (lics.length) props.push(['ライセンスの更新', '期限が切れている、または1年以内に期限をむかえるライセンスが ' + lics.length + '件あります。更新のご案内と手続きを代行します。', tbl(['製品名', '数量', '有効期限'], lics.map(function (l) { return [l['製品名'] || '', l['数量'] ? String(l['数量']) : '', l['有効期限'] + (l['有効期限'] < D.today ? '（期限切れ）' : '')]; }))]);
   var sec = yrSecurity(devs);
   if (yrOn(c, 'sec')) html += sec.html;      // 表に出さなくても、Windows 10 のご提案は残す
@@ -1358,7 +1358,7 @@ function credentialsHtml() {
         ' <button type="button" class="btn small" data-act="editCred" data-id="' + id + '">編集</button>';
     } }
   ], cr.list, { empty: '認証情報はまだ登録されていません。' }) +
-    '<p class="more">パスワードとシリアルキーは「表示」を押したときだけ読み込みます。表示したことは変更履歴に残ります。</p>';
+    '<p class="more">パスワードとシリアルキーは「表示」を押した時だけ読み込みます。表示したことは変更履歴に残ります。</p>';
 }
 
 // お客様ページ
@@ -1412,8 +1412,8 @@ VIEWS.devices = function () {
     '<div class="head"><h1>機器の一覧</h1><button type="button" class="btn primary" data-act="newRecord" data-key="device">＋ 機器を追加</button></div>' +
     '<div class="toolbar">' +
       '<input type="search" id="q_dev_text" data-q="dev.text" placeholder="利用者・機種・シリアル・顧客名で探す（ひらがな可）" value="' + esc(q('dev.text')) + '" aria-label="機器を探す">' +
-      '<select id="q_dev_kind" data-q="dev.kind" aria-label="種類">' + optionsHtml(activeOptions('機器種類', q('dev.kind')), q('dev.kind'), '種類：すべて') + '</select>' +
-      '<select id="q_dev_state" data-q="dev.state" aria-label="状況">' + optionsHtml([['live', '廃棄以外'], ['使用中', '使用中'], ['未使用', '未使用'], ['廃棄', '廃棄'], ['all', 'すべて']], q('dev.state', 'live')) + '</select>' +
+      '<select id="q_dev_kind" data-q="dev.kind" aria-label="種類">' + optionsHtml(activeOptions('機器種類', q('dev.kind')), q('dev.kind'), '種類：全て') + '</select>' +
+      '<select id="q_dev_state" data-q="dev.state" aria-label="状況">' + optionsHtml([['live', '廃棄以外'], ['使用中', '使用中'], ['未使用', '未使用'], ['廃棄', '廃棄'], ['all', '全て']], q('dev.state', 'live')) + '</select>' +
     '</div><div class="panel" id="list">' + LISTS.devices() + '</div>';
 };
 LISTS.devices = function () {
@@ -1423,7 +1423,7 @@ LISTS.devices = function () {
     if (kind && d['種類'] !== kind) return false;
     return textMatch(text, [d['利用者'], d['ふりがな'], d['機種名'], d['メーカー'], d['シリアル'], d['設置場所'], d['部署'], (IDX.diag[d['機器ID']] || {})['コンピューター名'], custWords(d['顧客ID']), d['機器ID']]);
   });
-  rows = rows.slice().sort(byDevStamp);      // ふだんは更新の新しい順（見出しを押せば並べ替えられる。v0.35.0）
+  rows = rows.slice().sort(byDevStamp);      // 普段は更新の新しい順（見出しを押せば並べ替えられる。v0.35.0）
   return tableHtml('devices', [COL.devCustomer, COL.devKind, COL.devUser, COL.devModel, COL.devSerial, COL.devPlace, COL.devWarranty, COL.devUpd, COL.devState], rows,
     { act: 'editRecord:device', id: function (d) { return d['機器ID']; }, rowCls: function (d) { return isPendingCust(d['顧客ID']) ? 'unassigned' : ''; }, empty: S.D.devices.length ? '条件に合う機器がありません。' : 'まだ機器がありません。' });
 };
@@ -1483,7 +1483,7 @@ function actCols() {
 }
 /** 期間の報告（数字・グラフ・一覧）。opt.print なら印刷用（全件・ボタンなし） */
 /**
- * 集計（数字のタイル・グラフ）をたたむ帯（v0.130.0）。一覧を主役にするため、ふだんは1行の要約だけ。
+ * 集計（数字のタイル・グラフ）をたたむ帯（v0.130.0）。一覧を主役にするため、普段は1行の要約だけ。
  * 開いたかどうかは、スタッフごとに覚える（画面の状態 pref.stats。どの端末でも同じ）
  */
 function statsOpen() { return q('pref.stats') === '1'; }
@@ -1561,7 +1561,7 @@ VIEWS.activities = function () {
   var months = lastMonths(12), since = months[0] + '-01';
   var rank = {};
   D.activities.forEach(function (a) { if (a['受付日'] >= since) rank[a['顧客ID']] = (rank[a['顧客ID']] || 0) + 1; });
-  // 月ごとの件数：全部が手元にあれば、手元で数える（記録した直後にも合う）。件数が多くて一部しか無いときは、サーバーが数えたものを使う
+  // 月ごとの件数：全部が手元にあれば、手元で数える（記録した直後にも合う）。件数が多くて一部しか無い時は、サーバーが数えたものを使う
   var monthCount = D.activityMonthCounts;
   if (!after) { monthCount = {}; D.activities.forEach(function (a) { var m = String(a['受付日']).slice(0, 7); monthCount[m] = (monthCount[m] || 0) + 1; }); }
   var rankIds = Object.keys(rank).sort(function (a, b) { return rank[b] - rank[a] || cmp(custName(a), custName(b)); }).slice(0, 8);
@@ -1573,10 +1573,10 @@ VIEWS.activities = function () {
     periodBarHtml('act') +
     '<div class="toolbar">' +
       '<input type="search" id="q_act_text" data-q="act.text" placeholder="内容・顧客名・利用者・担当で探す（ひらがな可）" value="' + esc(q('act.text')) + '" aria-label="対応履歴を探す">' +
-      '<select id="q_act_cust" data-q="act.cust" aria-label="顧客">' + optionsHtml(custOpts, q('act.cust'), '顧客：すべて') + '</select>' +
-      '<select id="q_act_staff" data-q="act.staff" aria-label="担当">' + optionsHtml(Object.keys(staffs).sort(), q('act.staff'), '担当：すべて') + '</select>' +
+      '<select id="q_act_cust" data-q="act.cust" aria-label="顧客">' + optionsHtml(custOpts, q('act.cust'), '顧客：全て') + '</select>' +
+      '<select id="q_act_staff" data-q="act.staff" aria-label="担当">' + optionsHtml(Object.keys(staffs).sort(), q('act.staff'), '担当：全て') + '</select>' +
       groupButtonHtml('act.group') +
-      '<select id="q_act_status" data-q="act.status" aria-label="ステータス">' + optionsHtml([['open', '完了していないもの'], ['完了', '完了'], ['対応中', '対応中']], q('act.status'), 'ステータス：すべて') + '</select>' +
+      '<select id="q_act_status" data-q="act.status" aria-label="ステータス">' + optionsHtml([['open', '完了していないもの'], ['完了', '完了'], ['対応中', '対応中']], q('act.status'), 'ステータス：全て') + '</select>' +
     '</div>' +
     (r.mode === 'all' && after ? '<p class="note" id="actCapNote">件数が多いので、' + esc(after) + ' より後の対応（と完了していないもの）から探しています。それより前は、週・月・期間を選ぶと見られます。</p>' : '') +
     '<div id="list" class="stack">' + LISTS.activities() + '</div>' +
@@ -1643,7 +1643,7 @@ function repReportHtml(f, opt) {
       : statTile(done, '件', '完了', '累計') + statTile(all.length, '件', '全部', '完了 ' + pct + '%')) + '</div>';
   var saveLimit = ROW_LIMIT;
   if (opt.print) ROW_LIMIT = 100000;
-  var table = '<section class="panel"><h2><span class="grow">' + (r.from ? '進行中の修理と、この期間に受付・完了した修理' : 'すべての修理') + ' ' + f.list.length + '件' +
+  var table = '<section class="panel"><h2><span class="grow">' + (r.from ? '進行中の修理と、この期間に受付・完了した修理' : '全ての修理') + ' ' + f.list.length + '件' +
       (f.filtering ? '<span class="note" style="font-weight:400">　（' + f.scope.length + '件から絞り込み）</span>' : '') + '</span></h2>' +
     tableHtml(opt.print ? 'repPrint' : 'repairs', repCols(), f.list,
       { act: opt.print ? '' : 'editRecord:repair', id: function (x) { return x['修理ID']; }, empty: all.length ? '条件に合う修理がありません。' : 'まだ修理がありません。' }) + '</section>';
@@ -1670,9 +1670,9 @@ VIEWS.repairs = function () {
     periodBarHtml('rep') +
     '<div class="toolbar">' +
       '<input type="search" id="q_rep_text" data-q="rep.text" placeholder="件名・型番・シリアル・顧客名・利用者で探す（ひらがな可）" value="' + esc(q('rep.text')) + '" aria-label="修理を探す">' +
-      '<select id="q_rep_cust" data-q="rep.cust" aria-label="顧客">' + optionsHtml(custOpts, q('rep.cust'), '顧客：すべて') + '</select>' +
+      '<select id="q_rep_cust" data-q="rep.cust" aria-label="顧客">' + optionsHtml(custOpts, q('rep.cust'), '顧客：全て') + '</select>' +
       groupButtonHtml('rep.group') +
-      '<select id="q_rep_status" data-q="rep.status" aria-label="ステータス">' + optionsHtml([['open', '進行中のもの'], ['受付', '受付'], ['対応中', '対応中'], ['完了', '完了']], q('rep.status'), 'ステータス：すべて') + '</select>' +
+      '<select id="q_rep_status" data-q="rep.status" aria-label="ステータス">' + optionsHtml([['open', '進行中のもの'], ['受付', '受付'], ['対応中', '対応中'], ['完了', '完了']], q('rep.status'), 'ステータス：全て') + '</select>' +
     '</div>' +
     '<div id="list" class="stack">' + LISTS.repairs() + '</div>' +
     (!statsOpen() ? '' : '<h2 class="sect">期間に関係なく出しているもの</h2>' +
@@ -1689,7 +1689,7 @@ VIEWS.licenses = function () {
     '<div class="toolbar">' +
       '<input type="search" id="q_lic_text" data-q="lic.text" placeholder="製品名・顧客名・使っている人で探す（ひらがな可）" value="' + esc(q('lic.text')) + '" aria-label="ライセンスを探す">' +
       groupButtonHtml('lic.group') +
-      '<select id="q_lic_due" data-q="lic.due" aria-label="期限">' + optionsHtml([['soon', '期限が近い・切れた'], ['expired', '期限切れ']], q('lic.due'), '期限：すべて') + '</select>' +
+      '<select id="q_lic_due" data-q="lic.due" aria-label="期限">' + optionsHtml([['soon', '期限が近い・切れた'], ['expired', '期限切れ']], q('lic.due'), '期限：全て') + '</select>' +
     '</div><div class="panel" id="list">' + LISTS.licenses() + '</div>';
 };
 LISTS.licenses = function () {
@@ -1734,7 +1734,7 @@ function rentalHistoryHtml(rid) {
       '<button type="button" class="btn small" data-act="printLoan" data-id="' + esc(l['貸出ID']) + '">貸出書</button></li>';
   }).join('') + '</ul>' + (loans.length > SHOW ? '<span class="note">ほか ' + (loans.length - SHOW) + '件は、下の貸出記録で見られます。</span>' : '');
 }
-/** 貸出書（お客様に渡す紙。備考は社内用なので入れない。返却したあとのものは「返却確認書」になる。v0.90.0） */
+/** 貸出書（お客様に渡す紙。備考は社内用なので入れない。返却した後のものは「返却確認書」になる。v0.90.0） */
 function loanSheetHtml(loan) {
   var m = IDX.rental[loan['レンタルID']] || {}, D = S.D, back = !!loan['返却日'];
   var rows = [['現場名', loanWho(loan)], ['機器', m['名称'] || loan['レンタルID']], ['機種', m['機種名']], ['種類・用途', [m['種類'], m['用途']].filter(function (x) { return x; }).join('／')],
@@ -1803,7 +1803,7 @@ function rentalRows() {
     return textMatch(text, [r['名称'], r['機種名'], r['シリアル'], r['用途'], r['メーカー'], r['種類'], r['備考'], r['レンタルID'], l ? loanWho(l) + ' ' + (l['顧客ID'] ? custWords(l['顧客ID']) : '') : '']);
   });
   if (!S.sort.rentals) {
-    // 遅れ → もうすぐ → 貸出中 → 貸出可 → そのほか の順に。同じなかでは返却予定の近い順・名前順
+    // 遅れ → もうすぐ → 貸出中 → 貸出可 → その他 の順に。同じなかでは返却予定の近い順・名前順
     var rank = function (r) { var k = rentalKinds(r); return k.late ? 0 : k.soon ? 1 : k.out ? 2 : k.free ? 3 : 4; };
     rows.sort(function (a, b) {
       var d = rank(a) - rank(b); if (d) return d;
@@ -1841,12 +1841,12 @@ VIEWS.rentals = function () {
     '<div id="rtTiles">' + rentalTilesHtml() + '</div>' +
     '<div class="toolbar rttool">' +
       '<input type="search" id="q_rt_text" data-q="rt.text" placeholder="名称・機種・シリアル・現場名で探す（ひらがな可）" value="' + esc(q('rt.text')) + '" aria-label="レンタル機器を探す">' +
-      '<select id="q_rt_type" data-q="rt.type" aria-label="種類">' + optionsHtml(rentalTypes(), q('rt.type'), '種類：すべて') + '</select>' +
-      '<select id="q_rt_kind" data-q="rt.kind" aria-label="状況">' + optionsHtml(RT_KIND_LABEL, q('rt.kind'), '状況：すべて') + '</select>' +
+      '<select id="q_rt_type" data-q="rt.type" aria-label="種類">' + optionsHtml(rentalTypes(), q('rt.type'), '種類：全て') + '</select>' +
+      '<select id="q_rt_kind" data-q="rt.kind" aria-label="状況">' + optionsHtml(RT_KIND_LABEL, q('rt.kind'), '状況：全て') + '</select>' +
       '<button type="button" class="btn small" data-act="rtClear">条件を消す</button>' +
     '</div>' +
     '<section class="panel"><h2>機器 <span class="sub" id="rtCount">' + rentalCountHtml(rtRows) + '</span></h2><div id="rtMachines">' + rentalMachinesHtml(rtRows) + '</div></section>' +
-    '<div class="toolbar">' + groupButtonHtml('loan.group') + '<select id="q_loan_state" data-q="loan.state" aria-label="貸出記録の絞り込み">' + optionsHtml([['open', '貸出中だけ'], ['all', 'すべての貸出記録']], q('loan.state', 'all')) + '</select></div>' +
+    '<div class="toolbar">' + groupButtonHtml('loan.group') + '<select id="q_loan_state" data-q="loan.state" aria-label="貸出記録の絞り込み">' + optionsHtml([['open', '貸出中だけ'], ['all', '全ての貸出記録']], q('loan.state', 'all')) + '</select></div>' +
     '<section class="panel"><h2>貸出記録</h2><div id="list">' + LISTS.rentals() + '</div></section>';
 };
 LISTS.rentals = function () {
@@ -1968,9 +1968,9 @@ VIEWS.projects = function () {
     '<button type="button" class="btn" data-act="newRecord" data-key="saleslog">＋ 活動を記録</button> <button type="button" class="btn primary" data-act="newRecord" data-key="project">＋ 案件を追加</button></div>' +
     '<p class="note">営業（問い合わせ→提案中→見積）から、受注・開発・納品・保守までを1つの流れで見ます。「受注」を押すと顧客ができて、要件確認に進みます。テスト版です。</p>' +
     '<div class="toolbar"><select id="q_project_mode" data-q="project.mode" aria-label="表示の切り替え">' + optionsHtml([['board', 'ボード（段階ごと）'], ['list', '一覧']], mode) + '</select>' +
-    (mode === 'list' ? '<select id="q_project_state" data-q="project.state" aria-label="状態の絞り込み">' + optionsHtml([['active', '進行中（失注・納品後を除く）'], ['all', 'すべて']].concat(pjColumns().map(function (x) { return [x, x]; })), q('project.state', 'active')) + '</select>' : '') + '</div>' +
+    (mode === 'list' ? '<select id="q_project_state" data-q="project.state" aria-label="状態の絞り込み">' + optionsHtml([['active', '進行中（失注・納品後を除く）'], ['all', '全て']].concat(pjColumns().map(function (x) { return [x, x]; })), q('project.state', 'active')) + '</select>' : '') + '</div>' +
     '<section class="panel"><h2>案件</h2><div id="list">' + LISTS.projects() + '</div></section>' +
-    '<div class="toolbar"><select id="q_sales_state" data-q="sales.state" aria-label="活動の絞り込み">' + optionsHtml([['todo', '次回アクションが残っているもの'], ['all', 'すべて']], q('sales.state', 'todo')) + '</select></div>' +
+    '<div class="toolbar"><select id="q_sales_state" data-q="sales.state" aria-label="活動の絞り込み">' + optionsHtml([['todo', '次回アクションが残っているもの'], ['all', '全て']], q('sales.state', 'todo')) + '</select></div>' +
     '<section class="panel"><h2>営業活動（訪問・電話・メール）</h2><div id="list2">' + salesLogHtml() + '</div></section>';
 };
 LISTS.projects = function () {
@@ -2017,10 +2017,10 @@ LISTS.sales = function () { return salesLogHtml(); };
 VIEWS.notices = function () {
   var rows = S.D.notices.slice().sort(function (a, b) { return cmp(b['登録日時'] + b['お知らせID'], a['登録日時'] + a['お知らせID']); });
   return '<div class="head"><h1>お知らせ</h1><button type="button" class="btn primary" data-act="newRecord" data-key="notice">＋ お知らせを追加</button></div>' +
-    '<p class="note">お客様ページの上に出ます。顧客を選ばなければ、公開しているすべての顧客に出ます。掲載期限を過ぎると出なくなります。</p>' +
+    '<p class="note">お客様ページの上に出ます。顧客を選ばなければ、公開している全ての顧客に出ます。掲載期限を過ぎると出なくなります。</p>' +
     '<section class="panel">' + tableHtml('notices', [
       { label: '本文', cls: 'clamp', html: function (n) { return '<span>' + linkify(n['本文']) + '</span>' + photoMark('memo', n['メモID']); } },
-      { label: '出す先', cls: 'cname', html: function (n) { return n['顧客ID'] ? esc(custName(n['顧客ID'])) : pill('すべての顧客', 'brand'); }, key: function (n) { return custName(n['顧客ID']); } },
+      { label: '出す先', cls: 'cname', html: function (n) { return n['顧客ID'] ? esc(custName(n['顧客ID'])) : pill('全ての顧客', 'brand'); }, key: function (n) { return custName(n['顧客ID']); } },
       { label: '重要度', cls: 'nowrap', html: function (n) { return n['重要度'] === '重要' ? pill('重要', 'danger') : pill('通常'); }, key: function (n) { return n['重要度']; } },
       { label: '掲載期限', cls: 'nowrap', ml: '期限', html: function (n) { return !n['掲載期限'] ? '<span class="sub">なし</span>' : esc(n['掲載期限']) + (daysUntil(n['掲載期限']) < 0 ? ' ' + pill('掲載おわり') : ''); }, key: function (n) { return n['掲載期限'] || '9999'; } }
     ], rows, { act: 'editRecord:notice', id: function (n) { return n['お知らせID']; }, empty: 'お知らせはまだありません。' }) + '</section>' +
@@ -2028,7 +2028,7 @@ VIEWS.notices = function () {
       (S.D.feed && S.D.feed.rss && S.D.feed.rss.on ? '<button type="button" class="btn" data-act="feedNow">いますぐ更新</button>' : '') +
       '<button type="button" class="btn" data-act="winInfoPaste">まとめて貼り付け</button>' +
       '<button type="button" class="btn primary" data-act="newRecord" data-key="wininfo">＋ Windows情報を追加</button></div>' +
-    '<p class="note">更新プログラムやドライバーの不具合のメモです。日付が' + S.D.wininfoShowDays + '日以内のものが、新しい順に' + S.D.wininfoShowMax + '件まで、PC管理とお客様ページの上に出ます（お客様ページは「顧客に見せる」が「はい」のものだけ）。「📌 ピン留め」したものは、日数にかかわらず、いちばん上に出しつづけます（10件まで）。</p>' +
+    '<p class="note">更新プログラムやドライバーの不具合のメモです。日付が' + S.D.wininfoShowDays + '日以内のものが、新しい順に' + S.D.wininfoShowMax + '件まで、PC管理とお客様ページの上に出ます（お客様ページは「顧客に見せる」が「はい」のものだけ）。「📌 ピン留め」したものは、日数にかかわらず、一番上に出しつづけます（10件まで）。</p>' +
     feedStatusHtml() +
     '<section class="panel" id="winInfoList">' + tableHtml('wininfo', [
       { label: '日付', cls: 'nowrap', html: function (w) { return esc(w['日付']); }, key: function (w) { return w['日付']; } },
@@ -2080,21 +2080,21 @@ var SETTING_FIELDS = [
   ['レンタル機器を使う', 'yesno', '「いいえ」にすると、レンタルの画面と返却のアラートを出しません'],
   ['営業・案件ツール（テスト版）を使う', 'yesno', '「いいえ」にすると、案件・営業の画面と、その要対応を出しません（テスト版）'],
   ['案件の納期の手前日数', 'number:3650', '案件の納期がこの日数以内になったものを要対応に出します（納期を過ぎたものは常に出します。テスト版）'],
-  ['カレンダーID', 'text', 'ミーティングの「スケジュール」に出す Google カレンダーのID。カレンダーの「設定と共有」→「カレンダーの統合」にあります。いくつも出すときはカンマで区切ります（10個まで）。空なら出しません'],
+  ['カレンダーID', 'text', 'ミーティングの「スケジュール」に出す Google カレンダーのID。カレンダーの「設定と共有」→「カレンダーの統合」にあります。いくつも出す時はカンマで区切ります（10個まで）。空なら出しません'],
   ['スポット料金：訪問（円/回）', 'number:99999', '訪問1回の金額（円）。保守のご報告書で、スポットで頼んだ場合の目安に使います'],
   ['スポット料金：リモート（円/回）', 'number:99999', 'リモート1回の金額（円）'],
   ['スポット料金：電話（円/回）', 'number:99999', '電話1回の金額（円）。0なら数えません'],
   ['契約更新のお知らせ（日前）', 'number:3650', '顧客の「契約更新日」のこの日数前から、要対応に「保守契約の更新」を出します'],
-  ['定期保守のカレンダーID', 'text', '定期保守の日程を入れる Google カレンダーのID（ミーティング用とは別のカレンダーにします）。担当ごとにカレンダーを分けるときは、カンマで区切っていくつも入れます（10個まで）'],
+  ['定期保守のカレンダーID', 'text', '定期保守の日程を入れる Google カレンダーのID（ミーティング用とは別のカレンダーにします）。担当ごとにカレンダーを分ける時は、カンマで区切っていくつも入れます（10個まで）'],
   ['定期保守の1日の上限（社）', 'number:20:1', '1つのカレンダー（担当）に、1日に入れる定期保守の上限（社数）。すでにある【定期保守】の予定も数えます'],
   ['定期保守の10台あたりの時間（分）', 'number:480:10', '1社にかける時間の目安。PC 10台ごとにこの分数（10台以下は1回分。例：30なら 25台→90分）'],
   ['定期保守の開始時刻', 'text', 'その日の最初の訪問の時刻（例：9:00）'],
   ['定期保守の終了時刻', 'text', 'この時刻までに終わる分だけ入れます（例：17:00）'],
   ['定期保守の移動時間（分）', 'number:240', '訪問と訪問の間にあける時間。同じ市区町村の顧客を同じ日にまとめます'],
   ['カレンダーの表示名', 'text', 'スケジュールの見出しの横に出す名前（例：納品スケジュール）。空なら、Google カレンダーに付いている名前を出します'],
-  ['納品以外の予定も出す', 'yesno', '「いいえ」なら、スケジュールには納品の予定（右の言葉が入っているもの）だけを出します。「はい」なら、ほかの予定（会議など）も出します'],
+  ['納品以外の予定も出す', 'yesno', '「いいえ」なら、スケジュールには納品の予定（右の言葉が入っているもの）だけを出します。「はい」なら、他の予定（会議など）も出します'],
   ['納品の予定に使う言葉', 'text', 'この言葉が予定名（タイトル）に入っていれば、納品の予定として色を付け（説明は見ません）、台数（「10台」「×10」）を数えます。カンマで区切ります'],
-  ['Tipsを出す', 'yesno', 'Windows の便利機能（Tips）を、管理画面とお客様ページのいちばん上に出します'],
+  ['Tipsを出す', 'yesno', 'Windows の便利機能（Tips）を、管理画面とお客様ページの一番上に出します'],
   ['RSSで自動取得する', 'yesno', '窓の杜・PC Watch・ITmedia・JPCERT/CC・IPA・Security NEXT・AKIBA PC Hotline! の RSS を読んで、Windows情報（不具合・ドライバー・セキュリティ・パーツ価格など）を自動で取り込みます。「いいえ」なら読みません'],
   ['RSSの言葉（不具合・ドライバー）', 'text', '記事のタイトル・概要にこの言葉が入っていたら取り込みます（Windows の不具合・ドライバー）。カンマで区切ります。窓の杜・PC Watch・ITmedia PC USER で使います'],
   ['RSSの言葉（セキュリティ）', 'text', '同じく、セキュリティの言葉です。窓の杜・PC Watch・ITmedia・JPCERT・IPA・Security NEXT で使います'],
@@ -2106,7 +2106,7 @@ var SETTING_FIELDS = [
   ['Tipsを取り込む', 'yesno', '新しい版の Tips を、Tips のシートに足します。「いいえ」なら足しません（入っている Tips はそのまま）'],
   ['取り込んだWindows情報をお客様に見せる', 'yesno', '「はい」：取り込んだ Windows情報を、すぐお客様ページにも出す。「いいえ」：社内だけで入れ、確かめてから「顧客に見せる」を押す（おすすめ）'],
   ['Windows情報を残す日数', 'number:36500', '日付がこの日数より古い Windows情報を、毎朝の処理で消します（ピン留めしたものは消しません）。0 で消しません。おすすめは 365（1年）'],
-  ['配信を確かめる間隔（時間）', 'number:6:1', 'RSS を確かめる間隔（1〜6時間。ふつうは6）。1時間ごとの見回りが、この間隔がたったときに読みます（「毎朝の通知を設定」で見回りが入ります）'],
+  ['配信を確かめる間隔（時間）', 'number:6:1', 'RSS を確かめる間隔（1〜6時間。ふつうは6）。1時間ごとの見回りが、この間隔がたった時に読みます（「毎朝の通知を設定」で見回りが入ります）'],
   ['トークンなしの仮受付', 'yesno', '「はい」の間だけ、受信トークンなしの収集ツールの送信を受けます。届いたPCは顧客「仮受付（未割り当て）」に入るので、機器を開いて、顧客を選び直してください（その機器の対応・修理なども一緒に移ります）。制限：10分に60回・6時間に新しい機器30台まで。済んだら「いいえ」に戻す'],
   ['レポートは公開した月だけ見せる', 'yesno', '「はい」：お客様ページの月次レポートは、顧客の画面の「レポート」で「お客様ページに出す」を押した月だけ見せる。「いいえ」：終わった月（過去12か月）を全部見せる'],
   ['添付をリンクで共有する', 'yesno', '「はい」だと、添付はリンクを知っている人が見られる状態で保存します（スマホから開け、お客様ページにも出せます）']
@@ -2128,8 +2128,8 @@ var ALERT_SETTING_FIELDS = [
 ];
 // 設定の画面のまとまり（v0.27.0）。上から順に、見出しと、その中の項目
 var SETTING_GROUPS = [
-  ['会社と画面', 'お客様ページ・印刷・ログインのあとに出る画面', ['自社名', '開いた直後の画面', 'ウェブアプリURL']],
-  ['収集ツールの仮受付', '新しい顧客のPCを、トークンなしで先に受けるときだけ「はい」にします（閉じ忘れに注意）', ['トークンなしの仮受付']],
+  ['会社と画面', 'お客様ページ・印刷・ログインの後に出る画面', ['自社名', '開いた直後の画面', 'ウェブアプリURL']],
+  ['収集ツールの仮受付', '新しい顧客のPCを、トークンなしで先に受ける時だけ「はい」にします（閉じ忘れに注意）', ['トークンなしの仮受付']],
   ['使う機能', '使わない機能は「いいえ」にすると、画面から消えます', ['レンタル機器を使う', '営業・案件ツール（テスト版）を使う', '案件の納期の手前日数', 'スタッフに認証情報を見せる', '添付をリンクで共有する', 'レポートは公開した月だけ見せる', '保証期限の手前日数']],
   ['保守のご報告書', '顧客の「1年の振り返り」で使います。「保守がなかったら」の金額は、この単価×対応の回数で出します（顧客の「年間保守料金」と比べます）', ['スポット料金：訪問（円/回）', 'スポット料金：リモート（円/回）', 'スポット料金：電話（円/回）', '契約更新のお知らせ（日前）']],
   ['定期保守の日程（自動作成）', '「定期保守 実施状況」の「日程を自動で作る」で使います。土日・祝日を除き、先月と同じ曜日・同じ市区町村でまとめます', ['定期保守のカレンダーID', '定期保守の1日の上限（社）', '定期保守の10台あたりの時間（分）', '定期保守の開始時刻', '定期保守の終了時刻', '定期保守の移動時間（分）']],
@@ -2165,10 +2165,10 @@ function settingInputHtml(f, id) {
 var OPTION_GROUPS = [
   ['💻 PC管理（機器）', '機器の登録・一覧で選ぶ値', [['機器種類', '機器の「種類」', 'PC管理とレンタル機器の「種類」'], ['メーカー', '機器の「メーカー」', 'PC管理とレンタル機器の「メーカー」'], ['購入元', '機器の「購入元」', 'PC管理'], ['機器の状況', '機器の「状況」', 'PC管理']]],
   ['🏢 顧客', '顧客の登録で選ぶ値', [['地域', '顧客の「地域」', '顧客。ミーティングの並び順にも使います']]],
-  ['🛠 対応履歴', '対応を記録するときに選ぶ値', [['対応種別', '対応の「対応種別」', '対応履歴'], ['インシデント種別', '対応の「インシデント種別」', '対応履歴'], ['受付方法', '対応の「受付方法」', '対応履歴'], ['対応のステータス', '対応の「ステータス」', '対応履歴'], ['対応の定型文', '対応の「定型文」', '対応履歴の入力のひと押し文']]],
-  ['🔧 修理', '修理を受け付けるときに選ぶ値', [['修理種別', '修理の「種別」', '修理'], ['修理のステータス', '修理の「ステータス」', '修理']]],
-  ['🔑 ライセンス', 'ライセンスを登録するときの候補', [['ライセンス製品', 'ライセンスの「製品名」', '製品マスター。入力欄に候補として出ます（ここに無い名前も入れられます）']]],
-  ['🗓 保守', '保守の実施を記録するときに選ぶ値', [['保守種別', '保守実施の「種別」', 'ミーティングの保守の欄']]],
+  ['🛠 対応履歴', '対応を記録する時に選ぶ値', [['対応種別', '対応の「対応種別」', '対応履歴'], ['インシデント種別', '対応の「インシデント種別」', '対応履歴'], ['受付方法', '対応の「受付方法」', '対応履歴'], ['対応のステータス', '対応の「ステータス」', '対応履歴'], ['対応の定型文', '対応の「定型文」', '対応履歴の入力のひと押し文']]],
+  ['🔧 修理', '修理を受け付ける時に選ぶ値', [['修理種別', '修理の「種別」', '修理'], ['修理のステータス', '修理の「ステータス」', '修理']]],
+  ['🔑 ライセンス', 'ライセンスを登録する時の候補', [['ライセンス製品', 'ライセンスの「製品名」', '製品マスター。入力欄に候補として出ます（ここに無い名前も入れられます）']]],
+  ['🗓 保守', '保守の実施を記録する時に選ぶ値', [['保守種別', '保守実施の「種別」', 'ミーティングの保守の欄']]],
   ['📦 レンタル', 'レンタル機器で選ぶ値（種類とメーカーは「PC管理（機器）」と共通）', [['レンタルの状態', 'レンタル機器の「状態」', 'レンタル']]],
   ['🧩 案件・営業（テスト版）', '案件・営業の画面で選ぶ値', [['案件の種類', '案件の「種類」', '案件・営業'], ['案件の状態', '案件の「状態」', '案件・営業のボードの列'], ['営業の区分', '営業活動の「区分」', '案件・営業']]]
 ];
@@ -2195,7 +2195,7 @@ function optionBlockHtml(c) {
 }
 function optionsPanelHtml() {
   return '<section class="panel" id="setOptions"><h2>選択肢</h2><div class="pad" style="display:flex;flex-direction:column;gap:14px">' +
-    '<p class="note" style="margin:0">入力のときに選ぶ値を、画面ごとにまとめています。値を押すと「使う／使わない」が切り替わります（過去のデータに残っている値が読めなくならないよう、削除はしません）。🔒の付いた基本の値は、動きに使っているので変えられません（足すことはできます）。</p>' +
+    '<p class="note" style="margin:0">入力の時に選ぶ値を、画面ごとにまとめています。値を押すと「使う／使わない」が切り替わります（過去のデータに残っている値が読めなくならないよう、削除はしません）。🔒の付いた基本の値は、動きに使っているので変えられません（足すことはできます）。</p>' +
     optionGroups().map(function (g, i) {
       return '<section class="optgroup setfind-group" id="optg_' + i + '"><h3>' + esc(g.title) + (g.note ? '<span class="minor">' + esc(g.note) + '</span>' : '') + '</h3>' + g.cats.map(optionBlockHtml).join('') + '</section>';
     }).join('') + '</div></section>';
@@ -2216,10 +2216,10 @@ function keepScroll(fn) { var y = window.scrollY; fn(); window.scrollTo(0, y); }
 /** 選択肢の区分ごとの説明（設定の「選択肢」に出す） */
 var OPTION_HINT = {
   '地域': 'ミーティングの並び順にも使います。',
-  '対応種別': '対応履歴の「対応種別」です（訪問・リモートの回数を数える項目は、名前を変えずに残してください）。', '対応の定型文': '対応を記録するとき、ひと押しで内容に入れる文です（40文字まで）。',
+  '対応種別': '対応履歴の「対応種別」です（訪問・リモートの回数を数える項目は、名前を変えずに残してください）。', '対応の定型文': '対応を記録する時、ひと押しで内容に入れる文です（40文字まで）。',
   '機器の状況': 'PC管理の「状況」です。基本の値（🔒）は消せません。足した値は「使用中」と同じ扱い（廃棄だけが別）です。',
   '対応のステータス': '対応履歴の「ステータス」です。足した値は「未完了」として扱い、対応の保留の要対応にも出ます。',
-  '修理のステータス': '修理の「ステータス」です。足した値は「未完了」として扱います（「完了」にしたときだけ完了日が入ります）。',
+  '修理のステータス': '修理の「ステータス」です。足した値は「未完了」として扱います（「完了」にした時だけ完了日が入ります）。',
   'レンタルの状態': 'レンタル機器の「状態」です。足した値は「貸し出せない状態」として扱います（貸し出せるのは「利用可能」だけ）。',
   '案件の状態': '案件の「状態」です。足した値は「開発の途中」として扱い、納期が近いと要対応に出ます（ボードでは「テスト」の次に並びます）。',
   };
@@ -2239,7 +2239,7 @@ VIEWS.settings = function () {
       '<form class="pad settings-form" id="settingsForm" data-done="基本設定を保存しました">' +
       SETTING_GROUPS.map(function (g) { return settingGroupHtml(g); }).join('') + save('基本設定を保存') + '</form></section>' +
     '<section class="panel" id="setAlert"><h2>要対応と通知</h2><form class="pad settings-form" id="alertSettingsForm" data-done="要対応と通知の設定を保存しました">' +
-      settingGroupHtml(ALERT_SETTING_GROUPS[0], notify, '<div><button type="button" class="btn" data-act="sendAlertMail">いまの要対応をメールで送ってみる</button></div>') +
+      settingGroupHtml(ALERT_SETTING_GROUPS[0], notify, '<div><button type="button" class="btn" data-act="sendAlertMail">今の要対応をメールで送ってみる</button></div>') +
       '<fieldset class="setgrp setfind-item"><legend>要対応に出す種類</legend>' + alertCatsHtml() + '</fieldset>' +
       ALERT_SETTING_GROUPS.slice(1).map(function (g) { return settingGroupHtml(g); }).join('') +
       '<p class="note">しきい値・日数・回数を 0 にしても、その種類は出しません（ライセンス期限は、0 でも期限切れを出します）。</p>' +
@@ -2260,7 +2260,7 @@ function alertCatsHtml() {
 function logoSetHtml() {
   var logo = currentLogo();
   return '<div class="pad logo-set"><b>会社のロゴ</b>' +
-    '<div class="row"><div class="logo-preview" id="logoPreview">' + (logo ? '<img src="' + esc(logo) + '" alt="いまのロゴ">' : 'まだ入れていません') + '</div>' +
+    '<div class="row"><div class="logo-preview" id="logoPreview">' + (logo ? '<img src="' + esc(logo) + '" alt="今のロゴ">' : 'まだ入れていません') + '</div>' +
     '<input type="file" id="logoFile" accept="image/*" hidden aria-label="ロゴにする画像">' +
     '<button type="button" class="btn" data-act="pickLogo">' + (logo ? '画像を選び直す' : '画像を選ぶ') + '</button>' +
     (logo ? '<button type="button" class="btn" data-act="removeLogo">ロゴを外す</button>' : '') + '</div>' +
@@ -2271,7 +2271,7 @@ function loadRelease() {
   S.releaseLoading = true;
   var token = S.token;
   call('getToolRelease', {}, true).then(function (r) {
-    if (S.token !== token) return;     // 待っている間にログアウト・ログインし直したときは捨てる
+    if (S.token !== token) return;     // 待っている間にログアウト・ログインし直した時は捨てる
     S.releaseLoading = false; S.release = r.release || null; S.releaseVersions = r.versions || {};
     var el = $('releaseBox'); if (el) el.innerHTML = releaseHtml();
   }).catch(function (e) {
@@ -2291,18 +2291,18 @@ function releaseHtml() {
   if (S.release === undefined) return '<p class="empty">読み込んでいます…</p>';
   var r = S.release;
   var now = r
-    ? '<div class="box" id="releaseNow">いま配っている版：<b>v' + esc(r.version) + '</b> ' + pill('配布中', 'ok') +
+    ? '<div class="box" id="releaseNow">今配っている版：<b>v' + esc(r.version) + '</b> ' + pill('配布中', 'ok') +
       '<div class="note">' + esc(r.fileName) + '（' + esc(fileSizeText(r.size)) + '）・登録 ' + esc(r.published) + (r.by ? '（' + esc(r.by) + '）' : '') +
       '<br>SHA-256：<span style="word-break:break-all">' + esc(r.sha256) + '</span>' +
       (r.notes ? '<br>メモ：<span style="white-space:pre-wrap">' + esc(r.notes) + '</span>' : '') + '</div></div>'
-    : '<div class="box" id="releaseNow">いま配っている版：' + pill('配っていない', 'warn') + '</div>';
-  // PCごとの版（v0.109.0）。配っている版より古いPCは、次にツールが動いたときに入れ替わる
+    : '<div class="box" id="releaseNow">今配っている版：' + pill('配っていない', 'warn') + '</div>';
+  // PCごとの版（v0.109.0）。配っている版より古いPCは、次にツールが動いた時に入れ替わる
   var vers = S.releaseVersions || {}, vkeys = Object.keys(vers).sort(function (a, b) { return cmpVersion(b, a); });
   if (vkeys.length) now += '<div class="box" id="releaseVers">PCの収集ツールの版（最後に届いた版）：' + vkeys.map(function (v) {
     var old = r && v !== '不明' && cmpVersion(v, r.version) < 0;
     return '<span class="nowrap">' + (old ? pill('v' + v, 'warn') : '<b>' + (v === '不明' ? '不明' : 'v' + esc(v)) + '</b>') + ' ' + vers[v] + '台</span>';
-  }).join('　') + (r && vkeys.some(function (v) { return v !== '不明' && cmpVersion(v, r.version) < 0; }) ? '<div class="note">黄色の版のPCは、次にツールが動いたときに入れ替わります（ツールの設定で「自動で更新する」がオンのとき）。</div>' : '') + '</div>';
-  return '<p class="note" style="margin-top:0">新しい PCInfoTool.exe を、このアプリを動かしているアカウントの Google ドライブに置いて、ファイルのURLとバージョンを登録します。収集ツール（v1.2.0 以降）は起動のたびにここを確かめ、いまより新しい版なら自動で入れ替えます。ドライブの共有は「制限付き」のままで大丈夫です。</p>' +
+  }).join('　') + (r && vkeys.some(function (v) { return v !== '不明' && cmpVersion(v, r.version) < 0; }) ? '<div class="note">黄色の版のPCは、次にツールが動いた時に入れ替わります（ツールの設定で「自動で更新する」がオンの時）。</div>' : '') + '</div>';
+  return '<p class="note" style="margin-top:0">新しい PCInfoTool.exe を、このアプリを動かしているアカウントの Google ドライブに置いて、ファイルのURLとバージョンを登録します。収集ツール（v1.2.0 以降）は起動のたびにここを確かめ、今より新しい版なら自動で入れ替えます。ドライブの共有は「制限付き」のままで大丈夫です。</p>' +
     now +
     '<form id="releaseForm" style="display:flex;flex-direction:column;gap:12px;margin-top:12px">' +
       '<div class="field"><label for="relFile">ドライブのファイル（URL か ID）</label><input type="text" id="relFile" autocomplete="off" placeholder="https://drive.google.com/file/d/…/view" value="' + esc(r ? r.fileId : '') + '"></div>' +
@@ -2310,7 +2310,7 @@ function releaseHtml() {
       '<div class="field"><label for="relNotes">メモ（更新の確認で表示されます。なくてもよい）</label><textarea id="relNotes" rows="2" maxlength="300">' + esc(r ? r.notes : '') + '</textarea></div>' +
       '<div class="row"><button type="submit" class="btn primary">登録する</button>' +
       (r ? '<button type="button" class="btn danger" data-act="stopRelease">配るのをやめる</button>' : '') + '</div></form>' +
-    '<p class="note">ファイルを差し替えたときは、もう一度「登録する」を押してください（中身が登録のときと変わると、安全のため配りません）。</p>';
+    '<p class="note">ファイルを差し替えた時は、もう一度「登録する」を押してください（中身が登録のときと変わると、安全のため配りません）。</p>';
 }
 function loadStaff() {
   call('listStaff', {}).then(function (r) {

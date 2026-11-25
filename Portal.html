@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
-<meta name="file-version" content="@file-version 0.122.0">
+<meta name="file-version" content="@file-version 0.138.0">
 <head>
 <meta charset="utf-8">
 <base target="_top">
@@ -106,7 +106,7 @@ select { font: inherit; border: 1px solid #c3ccd6; border-radius: 6px; padding: 
 .report .rnote { border: 1px solid #dde3ea; border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; }
 .report .rfoot { margin-top: 18px; font-size: 11px; color: #5b6876; text-align: right; }
 footer { color: var(--muted); font-size: 12px; text-align: center; }
-/* Tips と Windows情報（いちばん上） */
+/* Tips と Windows情報（一番上） */
 .tipsbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--brand-soft); border: 1px solid #c9daf0; border-radius: 8px; padding: 9px 12px; }
 .tipsbar .tag { flex: none; background: var(--brand); color: #fff; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 700; }
 .tipsbar .tip { flex: 1 1 260px; min-width: 0; line-height: 1.5; overflow-wrap: anywhere; }
@@ -177,7 +177,7 @@ header .grow { flex: 1; min-width: 200px; }
     <div class="notice" id="notice"></div>
     <div class="tabs" id="tabs" role="tablist"></div>
     <section class="panel" id="panel"></section>
-    <footer>このページのURLは、ほかの人に教えないでください。</footer>
+    <footer>このページのURLは、他の人に教えないでください。</footer>
   </div>
 </div>
 <div id="printArea"></div>
@@ -185,7 +185,7 @@ header .grow { flex: 1; min-width: 200px; }
 'use strict';
 var PORTAL_TOKEN = '<?= portalToken ?>';
 var P = null, TAB = '';
-// 会社のロゴ（画像の data URL のときだけ出す）
+// 会社のロゴ（画像の data URL の時だけ出す）
 (function () {
   var logo = document.body.dataset.logo || '';
   var im = document.getElementById('logo');
@@ -198,7 +198,7 @@ function esc(v) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
 }
-/** [表示名](https://…) と https://… を押せるリンクにする。ほかの文字は、そのまま文字として出す */
+/** [表示名](https://…) と https://… を押せるリンクにする。他の文字は、そのまま文字として出す */
 function linkify(text) {
   var s = String(text === null || text === undefined ? '' : text), out = '', last = 0, m;
   var re = /\[([^\]\n]{1,80})\]\((https?:\/\/[^\s)]{1,500})\)|(https?:\/\/[^\s<>"'）」』]{1,500})/g;
@@ -441,7 +441,7 @@ function render() {
     return '<button type="button" role="tab" data-tab="' + esc(t) + '" aria-selected="' + (t === TAB) + '">' + esc(LABEL[t] || t) + '</button>';
   }).join('');
   $('tabs').hidden = P.tabs.length < 2;
-  $('panel').innerHTML = RENDER[TAB] ? RENDER[TAB]() : '<p class="empty">いま表示できる内容はありません。</p>';
+  $('panel').innerHTML = RENDER[TAB] ? RENDER[TAB]() : '<p class="empty">今表示できる内容はありません。</p>';
 }
 
 // ---- まとめて印刷（印刷・PDFにする）。見せている内容から、印刷するものを選んで1つにまとめる ----
@@ -455,7 +455,7 @@ function printPickHtml() {
     var n = t === 'レイアウト' ? P.layouts.length : null;
     return '<label><input type="checkbox" data-print="' + esc(t) + '" checked' + (n === 0 ? ' disabled' : '') + '>' + esc(LABEL[t] || t) + (n ? '（' + n + '枚）' : '') + '</label>';
   }).join('') + '</div>' +
-    '<p class="note">チェックを付けたものを、1つにまとめて印刷します。PDFにするときは、印刷の画面で「PDFに保存」を選んでください。' + (P.tabs.indexOf('レポート') !== -1 ? '月次レポートは、「月次レポート」のタブから印刷できます。' : '') + '</p>' +
+    '<p class="note">チェックを付けたものを、1つにまとめて印刷します。PDFにする時は、印刷の画面で「PDFに保存」を選んでください。' + (P.tabs.indexOf('レポート') !== -1 ? '月次レポートは、「月次レポート」のタブから印刷できます。' : '') + '</p>' +
     '<p class="empty" id="printMsg" hidden style="padding:0 0 10px"></p>' +
     '<div class="row"><button type="button" class="btn primary" id="printGo">印刷する</button><button type="button" class="btn" id="printCancel">やめる</button></div>';
 }
@@ -519,7 +519,7 @@ function drawWinInfo() {
     var link = typeof w['リンク'] === 'string' && /^https:\/\/[^\s"'<>\\]+$/.test(w['リンク']) ? w['リンク'] : '';
     return '<div class="wi"><span class="d">' + esc(String(w['日付']).slice(5).replace('-', '/')) + '</span>' +
       '<span class="t"><b>' + (w['重要度'] === '重要' ? pill('重要', 'danger') + ' ' : '') + esc(w['タイトル']) + '</b>' + (w['内容'] ? '<span>' + esc(w['内容']) + '</span>' : '') + '</span>' +
-      (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">くわしく</a>' : '') + '</div>';
+      (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">詳しく</a>' : '') + '</div>';
   }).join('');
 }
 

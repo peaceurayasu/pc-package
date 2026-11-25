@@ -9,7 +9,7 @@
  * 公開関数：doGet / getBootstrap / listActivities
  * （収集ツールからの受信 doPost は Receiver.gs）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.136.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 /**
  * 初期設定が済んでいるか（シートが全部あるか）。
@@ -28,7 +28,7 @@ function isSetupDone_() {
 
 const BRAND_CACHE_KEY = 'brand';
 /**
- * 画面を開いたときに出す自社名とロゴ。設定シートを毎回読まないように10分おぼえておく（設定・ロゴを保存したら消す）。
+ * 画面を開いた時に出す自社名とロゴ。設定シートを毎回読まないように10分おぼえておく（設定・ロゴを保存したら消す）。
  * @return {{company:string, logo:string}}
  */
 function brandCached_() {
@@ -179,7 +179,7 @@ function bootCore_(me) {
     wininfoShowMax: WININFO_SHOW_MAX,
     wininfoPins: winInfoPins_(),
     viewState: staffViewState_(staffRow),
-    mustChangePassword: isTempPassword_(staffRow),      // 仮パスワードのまま（画面がパスワードの変更を促す。v0.128.0）     // 画面設定は大きいので、スタッフの控えには入れない（開くときだけシートから）
+    mustChangePassword: isTempPassword_(staffRow),      // 仮パスワードのまま（画面がパスワードの変更を促す。v0.128.0）     // 画面設定は大きいので、スタッフの控えには入れない（開く時だけシートから）
     viewPeriodModes: VIEW_PERIOD_MODES,
     canReveal: canSeeSecrets_(me, settings),
     licenseWarnDays: settingDays_(settings, 'ライセンス期限の手前日数', 30),
@@ -232,7 +232,7 @@ function cacheDelta_(before) {
 
 /**
  * 画面に渡す部品を作る関数。名前は Config.gs の CACHE_DEPS と同じ。
- * ここに足すときは、CACHE_DEPS に「もとになるシート」も書くこと（書き忘れると、保存しても画面が古いままになる）。
+ * ここに足す時は、CACHE_DEPS に「もとになるシート」も書くこと（書き忘れると、保存しても画面が古いままになる）。
  */
 function bootBuilders_() {
   const rowsOf = function (sheetName) {
@@ -272,7 +272,7 @@ function bootBuilders_() {
     wininfo: function () { return sortWinInfo_(readTable_(SHEET_WININFO).rows).map(function (r) { return publicRecord_(r); }); },
     alertStates: alertStatesForCache_
   };
-  // 要対応（もとのシートごとに5つ）。顧客の表は、要るときに1回だけ読む
+  // 要対応（元のシートごとに5つ）。顧客の表は、要る時に1回だけ読む
   let ctx = null;
   ALERT_PART_NAMES.forEach(function (name) {
     out[name] = function () {
@@ -322,7 +322,7 @@ function bootGroupDefs_() {
 }
 
 /**
- * 最初の画面のあとに読むぶん（対応履歴・修理・ライセンス・要対応など、残りのシート）。
+ * 最初の画面の後に読むぶん（対応履歴・修理・ライセンス・要対応など、残りのシート）。
  * groups を渡すと、そのグループだけ（省略すると、全部）。返事の groups に、入れたグループを書く。
  */
 /**
@@ -354,7 +354,7 @@ function bootRest_(me, groups, lite) {
   const has = function (g) { return want.indexOf(g) !== -1; };
   cachePrime_();                      // 控えの印は、シートを読む前に取る
   const before = cacheStatsNow_();
-  const restStamp = nowStamp_();       // 「更新」で差分を受けるときの、前回の時刻（v0.106.0。読む前に取る）
+  const restStamp = nowStamp_();       // 「更新」で差分を受ける時の、前回の時刻（v0.106.0。読む前に取る）
   let names = [];
   want.forEach(function (g) { names = names.concat(defs[g]); });
   const parts = bootParts_(names);
@@ -388,7 +388,7 @@ function bootRest_(me, groups, lite) {
  *   part: 'core' … 最初の画面に要るぶんだけ（速い）
  *   part: 'rest' … 残り（groups に ['act','rep',…] を渡すと、そのグループだけ。v0.69.0）
  *   省略         … 全部（1回で）
- * 画面は、開き直したときに core と rest を同時に呼ぶ。ログインのときは、login の返事に core が付いてくる。
+ * 画面は、開き直した時に core と rest を同時に呼ぶ。ログインの時は、login の返事に core が付いてくる。
  *   fresh: true  … 控え（サーバー側のキャッシュ）を使わずに、シートから読み直す（画面の「最新を読み込む」）
  * @param {{token:string, part:string=, fresh:boolean=}} params
  */
@@ -417,10 +417,10 @@ function shiftMinutes_(ymdHm, delta) {
 
 /**
  * 新しく届いた・直したぶんだけを返す（スマホの「更新」用。v0.67.0）。
- *   顧客・機器・機器診断の3つだけを、シートから読む（ほかのシートは読まない。控えも作り直さない）。
+ *   顧客・機器・機器診断の3つだけを、シートから読む（他のシートは読まない。控えも作り直さない）。
  *   since より新しい行だけを返す（取りこぼさないよう、30分さかのぼる。同じ行を2回受けても、画面で上書きするだけ）。
- *   消された行を知らせるため、いまあるIDの一覧も返す。
- *   手でシートを直した行（更新日時が変わらない）は拾えない。そのときは、メニューの「すべて読み直す」を使う。
+ *   消された行を知らせるため、今あるIDの一覧も返す。
+ *   手でシートを直した行（更新日時が変わらない）は拾えない。その時は、メニューの「全て読み直す」を使う。
  * @param {{token:string, since:string}} params  since は前の返事の stamp
  */
 function getChanges(params) {
@@ -438,13 +438,13 @@ function changesCore_(p) {
     if (!since) throw appError_('invalid', '前回の読み込みの時刻が正しくありません。');
     const from = shiftMinutes_(since, -CHANGES_MARGIN_MIN);
     const stamp = nowStamp_();
-    // cached: true … 控え（サーバー側のキャッシュ）から読む。アプリで保存したものは必ず入る（保存で控えが作り直されるため）。シートを手で直したぶんは、「すべて読み直す」で（v0.95.0）
+    // cached: true … 控え（サーバー側のキャッシュ）から読む。アプリで保存したものは必ず入る（保存で控えが作り直されるため）。シートを手で直したぶんは、「全て読み直す」で（v0.95.0）
     const useCache = p.cached === true;
     if (useCache) cachePrime_();
     const b = bootBuilders_();
     const got = useCache ? bootParts_(['customers', 'devices'].concat(p.withDiag === false ? [] : ['diagnostics'])) : null;
     const customers = got ? got.customers : b.customers(), devices = got ? got.devices : b.devices();
-    // 収集ツールの情報は、画面が読んでいるときだけ（スマホの一覧は読んでいないので、シートも読まない。v0.79.0）
+    // 収集ツールの情報は、画面が読んでいる時だけ（スマホの一覧は読んでいないので、シートも読まない。v0.79.0）
     const diags = p.withDiag === false ? [] : got ? got.diagnostics : b.diagnostics();
     const newer = function (v) { return String(v || '') >= from; };
     return {
@@ -466,12 +466,12 @@ const VIEW_DELTA_TABLES = {
 };
 
 /**
- * いま見ている画面のグループについて、新しく届いた・直したぶんだけを返す（「更新」ボタン用。v0.95.0）。
+ * 今見ている画面のグループについて、新しく届いた・直したぶんだけを返す（「更新」ボタン用。v0.95.0）。
  *   groups … 読み直すグループ（diag は getChanges が受け持つ）
  *   since  … グループごとの前回の時刻 {act:'2026-10-25 10:00', …}（前の返事の stamp）
- * 返事の delta[データ名] = { recs: 新着・直したぶん, ids: いまあるID（消されたものを知らせる。null なら消さない） }
+ * 返事の delta[データ名] = { recs: 新着・直したぶん, ids: 今あるID（消されたものを知らせる。null なら消さない） }
  * full … 差分にしないもの（割当・写真の数・月ごとの件数など）は、そのまま入る。
- * 控え（サーバー側のキャッシュ）から作るので、アプリで保存したぶんは必ず入る。シートを手で直したぶんは「すべて読み直す」で。
+ * 控え（サーバー側のキャッシュ）から作るので、アプリで保存したぶんは必ず入る。シートを手で直したぶんは「全て読み直す」で。
  * @param {{token:string, groups:string[], since:Object}} params
  */
 function getViewChanges(params) {
@@ -503,7 +503,7 @@ function getViewChanges(params) {
     };
     const has = function (g) { return groups.indexOf(g) !== -1; };
     if (has('act')) {
-      // 画面には新しい順に上限まである。上限から外れたものを消さないよう、IDの列は返さない（他の人が消したぶんは「すべて読み直す」で）
+      // 画面には新しい順に上限まである。上限から外れたものを消さないよう、IDの列は返さない（他の人が消したぶんは「全て読み直す」で）
       delta('act', 'activities', parts.activities.activities, true);
       out.full.activityTotal = parts.activities.activityTotal;
       out.full.activityMonthCounts = parts.activities.activityMonthCounts;
@@ -541,12 +541,12 @@ function listActivities(params) {
     const p = params || {};
     requireSession_(p.token);
     const customerId = cleanText_(p.customerId);
-    // 期間（from〜to）で取ることもできる。対応履歴の画面で、最初に読んだぶんより古い期間を見るときに使う
+    // 期間（from〜to）で取ることもできる。対応履歴の画面で、最初に読んだぶんより古い期間を見る時に使う
     const from = p.from === undefined || p.from === '' ? '' : parseYmd_(p.from);
     const to = p.to === undefined || p.to === '' ? '' : parseYmd_(p.to);
     if (from === null || to === null) throw appError_('invalid', '期間の日付が正しくありません。');
     if (!customerId && !(from && to)) throw appError_('invalid', '顧客か期間を指定してください。');
-    // 退避シート（古い対応履歴。v0.112.0）も一緒に読む。ふだんの読み込みでは読まない
+    // 退避シート（古い対応履歴。v0.112.0）も一緒に読む。普段の読み込みでは読まない
     const rows = readTable_(SHEET_ACTIVITIES).rows.concat(archivedActivities_()).filter(function (r) {
       if (customerId && String(r['顧客ID']) !== customerId) return false;
       const d = String(r['受付日']);

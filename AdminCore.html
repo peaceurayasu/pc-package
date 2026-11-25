@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.137.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.138.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -38,7 +38,7 @@ function rememberNow() {
 function rememberSet(secret) {
   keepSet(REMEMBER_KEY, secret || '');
   cookieSet(REMEMBER_KEY, secret || '');
-  // ブラウザに「この保存は消さないで」と頼む（空き容量が少ないときに、勝手に消されるのを減らす）
+  // ブラウザに「この保存は消さないで」と頼む（空き容量が少ない時に、勝手に消されるのを減らす）
   if (secret) { try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* 頼めなくても動く */ } }
 }
 
@@ -68,7 +68,7 @@ function rootView() { if (isPhone()) return 'home';
 // 小道具
 // ===========================================================================
 function $(id) { return document.getElementById(id); }
-/** 「備考」があるとき、行やカードに付ける属性（カーソルを当てると吹き出しで出る。v0.103.0。v0.127.0 で「ひとこと」から「備考」に） */
+/** 「備考」がある時、行やカードに付ける属性（カーソルを当てると吹き出しで出る。v0.103.0。v0.127.0 で「ひとこと」から「備考」に） */
 function memoText(rec) {
   if (!rec) return '';
   var m = String(rec['備考'] || '').trim() || String(rec['ひとこと'] || '').trim();      // 備考が無い種類・前に入れたひとことは、そのまま出す
@@ -130,7 +130,7 @@ function daysUntil(ymd) {
   return Math.round((Date.UTC(+b[0], +b[1] - 1, +b[2]) - Date.UTC(+a[0], +a[1] - 1, +a[2])) / 86400000);
 }
 var DASH = '<span class="dash">—</span>';
-/** 機器のいちばん新しい更新（機器の更新日時と、収集ツールの受信日時の新しいほう。v0.35.0） */
+/** 機器の一番新しい更新（機器の更新日時と、収集ツールの受信日時の新しいほう。v0.35.0） */
 function devStamp(d) {
   var a = String(d['更新日時'] || ''), b = String((IDX.diag[d['機器ID']] || {})['受信日時'] || '');
   return a > b ? a : b;
@@ -224,7 +224,7 @@ function showWelcome() {
   if (!S.D || !S.D.me || !$('welcomeMsg')) return;
   $('welcomeMsg').textContent = S.D.me.name;
   var av = $('acctAvatar'); if (av) av.textContent = String(S.D.me.name || '?').trim().charAt(0);
-  // v0.136.0：「すべて読み直す」はスプレッドシートを手で直したとき用なので、管理者だけ（ふだんは「⟳ 更新」と、自動の更新で足りる）
+  // v0.136.0：「全て読み直す」はスプレッドシートを手で直したとき用なので、管理者だけ（普段は「⟳ 更新」と、自動の更新で足りる）
   var rf = $('refreshFullBtn'); if (rf) rf.hidden = !S.D.me.isAdmin;
   var tm = $('timingSlot'); if (tm) tm.innerHTML = S.view === 'home' ? '' : timingHtml();
   var ll = S.D.me.lastLogin ? String(S.D.me.lastLogin).replace(/-/g, '/').slice(0, 16) : '';
@@ -268,7 +268,7 @@ function saveChip(on, waitNet) {
   else saveChipTimer = setTimeout(function () { el.hidden = true; }, 150);
 }
 /**
- * v0.136.0：画面を止めない保存。電波が切れて送れなかったときは、つながったとき（または少し待って）自動でもう一度送る（10分ほど）。
+ * v0.136.0：画面を止めない保存。電波が切れて送れなかった時は、つながったとき（または少し待って）自動でもう一度送る（10分ほど）。
  *   同じ reqId で送るので、1回目がサーバーに届いていても2件にならない（サーバーの saveEntity_ が見分ける）
  */
 var SAVE_RETRY_WAITS = window.__saveRetryWaits || [3000, 8000, 15000, 30000, 30000, 60000, 60000, 120000, 120000, 180000];
@@ -295,7 +295,7 @@ function callSave(fn, params) {
 }
 var BUSY_NO_LOCK = { __nolock: 1, warmAfterSave: 1, getBootstrap: 1, getViewChanges: 1, getChanges: 1, getAlerts: 1, loadGroupBatch: 1, getCustomerActivities: 1, listPhotos: 1 };
 var lockFree = 0;
-// v0.115.0：待ちが長いとき（0.6秒より長い）は、画面に「保存中…」などを出して、ほかの操作を止める（2度押し・途中の操作を防ぐ）
+// v0.115.0：待ちが長いとき（0.6秒より長い）は、画面に「保存中…」などを出して、他の操作を止める（2度押し・途中の操作を防ぐ）
 var busyLockTimer = null, busyLockFn = '';
 function busyLabel(fn) {
   if (/^(save|delete|upload|register|move|import|add|remove|set|create|rename|resolve|unresolve|pin|issue|publish|convert|renew|reset|change)/.test(fn || '')) return '保存中…';
@@ -359,7 +359,7 @@ function call(fn, params, quiet) {
       .withSuccessHandler(function (r) {
         if (quiet) busy(false); else busy(false, bname);
         if (r && r.ok) { if (r.warm && fn !== 'warmAfterSave') warmSoon(r.warm); resolve(PACK_FNS[fn] ? unpackRecords(r) : r); return; }
-        // 古いトークンで出した呼び出しの返事（ログインし直したあとに届いたもの）では、何もしない
+        // 古いトークンで出した呼び出しの返事（ログインし直した後に届いたもの）では、何もしない
         if (r && r.error === 'unauthorized' && fn !== 'login' && fn !== 'loginWithRemember' && p.token === S.token) { sessionExpired(); }
         reject(r || { message: 'サーバーから返事がありませんでした。' });
       })
@@ -369,7 +369,7 @@ function call(fn, params, quiet) {
       })[fn](p);
   });
 }
-// 保存のあと、サーバーの控え（一覧・要対応）の作り直しを、裏で別に頼む（v0.112.0。保存の返事を待たせない）。続けて保存したときは、まとめて1回
+// 保存の後、サーバーの控え（一覧・要対応）の作り直しを、裏で別に頼む（v0.112.0。保存の返事を待たせない）。続けて保存した時は、まとめて1回
 var warmSheets = {}, warmTimer = null;
 function warmSoon(sheet) {
   warmSheets[sheet] = true;
@@ -377,7 +377,7 @@ function warmSoon(sheet) {
   warmTimer = setTimeout(function () {
     var list = Object.keys(warmSheets); warmSheets = {}; warmTimer = null;
     if (!list.length || !S.token) return;
-    try { google.script.run.withFailureHandler(function () {}).withSuccessHandler(function () {}).warmAfterSave({ token: S.token, sheets: list }); } catch (e) { /* 作り直せなくても、読むときに作る */ }
+    try { google.script.run.withFailureHandler(function () {}).withSuccessHandler(function () {}).warmAfterSave({ token: S.token, sheets: list }); } catch (e) { /* 作り直せなくても、読む時に作る */ }
   }, 1500);
 }
 function failToast(e) { if (!e || e.error !== 'unauthorized') toast((e && e.message) || 'うまくいきませんでした。', true); }
@@ -438,7 +438,7 @@ function fillLoginForm() {
  */
 var autoBusy = false;
 var refreshBusy = false;
-var AUTO_RETRY_MS = [1500, 4000];      // 通信がうまくいかなかったときの、やり直しまでの待ち（v0.91.0）
+var AUTO_RETRY_MS = [1500, 4000];      // 通信がうまくいかなかった時の、やり直しまでの待ち（v0.91.0）
 function autoLogin(tries) {
   tries = tries || 0;
   var secret = rememberNow();
@@ -457,7 +457,7 @@ function autoLogin(tries) {
     afterLogin(r);
   }).catch(function (err) {
     var transient = !(err && (err.error === 'unauthorized' || err.error === 'login'));
-    // 電波の途切れ・混み合いのときは、合言葉を捨てずに、少し待ってもう一度（スマホで画面を開いた直後は、電波が不安定なことが多い）
+    // 電波の途切れ・混み合いの時は、合言葉を捨てずに、少し待ってもう一度（スマホで画面を開いた直後は、電波が不安定なことが多い）
     if (transient && tries < AUTO_RETRY_MS.length) {
       setTimeout(function () { if (!S.D && rememberNow()) autoLogin(tries + 1); else autoBusy = false; }, AUTO_RETRY_MS[tries]);
       return;
@@ -486,13 +486,13 @@ function sessionExpired() {
 //   core   … 最初の画面に要るぶん（顧客・機器・設定）。ログインの返事に付いてくる
 //   グループ … 残りを8つに分けたもの（要対応・対応履歴・機器診断・Windows情報・ライセンス類・修理・保守・メモ類）
 //            開いた画面に要るグループだけを、同時に頼む。パソコンは、そのあと裏で残りも先読みする（スマホはしない）
-// S.have … 届いたグループ。S.ready … いまの画面に要るぶんが届いたか。S.all … 全部届いたか。
+// S.have … 届いたグループ。S.ready … 今の画面に要るぶんが届いたか。S.all … 全部届いたか。
 // 届く前の画面は「読み込んでいます…」を出す。
 var REST_EMPTY = { diagnostics: [], licenses: [], allocations: [], repairs: [], repairTotal: 0, activities: [], activityTotal: 0, activityMonthCounts: {},
   maintenances: [], memos: [], notices: [], rentals: [], loans: [], projects: [], saleslogs: [], photoCounts: {}, wininfo: [], alerts: [], notify: null };
 // ---- 前回のデータを端末に残す（v0.112.0）
-//   ログインしたとき、前回の残りのデータ（対応・修理・ライセンスなど）をすぐ画面に出し、裏で差分だけ受けて入れ替える。
-//   残すのはこの端末のブラウザの中だけ（同じスタッフ・同じ版・7日以内のときだけ使う）。ログアウトで消す。
+//   ログインした時、前回の残りのデータ（対応・修理・ライセンスなど）をすぐ画面に出し、裏で差分だけ受けて入れ替える。
+//   残すのはこの端末のブラウザの中だけ（同じスタッフ・同じ版・7日以内の時だけ使う）。ログアウトで消す。
 //   収集ツールの情報（diag）は大きく、差分の取り方が違うので残さない。認証情報も残さない。
 var SNAP_KEY = 'pcpkg_snap';
 var SNAP_MAX_AGE = 7 * 86400000;
@@ -532,7 +532,7 @@ function snapSave() {
   catch (e) { try { localStorage.removeItem(SNAP_KEY); } catch (e2) { /* 保存できない環境では使わない */ } }
 }
 function snapClear() { clearTimeout(snapTimer); snapTimer = null; try { localStorage.removeItem(SNAP_KEY); } catch (e) { /* 使えない環境 */ } }
-/** 残してあるデータを、いまのログインに入れる（同じスタッフ・同じ版・7日以内）。入れたグループを返す */
+/** 残してあるデータを、今のログインに入れる（同じスタッフ・同じ版・7日以内）。入れたグループを返す */
 function snapRestore(core) {
   if (window.__noSnap) return [];
   var obj = null;
@@ -541,7 +541,7 @@ function snapRestore(core) {
   var data = unpackRecords(obj.data || {}), D = S.D;
   obj.groups.forEach(function (g) {
     (SNAP_GROUP_KEYS[g] || []).forEach(function (k) { if (data[k] !== undefined) D[k] = data[k]; });
-    if (g === 'alert') S.alerts = obj.alerts || [];      // 要対応も、このあとの差分（snapCatchUp）で新しくなる
+    if (g === 'alert') S.alerts = obj.alerts || [];      // 要対応も、この後の差分（snapCatchUp）で新しくなる
     S.have[g] = true;
     S.gStamp[g] = obj.stamps && obj.stamps[g] ? obj.stamps[g] : S.baseStamp;
   });
@@ -576,15 +576,15 @@ function isPendingCust(customerId) { var c = customerId && IDX.cust[customerId];
 function startLabel(v) { return v === 'PC管理' ? '顧客情報' : v; }
 var START_KEY = { 'PC管理': 'customers', '対応履歴': 'activities', '修理履歴': 'repairs', 'ライセンス': 'licenses', 'レンタル': 'rentals', '案件・営業': 'projects', 'ミーティング': 'meeting', 'お知らせ': 'notices' };
 
-/** ログインの返事を画面に入れる。控えが温かいとき、パソコンは、残り全部も同じ返事で届く（v0.20.0。もう1往復しない） */
+/** ログインの返事を画面に入れる。控えが温かい時、パソコンは、残り全部も同じ返事で届く（v0.20.0。もう1往復しない） */
 function afterLogin(r) {
-  groupBusy = {}; prefetchFails = {}; S.epoch++;     // 前のログインのときに頼んだぶんは待たない（読み直し中に入り直したとき、待ち続けないように）
+  groupBusy = {}; prefetchFails = {}; S.epoch++;     // 前のログインの時に頼んだぶんは待たない（読み直し中に入り直した時、待ち続けないように）
   if (!r.rest) { applyCore(r.boot, r.token, r.resume); return; }     // 開いた画面に要るぶんは、render が読み始める
   var asked = Date.now();
   var token = r.token, epoch = S.epoch, done = null;
   // 届いている残りを入れるまでの間に、画面が「読む」と言っても、もう一度は頼まない
   var mine = new Promise(function (resolve) { done = resolve; });
-  var got = r.rest.groups || ALL_GROUPS;                // 返事に入っているのは、控えが温かかったグループだけ。ほかは、render が読み始める
+  var got = r.rest.groups || ALL_GROUPS;                // 返事に入っているのは、控えが温かかったグループだけ。他は、render が読み始める
   got.forEach(function (g) { groupBusy[g] = mine; });
   applyCore(r.boot, r.token, r.resume);
   // 先に最初の画面を出してから、残りを入れる
@@ -626,7 +626,7 @@ function applyCore(core, token, resume) {
   if (snapGroups.length) { S.timing.snap = snapGroups.length; snapCatchUp(snapGroups); }
   schedulePrefetch();
 }
-/** スマホで、修理を全部読む（「すべて」を選んだとき・顧客の画面。v0.136.0） */
+/** スマホで、修理を全部読む（「全て」を選んだとき・顧客の画面。v0.136.0） */
 function ensureFullRepairs() {
   if (!S.repLite || S.repFullBusy || !S.have.rep) return;
   S.repFullBusy = true;
@@ -643,8 +643,8 @@ function applyRest(rest, asked, groups) {
   if (!D) return;
   setTimeout(function () { if (S.D && (S.restoreY || S.restoreRec) && !$('modals').children.length) afterRestore(); else { S.restoreY = 0; S.restoreRec = ''; } }, 0);
   // 届くまでの間に画面で足した記録は、消さずに残す。
-  // ただし残すのは「返事を待っているもの」と「残りのデータを頼んだあとに保存できたもの」だけ。
-  // それより前に保存したものは、届いたデータのほうが新しい（ほかの人が直した・消したかもしれない）ので、届いたほうを使う
+  // ただし残すのは「返事を待っているもの」と「残りのデータを頼んだ後に保存できたもの」だけ。
+  // それより前に保存したものは、届いたデータのほうが新しい（他の人が直した・消したかもしれない）ので、届いたほうを使う
   Object.keys(COLLECTION).forEach(function (key) {
     var name = COLLECTION[key], local = D[name], idField = D.schema[key] && D.schema[key].idField;
     if (!Array.isArray(rest[name]) || !Array.isArray(local) || !local.length || !idField || REST_EMPTY[name] === undefined) return;
@@ -668,7 +668,7 @@ function applyRest(rest, asked, groups) {
   snapSaveSoon();
   if (rest.restCache) { var rc = S.timing.restCache || { hit: 0, miss: 0 }; S.timing.restCache = { hit: rc.hit + (rest.restCache.hit || 0), miss: rc.miss + (rest.restCache.miss || 0) }; }
   reindex();
-  // いま開いている画面に関わるグループが届いたときだけ、描き直す（関わらないものは、裏で入れるだけ）
+  // 今開いている画面に関わるグループが届いた時だけ、描き直す（関わらないものは、裏で入れるだけ）
   if (groups.some(groupWanted)) { if ($('modals').children.length) S.renderPending = true; else render(); }
   // 残りのデータが届く前に開いていた窓（スマホでは、要るときまで読まない）の、機器・元の対応などの選択肢と、収集ツールの欄を直す
   Array.prototype.forEach.call($('modals').querySelectorAll('form[data-preview="device"]'), function (form) {
@@ -686,7 +686,7 @@ function applyRest(rest, asked, groups) {
   schedulePrefetch();
 }
 /**
- * 自動更新（RSS）を確かめる（「いますぐ更新」を押したときだけ。画面を開いたときには読まない。v0.77.0）。
+ * 自動更新（RSS）を確かめる（「いますぐ更新」を押した時だけ。画面を開いた時には読まない。v0.77.0）。
  * 新しい Windows情報・Tips が届いていたら、画面に入れる。普段は、毎朝の通知の処理が読む。
  */
 function checkFeed() {
@@ -718,7 +718,7 @@ var prefetchTimer = null;
 function viewNeed(view, sub) {
   var ph = isPhone();
   switch (view) {
-    case 'customers': return ph ? (pcByCust() ? ['alert', 'mnt'] : []) : ['alert', 'misc', 'mnt', 'win'];      // スマホの機器の一覧は、機器だけで出せる（要対応は、あとから）
+    case 'customers': return ph ? (pcByCust() ? ['alert', 'mnt'] : []) : ['alert', 'misc', 'mnt', 'win'];      // スマホの機器の一覧は、機器だけで出せる（要対応は、後から）
     case 'customer': return (sub === 'devices' || sub === 'portal' || sub === 'receiver') ? [] : ['act', 'rep', 'lic', 'mnt', 'misc'];
     case 'activities': return ['act'];
     case 'repairs': return ['rep'];
@@ -734,14 +734,15 @@ function viewNeed(view, sub) {
 }
 /** あれば出る・なくても画面は出せるグループ（届いたら描き直す） */
 function viewSoft(view, sub) {
-  if (view === 'customers') return isPhone() ? (pcByCust() ? [] : ['alert']) : ['diag'];
+  // v0.138.0：スマホの「全ての機器」も、収集ツールの受信日時を読む（読まないと、並びが「機器を直した日時」だけになり、PCと違っていた）
+  if (view === 'customers') return isPhone() ? (pcByCust() ? [] : ['alert', 'diag']) : ['diag'];
   if (view === 'customer') return ['alert', 'diag', 'act', 'rep', 'lic', 'mnt', 'misc'];     // タブの件数・最後の保守などに使う（機器の一覧は、待たずに先に出す）
   if (view === 'devices') return ['diag'];
   return [];
 }
 function groupWanted(g) { return viewNeed(S.view, S.sub).indexOf(g) !== -1 || viewSoft(S.view, S.sub).indexOf(g) !== -1; }
 function haveAll(list) { return list.every(function (g) { return S.have[g]; }); }
-/** S.ready（いまの画面に要るぶんが届いたか）と S.all（全部届いたか）を、届いたグループから決める */
+/** S.ready（今の画面に要るぶんが届いたか）と S.all（全部届いたか）を、届いたグループから決める */
 function syncReady() {
   if (!S.D) { S.ready = false; S.all = false; return; }
   S.all = haveAll(ALL_GROUPS);
@@ -790,7 +791,7 @@ function loadGroupBatch(list, quiet) {
 function groupFailed(g, e, token, epoch, quiet) {
   if (!S.D || S.token !== token || S.epoch !== epoch) return;
   if (quiet) prefetchFails[g] = (prefetchFails[g] || 0) + 1;
-  if (quiet && !groupWanted(g)) return;       // 裏の先読みが失敗しただけなら、黙っておく（要るときに、もう一度読む）
+  if (quiet && !groupWanted(g)) return;       // 裏の先読みが失敗しただけなら、黙っておく（要る時に、もう一度読む）
   S.restFailed = true; S.failFor = S.view + '/' + S.sub;
   if (!$('modals').children.length) render();
   failToast(e);
@@ -802,7 +803,7 @@ function ensureGroups(list) {
   var miss = list.filter(function (g) { return !S.have[g]; });
   return miss.length ? loadGroups(miss) : Promise.resolve();
 }
-/** いまの画面に要るぶん（と、あれば出るぶん）を読む */
+/** 今の画面に要るぶん（と、あれば出るぶん）を読む */
 function ensureView() { return ensureGroups(viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub))); }
 /** 全部が要るとき（記録を開く窓・印刷など）に呼ぶ。もう全部あれば、何もしない */
 function ensureRest() { return S.all ? Promise.resolve() : loadGroupBatch(ALL_GROUPS.filter(function (g) { return !S.have[g]; })); }
@@ -826,7 +827,7 @@ function boot(token) {
   S.timing = { t0: Date.now() };
   groupBusy = {}; prefetchFails = {}; S.epoch++;
   var epoch = S.epoch;
-  // 前回のデータが残っていれば、最初の画面のグループも先に読まない（届いた core のあとで、差分だけ受ける。v0.112.0）
+  // 前回のデータが残っていれば、最初の画面のグループも先に読まない（届いた core の後で、差分だけ受ける。v0.112.0）
   var hasSnap = false;
   if (!window.__noSnap) { try { var so = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null'); hasSnap = !!(so && Date.now() - so.at < SNAP_MAX_AGE); } catch (e) { hasSnap = false; } }
   var early = isPhone() || hasSnap ? [] : viewNeed('customers', 'devices');
@@ -867,12 +868,12 @@ $('loginForm').addEventListener('submit', function (e) {
   keepSet(KEEP_CHOICE_KEY, keep ? '1' : '0');
   call('login', { staffId: $('loginId').value, password: $('loginPw').value, remember: keep, prevRemember: keep ? rememberNow() : '', withRest: !isPhone() })
     .then(function (r) {
-      // ログインできてから覚える（まちがえたものは覚えない）。チェックを外して入ったら、前に覚えたものも消す
+      // ログインできてから覚える（間違えたものは覚えない）。チェックを外して入ったら、前に覚えたものも消す
       rememberSet(keep && r.remember ? r.remember : '');
       keepSet(LOGIN_ID_KEY, keep ? r.me.id : '');
       afterLogin(r);
       if (S.timing) S.timing.loginSrv = r.srvMs;
-      if (r.rememberFailed) toast('ログインはできましたが、「ログインしたまま」は保存できませんでした。次に開いたときは、もう一度ログインしてください。', true);
+      if (r.rememberFailed) toast('ログインはできましたが、「ログインしたまま」は保存できませんでした。次に開いた時は、もう一度ログインしてください。', true);
     })
     .catch(function (err) {
       S.token = '';

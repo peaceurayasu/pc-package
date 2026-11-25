@@ -9,7 +9,7 @@
  *   ログアウト・パスワードの変更・スタッフの無効化・期限（REMEMBER_DAYS 日）で、使えなくなる
  * - 公開関数：login / loginWithRemember / logout / changeMyPassword / saveMyStartView / saveMyView / listStaff / saveStaff / resetStaffPassword
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.128.2';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Auth.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // ハッシュ・乱数
@@ -121,7 +121,7 @@ function verifyPassword_(password, stored) {
   return diff === 0;
 }
 
-/** 読みまちがえにくい文字だけの仮パスワード */
+/** 読み間違えにくい文字だけの仮パスワード */
 function randomPassword_(length) {
   const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
   let out = '';
@@ -181,18 +181,18 @@ function passwordStamp_(hash) {
 // ---------------------------------------------------------------------------
 // 仮パスワード（v0.128.0）
 //   仮パスワードを出したとき（スタッフの追加・パスワードの再設定・最初の管理者）、そのパスワードの印をスクリプトのプロパティに残す。
-//   ログインしたとき、いまのパスワードの印と同じなら「仮パスワードのまま」として、画面がパスワードの変更を促す。
+//   ログインした時、今のパスワードの印と同じなら「仮パスワードのまま」として、画面がパスワードの変更を促す。
 //   本人がパスワードを変えると印が合わなくなるので、自動で出なくなる（シートの列は増やさない）。
 // ---------------------------------------------------------------------------
 const TEMP_PW_PREFIX = 'tmppw_';
 function tempPwKey_(staffId) { return TEMP_PW_PREFIX + sha256Hex_('temp:' + normStaffId_(staffId)).slice(0, 40); }
-/** 仮パスワードを出したときに呼ぶ */
+/** 仮パスワードを出した時に呼ぶ */
 function markTempPassword_(staffId, hash) {
   try { PropertiesService.getScriptProperties().setProperty(tempPwKey_(staffId), passwordStamp_(hash)); }
   catch (e) { console.warn('仮パスワードの印を残せませんでした: ' + e); }
 }
 /**
- * 本人がパスワードを変えたときに呼ぶ。「このパスワードは仮ではない」と、新しいパスワードの印と一緒に覚える。
+ * 本人がパスワードを変えた時に呼ぶ。「このパスワードは仮ではない」と、新しいパスワードの印と一緒に覚える。
  * （v0.128.2：パスワードの印と一緒に覚えるので、そのあと別の方法でパスワードが変わったら、覚えた結果は使わずに確かめ直す）
  */
 function clearTempPassword_(staffId, newHash) {
@@ -203,7 +203,7 @@ const TEMP_PW_NOT = 'no:';
 /**
  * そのスタッフ（シートの行）が、仮パスワードのままか。
  * v0.128.1：印がまだ無い人（v0.128.0 より前に仮パスワードを出した人）は、変更履歴から1回だけ確かめる。
- *   いちばん新しい「パスワード再設定」「スタッフ追加」が、本人の「パスワード変更」より後なら、仮パスワードのまま。
+ *   一番新しい「パスワード再設定」「スタッフ追加」が、本人の「パスワード変更」より後なら、仮パスワードのまま。
  *   確かめた結果は印に残すので、次からは変更履歴を読まない。
  */
 function isTempPassword_(staff) {
@@ -213,9 +213,9 @@ function isTempPassword_(staff) {
     const props = PropertiesService.getScriptProperties();
     const key = tempPwKey_(staff['スタッフID']);
     const mark = props.getProperty(key);
-    if (mark === stamp) return true;                       // 仮パスワードを出したときの印と同じ
+    if (mark === stamp) return true;                       // 仮パスワードを出した時の印と同じ
     if (mark === TEMP_PW_NOT + stamp) return false;        // このパスワードは、仮ではないと確かめ済み
-    // 印が無い・パスワードが印のあとで変わった（印を付けない方法で再設定された など）：変更履歴で確かめ直す
+    // 印が無い・パスワードが印の後で変わった（印を付けない方法で再設定された など）：変更履歴で確かめ直す
     const temp = auditSaysTempPassword_(staff['スタッフID']);
     props.setProperty(key, temp ? stamp : TEMP_PW_NOT + stamp);
     return temp;
@@ -227,7 +227,7 @@ function isTempPassword_(staff) {
 
 /**
  * 変更履歴から、そのスタッフのパスワードが仮パスワードのままかを見る（v0.128.1）。
- * 「パスワード再設定」「スタッフ追加」（仮パスワードを出した）と、本人の「パスワード変更」のうち、いちばん新しいもので決める。
+ * 「パスワード再設定」「スタッフ追加」（仮パスワードを出した）と、本人の「パスワード変更」のうち、一番新しいもので決める。
  * 変更履歴にどれも無い（退避シートへ移した・最初の管理者）ときは、仮パスワードとは見なさない。
  */
 function auditSaysTempPassword_(staffId) {
@@ -282,7 +282,7 @@ function requireSession_(token, needAdmin) {
   }
   // 使っている間は切れないように、1時間たっていたら有効時間を延ばす
   if (Date.now() - Number(sess.at || 0) > 3600 * 1000) {
-    // 延ばすときは、シートで確かめ直す（控えが古くても、無効・パスワード変更のまま延ばさない）
+    // 延ばす時は、シートで確かめ直す（控えが古くても、無効・パスワード変更のまま延ばさない）
     const staff = findStaff_(sess.id);
     if (!staff || staff['有効'] !== YES || passwordStamp_(staff['パスワードハッシュ']) !== sess.stamp) {
       cache.remove(sessionKey_(token));
@@ -295,7 +295,7 @@ function requireSession_(token, needAdmin) {
   return { id: ref.id, name: ref.name, role: role, isAdmin: role === ROLE_ADMIN, startView: ref.start };
 }
 
-/** スタッフが自分で選んだ「開いた直後の画面」。選んでいない・決めた値でないときは空 */
+/** スタッフが自分で選んだ「開いた直後の画面」。選んでいない・決めた値でない時は空 */
 function staffStartView_(staff) {
   const v = String(staff['開始画面'] === undefined ? '' : staff['開始画面']).trim();
   return START_VIEWS.indexOf(v) !== -1 ? v : '';
@@ -389,8 +389,8 @@ function openSession_(staff, withRest, longTicket) {
   const id = normStaffId_(staff['スタッフID']);
   const token = newToken_();
   putSession_(token, staff, Date.now());
-  // 最終ログインは記録だけ。書けなくても（ほかの保存と重なった）ログインは通す（v0.19.0）
-  // 同じ日に何度もログインするときは書かない（v0.20.0。書くとロック・シートへの書き込み・控えの作り直しで遅くなる）
+  // 最終ログインは記録だけ。書けなくても（他の保存と重なった）ログインは通す（v0.19.0）
+  // 同じ日に何度もログインする時は書かない（v0.20.0。書くとロック・シートへの書き込み・控えの作り直しで遅くなる）
   if (String(staff['最終ログイン'] || '').slice(0, 10) !== todayYmd_()) try {
     withLock_(function () {
       const fresh = findStaff_(id);
@@ -398,11 +398,11 @@ function openSession_(staff, withRest, longTicket) {
     });
   } catch (e) {
     if (!(e && e.appCode === 'busy')) throw e;
-    console.warn('最終ログインを書けませんでした（ほかの保存と重なった）');
+    console.warn('最終ログインを書けませんでした（他の保存と重なった）');
   }
   const role = staff['権限'] === ROLE_ADMIN ? ROLE_ADMIN : ROLE_STAFF;
   const me = { id: id, name: staff['表示名'] || id, role: role, isAdmin: role === ROLE_ADMIN, startView: staffStartView_(staff), lastLogin: String(staff['最終ログイン'] || '') };
-  // 最初の画面に要るデータも一緒に返す（ログインのあとにもう1往復しないで済むように）
+  // 最初の画面に要るデータも一緒に返す（ログインの後にもう1往復しないで済むように）
   const out = { token: token, me: me, boot: bootCore_(me), resume: issueResume_(token, { id: id, stamp: passwordStamp_(staff['パスワードハッシュ']) }, longTicket === true) };
   // パソコンは、残りのデータも同じ返事で渡す（もう1往復しないで済むように。v0.20.0）
   if (withRest === true) { const rest = bootRestIfWarm_(me); if (rest) out.rest = rest; }
@@ -413,7 +413,7 @@ function openSession_(staff, withRest, longTicket) {
 // 読み直してもログインしたまま（v0.19.0）
 //   GAS の画面は Google の枠（別のドメイン）の中で動くので、ブラウザの設定によっては、
 //   画面の中の保存（sessionStorage・localStorage）が使えず、読み直すとログアウトしてしまう。
-//   そこで「読み直し用の券」を、ページのURLの # のあとに入れておく（サーバーには送られない部分）。
+//   そこで「読み直し用の券」を、ページのURLの # の後に入れておく（サーバーには送られない部分）。
 //   開いているあいだは画面が20分ごとに新しい券に替える（renewResume）。使うたびにも替わる（前の券は2分で使えなくなる）。
 //   ログアウト・パスワードの変更・無効化で、券も使えなくなる。
 //
@@ -456,7 +456,7 @@ function tidyResumeProps_(props) {
  */
 /*
  * v0.106.0：「ログインしたまま」の端末では、券を REMEMBER_DAYS 日使えるようにする（long）。
- *   iPhone の Safari は、Google の枠の中の保存（localStorage）とクッキーを、閉じたときや数日で消すことがある。
+ *   iPhone の Safari は、Google の枠の中の保存（localStorage）とクッキーを、閉じた時や数日で消すことがある。
  *   そのとき残るのは、ページのURLの券だけ。12時間で切れると、翌日に開くとログアウトしていた。
  *   券は使うたび・20分ごとに替わり、前の券は2分で使えなくなるので、長くしても、古いURLは使えない。
  */
@@ -506,7 +506,7 @@ function login(params) {
     const failKey = 'fail_' + id;
     const fails = Number(cache.get(failKey)) || 0;
     if (fails >= LOGIN_MAX_FAILS) {
-      throw appError_('locked', 'まちがいが続いたので、しばらくログインできません。' + Math.round(LOGIN_LOCK_SECONDS / 60) + '分ほど待ってください。');
+      throw appError_('locked', '間違いが続いたので、しばらくログインできません。' + Math.round(LOGIN_LOCK_SECONDS / 60) + '分ほど待ってください。');
     }
 
     const staff = findStaff_(id);
@@ -551,17 +551,17 @@ function login(params) {
 function loginWithRemember(params) {
   return apiPack_(params, function () {
     const secret = params && params.remember;
-    // 画面に出す理由も分けておく（どれで切れたか、あとで分かるように。v0.92.0）
+    // 画面に出す理由も分けておく（どれで切れたか、後で分かるように。v0.92.0）
     const fail = function (why) { return appError_('unauthorized', why || 'ログインし直してください。'); };
     if (!isHex64_(secret)) throw fail();
     const props = PropertiesService.getScriptProperties();
     const key = rememberKey_(secret);
     const raw = props.getProperty(key);
-    if (!raw) throw fail('この端末の「ログインしたまま」が、サーバーに残っていません（ほかの端末で6台以上ログインした・ログアウトした・長く使わなかった、のどれか）。');
+    if (!raw) throw fail('この端末の「ログインしたまま」が、サーバーに残っていません（他の端末で6台以上ログインした・ログアウトした・長く使わなかった、のどれか）。');
     const r = rememberParse_(raw);
     if (!r || r.exp <= Date.now()) { props.deleteProperty(key); throw fail('「ログインしたまま」の期限（' + REMEMBER_DAYS + '日）が切れました。'); }
     const staff = findStaff_(r.id);
-    if (!staff || staff['有効'] !== YES) { props.deleteProperty(key); throw fail('このスタッフは、いま使えない設定になっています。'); }
+    if (!staff || staff['有効'] !== YES) { props.deleteProperty(key); throw fail('このスタッフは、今使えない設定になっています。'); }
     if (passwordStamp_(staff['パスワードハッシュ']) !== r.stamp) { props.deleteProperty(key); throw fail('パスワードが変わったので、「ログインしたまま」が切れました。'); }
     const out = openSession_(staff, !!(params && params.withRest === true), true);
     // 使うたびに期限を延ばす（最後に使った日から REMEMBER_DAYS 日。毎日使う端末が、30日めに切れないように。v0.91.0）
@@ -631,7 +631,7 @@ function cleanViewState_(input) {
   return out;
 }
 
-/** スタッフの行から、覚えてある画面の状態を取り出す（無い・壊れているときは空） */
+/** スタッフの行から、覚えてある画面の状態を取り出す（無い・壊れている時は空） */
 function staffViewState_(staff) {
   let parsed = null;
   try { parsed = JSON.parse(String((staff && staff['画面設定']) || '')); } catch (e) { parsed = null; }
@@ -639,7 +639,7 @@ function staffViewState_(staff) {
 }
 
 /**
- * 自分の画面の状態（絞り込み・並び替え・期間の種類）を覚える。次に開いたとき、どの端末でも同じ状態で始まる。
+ * 自分の画面の状態（絞り込み・並び替え・期間の種類）を覚える。次に開いた時、どの端末でも同じ状態で始まる。
  * @param {{token:string, view:{q:Object, sort:Object, per:Object}}} params
  */
 function saveMyView(params) {
@@ -735,7 +735,7 @@ function logout(params) {
 
 /**
  * 自分のパスワードを変える。
- * ほかの端末の「ログインしたまま」は切れる。remember を渡すと、この端末のぶんだけは続けて使える。
+ * 他の端末の「ログインしたまま」は切れる。remember を渡すと、この端末のぶんだけは続けて使える。
  * @param {{token:string, current:string, next:string, remember:string=}} params
  */
 function changeMyPassword(params) {
@@ -752,7 +752,7 @@ function changeMyPassword(params) {
       updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': hash, '更新日時': nowStamp_() });
       logAudit_('パスワード変更', me.id, '', 'パスワード', '', '（本人が変更）', me.name);
       clearTempPassword_(me.id, hash);
-      // このセッションだけは続けて使えるようにする（ほかの端末のセッションは切れる）
+      // このセッションだけは続けて使えるようにする（他の端末のセッションは切れる）
       staff['パスワードハッシュ'] = hash;
       putSession_(p.token, staff, Date.now());
       dropRemembersOf_(me.id, p.remember, hash);
@@ -772,7 +772,7 @@ function listStaff(params) {
 }
 
 /**
- * スタッフの追加・変更（管理者）。追加のときは仮パスワードを1回だけ返す。
+ * スタッフの追加・変更（管理者）。追加の時は仮パスワードを1回だけ返す。
  * @param {{token:string, isNew:boolean, data:{スタッフID:string, 表示名:string, 権限:string, 有効:string}}} params
  */
 function saveStaff(params) {
@@ -844,7 +844,7 @@ function resetStaffPassword(params) {
       const hash = makePasswordHash_(tempPassword);
       updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': hash, '更新日時': nowStamp_() });
       markTempPassword_(staff['スタッフID'], hash);
-      // 連続まちがいで止まっていたら、解除する（渡した仮パスワードで、すぐ入れるように）
+      // 連続間違いで止まっていたら、解除する（渡した仮パスワードで、すぐ入れるように）
       CacheService.getScriptCache().remove('fail_' + normStaffId_(staff['スタッフID']));
       logAudit_('パスワード再設定', staff['スタッフID'], '', 'パスワード', '', '（管理者が再設定）', me.name);
       const self = normStaffId_(staff['スタッフID']) === me.id;
@@ -852,7 +852,7 @@ function resetStaffPassword(params) {
         staff['パスワードハッシュ'] = hash;
         putSession_(p.token, staff, Date.now());
       }
-      // その人の「ログインしたまま」は全部切る（自分のときは、この端末のぶんだけ残す）
+      // その人の「ログインしたまま」は全部切る（自分の時は、この端末のぶんだけ残す）
       dropRemembersOf_(staff['スタッフID'], self ? p.remember : '', hash);
       return { tempPassword: tempPassword };
     });

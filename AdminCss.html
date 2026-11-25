@@ -1,5 +1,5 @@
 <style>
-:root { --file-version: "@file-version 0.136.0"; }
+:root { --file-version: "@file-version 0.138.0"; }
 /* 配置の考え方：上に固定の帯（名前・画面の切り替え・利用者）、その下は1本の列。一覧は表、編集は重ねた窓。 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
@@ -333,7 +333,7 @@ td.clamp > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orien
 .checks label { display: flex; gap: 6px; align-items: center; }
 .msg { margin: 0; padding: 9px 12px; border-radius: 6px; background: var(--danger-soft); color: var(--danger); white-space: pre-wrap; }
 .note { margin: 0; color: var(--muted); font-size: 13px; }
-/* Tips（いちばん上の1行） */
+/* Tips（一番上の1行） */
 .tipsbar { display: flex; gap: 10px; align-items: center; background: var(--brand-soft); border: 1px solid #c9daf0; border-radius: var(--radius); padding: 4px 6px 4px 10px; font-size: 13px; }
 .tipsbar .tip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tipsbar .btn.small { padding: 2px 8px; }
@@ -721,7 +721,7 @@ details.rest[open] > summary { margin-bottom: 10px; }
 .tabmore .tabpop button { text-align: left; border: 0; background: none; padding: 8px 12px; border-radius: 6px; white-space: nowrap; }
 .tabmore .tabpop button:hover { background: var(--brand-soft); }
 .tabmore .tabpop button[aria-selected="true"] { color: var(--brand); font-weight: 700; }
-/* v0.130.0：対応・修理の集計は、ふだんは1行（押すと開く） */
+/* v0.130.0：対応・修理の集計は、普段は1行（押すと開く） */
 .statfold > h2 { cursor: pointer; }
 .statfold > h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
 .statfold .sfbtn { font-size: 13px; font-weight: 700; color: var(--brand); white-space: nowrap; }
@@ -855,7 +855,7 @@ body.mtgfull main { max-width: none; font-size: 17px; }
 body.mtgfull .mtile b { font-size: 46px; }
 body.mtgfull .mtbl { font-size: 17px; }
 /* スマホ：ミーティングの表は、1行を1枚のカードにする（横に切れて読めなかった。v0.107.0）。
-   はじめの2つ（日付・顧客など）を1行目に並べ、残りは下に折り返す。ランキングと予定表は、表のまま */
+   初めの2つ（日付・顧客など）を1行目に並べ、残りは下に折り返す。ランキングと予定表は、表のまま */
 @media (max-width: 760px) {
   .mtbl:not(.mrank):not(.mcaltbl) { display: block; width: 100%; }
   .mtbl:not(.mrank):not(.mcaltbl) thead { display: none; }
@@ -1040,7 +1040,7 @@ tbody tr:hover td { background: rgba(217,167,59,.10); }
 .panel.fold > .fsum.static, .panel > .fsum.static { display: flex; }
 .panel > .fsum { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 16px 12px; }
 .panel > .fsum:empty, .panel > .fsum > .fchips:empty { display: none; }
-/* v0.115.0：待ちが長いときの鍵（保存中…など） */
+/* v0.115.0：待ちが長い時の鍵（保存中…など） */
 #busyLock { position: fixed; inset: 0; z-index: 1000; background: rgba(15, 23, 42, .28); display: flex; align-items: center; justify-content: center; cursor: progress; }
 #busyLock[hidden] { display: none; }
 #busyLock .blbox { display: flex; align-items: center; gap: 12px; background: var(--card, #fff); color: var(--text, #111); padding: 14px 22px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.25); font-weight: 600; }
