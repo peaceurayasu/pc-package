@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -692,7 +692,7 @@ VIEWS.customers = function () {
     // 今日やること（要対応・今月の定期保守・社内メモ）を、いちばん上に（v0.38.0）
     (ready ? '<div class="cols todo">' + alertsHtml('') + memosPanelHtml() + regularMaintHtml() + '</div>'
       : '<section class="panel" id="homeWait"><h2>要対応・定期保守・社内メモ</h2>' + notReadyHtml() + '</section>') +
-    '<section class="panel" id="custPanel"><h2><span class="grow">顧客</span><span class="sub">有効 ' + live.length + ' 社・使用中の機器 ' + D.devices.filter(function (d) { return d['状況'] === '使用中'; }).length + ' 台</span><button type="button" class="btn small primary" data-act="newRecord" data-key="customer">＋ 顧客を追加</button></h2>' +
+    '<section class="panel" id="custPanel"><h2><span class="grow">顧客</span>' + custViewSwitchHtml() + '<span class="sub">有効 ' + live.length + ' 社・使用中の機器 ' + D.devices.filter(function (d) { return d['状況'] === '使用中'; }).length + ' 台</span><button type="button" class="btn small primary" data-act="newRecord" data-key="customer">＋ 顧客を追加</button></h2>' +
       '<div class="pad filters">' +
         '<div class="toolbar">' +
           '<input type="search" id="q_cust_text" data-q="cust.text" placeholder="顧客の名前・住所で探す（ひらがな可）" value="' + esc(q('cust.text')) + '" aria-label="顧客を探す">' +
@@ -702,6 +702,30 @@ VIEWS.customers = function () {
       '</div>' +
       '<div id="list">' + LISTS.customers() + '</div></section>';
 };
+/** 顧客の一覧を、カードで見るか表で見るか（v0.131.0。スタッフごとに覚える） */
+function custAsTable() { return !isPhone() && q('pref.custview') === 'table'; }
+function custViewSwitchHtml() {
+  var t = custAsTable();
+  return '<span class="viewswitch" role="group" aria-label="一覧の見え方"><button type="button" data-act="custView" data-v="card" aria-pressed="' + !t + '">カード</button><button type="button" data-act="custView" data-v="table" aria-pressed="' + t + '">表</button></span>';
+}
+/** 表で見るときの列。顧客名・契約・機器・未完了の対応・要対応・最後の保守・地域・電話 */
+function custTableHtml(shown, urgent) {
+  var cols = [
+    { label: '顧客', cls: 'cname', key: function (c) { return c['ふりがな'] || c['顧客名']; }, html: function (c) { return '<b>' + esc(c['顧客名']) + '</b>' + (c['ふりがな'] ? '<span class="minor">' + esc(c['ふりがな']) + '</span>' : ''); } },
+    { label: '契約', cls: 'nowrap', key: function (c) { return c['保守契約'] || ''; }, html: function (c) { return contractPill(c['保守契約']) + (c['状態'] === '停止' ? ' ' + pill('停止') : ''); } },
+    { label: '機器', cls: 'num', key: function (c) { return IDX.devCount[c['顧客ID']] || 0; }, html: function (c) { return (IDX.devCount[c['顧客ID']] || 0) + '台'; } },
+    { label: '未完了の対応', cls: 'num', key: function (c) { return (IDX.openAct || {})[c['顧客ID']] || 0; }, html: function (c) { var n = (IDX.openAct || {})[c['顧客ID']] || 0; return n ? pill(n + '件', 'warn') : DASH; } },
+    { label: '要対応', cls: 'nowrap', key: function (c) { return IDX.alertCount[c['顧客ID']] || 0; }, html: function (c) {
+      if (!S.ready) return '<span class="sub">…</span>';
+      var n = IDX.alertCount[c['顧客ID']] || 0, u = urgent[c['顧客ID']] || 0;
+      return n ? pill(n + '件', u ? 'danger' : 'warn') : DASH;
+    } },
+    { label: '最後の保守', cls: 'nowrap', key: function (c) { return (IDX.lastMaint || {})[c['顧客ID']] || ''; }, html: function (c) { var m = (IDX.lastMaint || {})[c['顧客ID']]; return m ? esc(m) : DASH; } },
+    { label: '地域', cls: 'nowrap', key: function (c) { return c['地域'] || ''; }, html: function (c) { return esc(c['地域'] || ''); } },
+    { label: '電話', cls: 'nowrap', key: function (c) { return c['電話'] || ''; }, html: function (c) { return esc(c['電話'] || ''); } }
+  ];
+  return '<div class="ctable">' + tableHtml('custTable', cols, shown, { act: 'openCustomer', id: function (c) { return c['顧客ID']; }, empty: '条件に合う顧客がいません。' }) + '</div>';
+}
 /** 顧客が、いまの絞り込みに当てはまるか。skip に渡した条件（'contract' か 'region'）は見ない */
 function custMatch(c, skip) {
   var state = q('cust.state', '有効'), contract = q('cust.contract'), region = q('cust.region');
@@ -793,6 +817,10 @@ LISTS.customers = function () {
   var urgent = {};
   pcAlerts().forEach(function (a) { if (a.level === 'danger') urgent[a.customerId] = (urgent[a.customerId] || 0) + 1; });
   var shown = rows.slice(0, ROW_LIMIT);
+  if (custAsTable()) {
+    return custTableHtml(shown, urgent) +
+      (rows.length > shown.length ? '<p class="more">' + rows.length + '件のうち、先頭の' + shown.length + '件を出しています。条件を足して絞り込んでください。</p>' : '');
+  }
   var cardList = shown.map(function (c) {
     var id = c['顧客ID'], n = IDX.alertCount[id] || 0, u = urgent[id] || 0;
     var attr = c._pending ? ' class="ccard pending" title="保存しています…"' : ' class="ccard click" tabindex="0" data-act="openCustomer" data-id="' + esc(id) + '"' + memoAttr(c);
@@ -1661,7 +1689,7 @@ function loanDateAsk(loanId, cfg) {
   var name = (IDX.rental[loan['レンタルID']] || {})['名称'] || loan['レンタルID'];
   openModal('<header><h2>' + esc(cfg.title) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
     '<div class="body"><p class="msg" hidden></p><p>' + esc(name) + '（' + esc(loanWho(loan)) + '）</p>' +
-    '<div class="field"><label for="ld_date">' + esc(cfg.label) + '</label><input type="date" id="ld_date" value="' + esc(cfg.value) + '" min="' + esc(loan['貸出日'] || '') + '">' +
+    '<div class="field"><label for="ld_date">' + esc(cfg.label) + '</label>' + dateFieldHtml('date', ' id="ld_date"', cfg.value) +
     '<span class="note">' + esc(cfg.note) + '</span>' +
     (cfg.chips ? '<div class="chips">' + cfg.chips.map(function (c) { return '<button type="button" class="btn small" data-act="extPick" data-d="' + esc(c[1]) + '">' + esc(c[0]) + '</button>'; }).join(' ') + '</div>' : '') + '</div></div>' +
     '<footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button>' +

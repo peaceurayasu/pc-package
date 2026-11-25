@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -211,7 +211,7 @@ function manualHtml(view) {
 }
 function helpFor(view) { return (isPhone() && HELP_PHONE[view]) || HELP[view]; }
 function helpButtonHtml(view) {
-  return HELP[view] ? '<button type="button" class="btn small" data-act="help" data-view="' + view + '" title="このページのマニュアル">📖 マニュアル</button>' : '';
+  return HELP[view] ? '<button type="button" class="btn small" data-act="help" data-view="' + view + '" title="このページのマニュアル" aria-label="マニュアル">📖<span class="lbl"> マニュアル</span></button>' : '';
 }
 // ---- 顧客ごとにまとめる（対応履歴・修理履歴・ライセンス・貸出記録） ----
 var GROUP_Q = { activities: 'act.group', repairs: 'rep.group', licenses: 'lic.group', loans: 'loan.group' };
@@ -596,8 +596,9 @@ function periodBarHtml(name) {
     body = btn('perShift', '← 前の月', ' data-d="-1"') + '<input type="month" id="perMonth_' + name + '" data-permonth="' + name + '" value="' + esc(p.month) + '" aria-label="見る月">' + btn('perShift', '次の月 →', ' data-d="1"') +
       '<span class="sep"></span>' + jump('lastmonth', '先月', r.tag === '先月') + jump('thismonth', '今月', r.tag === '今月');
   } else if (p.mode === 'range') {
-    body = '<input type="date" id="perFrom_' + name + '" data-perfrom="' + name + '" value="' + esc(p.from) + '" aria-label="はじめの日"><span>〜</span>' +
-      '<input type="date" id="perTo_' + name + '" data-perto="' + name + '" value="' + esc(p.to) + '" aria-label="おわりの日">' +
+    // v0.131.0：数字だけでも打てる日付の欄（20260426 → 2026-04-26）
+    body = dateFieldHtml('date', ' id="perFrom_' + name + '" data-perfrom="' + name + '" aria-label="はじめの日"', p.from) + '<span>〜</span>' +
+      dateFieldHtml('date', ' id="perTo_' + name + '" data-perto="' + name + '" aria-label="おわりの日"', p.to) +
       '<span class="sep"></span>' + jump('d30', '直近30日') + jump('d90', '直近90日') + jump('year', '今年');
   } else {
     body = '<span class="note">期間を問わず、全部から探します。</span>';

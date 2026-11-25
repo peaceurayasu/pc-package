@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -222,7 +222,8 @@ function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 /** 上の帯の「○○ 様、ようこそ」・前回ログイン・最終更新 */
 function showWelcome() {
   if (!S.D || !S.D.me || !$('welcomeMsg')) return;
-  $('welcomeMsg').textContent = S.D.me.name + ' 様、ようこそ';
+  $('welcomeMsg').textContent = S.D.me.name;
+  var av = $('acctAvatar'); if (av) av.textContent = String(S.D.me.name || '?').trim().charAt(0);
   var tm = $('timingSlot'); if (tm) tm.innerHTML = S.view === 'home' ? '' : timingHtml();
   var ll = S.D.me.lastLogin ? String(S.D.me.lastLogin).replace(/-/g, '/').slice(0, 16) : '';
   $('lastLogin').textContent = ll ? '前回ログイン：' + ll : '';

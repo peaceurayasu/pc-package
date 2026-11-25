@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -1572,6 +1572,8 @@ var ACT = {
     box.focus();
   },
 
+  // 顧客の一覧：カード／表（スタッフごとに覚える。v0.131.0）
+  custView: function (el) { S.q['pref.custview'] = el.dataset.v === 'table' ? 'table' : ''; sendView(); render(); },
   // 対応・修理の「集計」を開く・たたむ（スタッフごとに覚える。v0.130.0）
   toggleStats: function () { S.q['pref.stats'] = statsOpen() ? '' : '1'; sendView(); render(); },
   // 日付の欄の横の📅：ブラウザのカレンダーを開く（選んだら、文字の欄に入る。v0.130.0）

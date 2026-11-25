@@ -1,5 +1,5 @@
 <style>
-:root { --file-version: "@file-version 0.130.0"; }
+:root { --file-version: "@file-version 0.131.0"; }
 /* 配置の考え方：上に固定の帯（名前・画面の切り替え・利用者）、その下は1本の列。一覧は表、編集は重ねた窓。 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
@@ -1073,4 +1073,70 @@ table.pbare > thead > tr > td, table.pbare > tfoot > tr > td, table.pbare > tbod
   #printArea .yr-report .yr-sec h2 { break-after: avoid; page-break-after: avoid; }
   #printArea .yr-report .yr-tbl thead { display: table-header-group; }
 }
+/* ===========================================================================
+   v0.131.0 見た目の調整（PC・スマホ）
+   業務アプリでよくある作り（上の帯は1段・タブは横に流す・見出しの操作は小さく・一覧は表でも見られる）に寄せた
+   =========================================================================== */
+/* ---- 上の帯：1段（更新と、名前のメニューだけ） ---- */
+.topact { display: flex; align-items: center; gap: 8px; flex: none; }
+.top .topact .btn { background: rgba(255,255,255,.14); border-color: transparent; color: #fff; }
+.top .topact .btn:hover { background: rgba(255,255,255,.24); }
+.acct-btn { display: inline-flex; align-items: center; gap: 8px; padding: 3px 12px 3px 4px; border-radius: 999px; }
+.acct-btn .w-msg { color: #fff; font-weight: 600; font-size: 13px; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-btn .caret { font-size: 11px; opacity: .8; }
+.avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--gold); color: var(--forest-dark); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; }
+.top .acct-menu { right: 0; left: auto; min-width: 250px; }
+.top .acct-menu .btn { color: var(--ink); background: transparent; }
+.top .acct-menu .btn:hover { background: var(--brand-soft); }
+.acct-info { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line-soft); font-size: 12px; line-height: 1.5; color: var(--muted); }
+.acct-info:empty, .acct-info span:empty { display: none; }
+.acct-info #timingSlot { font-size: 11px; opacity: 1; }
+#welcomeLogout { color: var(--danger) !important; }
+.welcome[hidden] { display: none !important; }
+/* 「＋ 記録」は、上のメニューの「入力」と同じなので、帯からは外す（メニューが重ならないように） */
+.top .user { display: none; }
+.top .nav { overflow: visible; }
+
+/* ---- 表：見出しを少しはっきり・行の高さをそろえる ---- */
+.panel table th { letter-spacing: .02em; }
+.panel table tbody tr { transition: background .12s; }
+
+/* ---- 一覧の切り替え（カード／表） ---- */
+.viewswitch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.viewswitch button { border: 0; background: var(--panel); padding: 5px 12px; font-size: 13px; color: var(--muted); }
+.viewswitch button + button { border-left: 1px solid var(--line); }
+.viewswitch button[aria-pressed="true"] { background: var(--brand); color: #fff; font-weight: 700; }
+.ctable td.cname b { display: block; }
+.ctable td .minor { display: block; }
+.ctable td.num { text-align: left; }
+
+/* ---- スマホ ---- */
+@media (max-width: 760px) {
+  /* 上の帯：会社名・更新・名前（丸）・メニュー の1段 */
+  .top-row { flex-wrap: nowrap; gap: 8px; min-height: 52px; }
+  .top .brand { flex: 1; font-size: 16px; padding-top: 0; }
+  .topact { order: 2; gap: 6px; }
+  #topMenu { order: 3; }
+  .topact .lbl, .acct-btn .w-msg, .acct-btn .caret, #topMenu .lbl { display: none; }
+  #topMenu { font-size: 18px; padding: 4px 12px; min-height: 34px; }
+  .acct-btn { padding: 3px; }
+  .top .topact .btn { min-height: 34px; }
+  .acct-info #lastLogin { display: block !important; }
+  .top .acct-menu { position: fixed; top: 58px; right: 8px; left: 8px; min-width: 0; }
+  /* 見出し：マニュアルは📖だけにして、見出しと同じ行に */
+  .head { gap: 8px; }
+  .head h1 { flex: 1 1 160px; font-size: 21px; }
+  .head [data-act="help"] { padding: 6px 9px; min-height: 34px; }
+  .head [data-act="help"] .lbl { display: none; }
+  .head .btn { min-height: 36px; }
+  /* 顧客の画面のタブ：折り返さず、横に流す。「その他」は下から出す */
+  .tabs.ctabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs.ctabs::-webkit-scrollbar { display: none; }
+  .tabmore .tabpop { position: fixed; top: auto; bottom: 86px; left: 12px; right: 12px; z-index: 60; padding: 8px; }
+  .tabmore .tabpop button { padding: 12px 14px; font-size: 15px; }
+  .viewswitch { display: none; }
+}
+/* 期間・予定の表の中の日付の欄は、幅を決める */
+.period .per-nav .datefield { width: 175px; flex: none; }
+td > .datefield { min-width: 160px; }
 </style>

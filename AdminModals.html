@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.130.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1689,6 +1689,8 @@ function normDateField(el) {
   return !bad;
 }
 document.addEventListener('focusout', function (e) { if (e.target && e.target.dataset && e.target.dataset.datefmt) normDateField(e.target); });
+// 期間の欄など、change で動くところのために、ほかの処理より先に形を直す（v0.131.0）
+document.addEventListener('change', function (e) { if (e.target && e.target.dataset && e.target.dataset.datefmt) normDateField(e.target); }, true);
 document.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target && e.target.dataset && e.target.dataset.datefmt) normDateField(e.target); }, true);
 // カレンダーで選んだら、文字の欄に入れる
 document.addEventListener('change', function (e) {
@@ -1699,6 +1701,7 @@ document.addEventListener('change', function (e) {
   txt.value = pk.value.replace('T', ' ');
   normDateField(txt);
   txt.dispatchEvent(new Event('input', { bubbles: true }));
+  txt.dispatchEvent(new Event('change', { bubbles: true }));
 });
 
 // 保存の前に、変えたところを見せる種類（v0.30.0）
@@ -2265,7 +2268,7 @@ function maintPlanHtml(r, cur, next) {
   var calOpt = function (sel) { return r.calendars.map(function (c) { return '<option value="' + esc(c.id) + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join(''); };
   var rows = r.plan.map(function (x, i) {
     return '<tr data-i="' + i + '"><td><input type="checkbox" class="mpOn" checked aria-label="入れる"></td>' +
-      '<td><input type="date" class="mpDate" value="' + esc(x.date) + '"></td>' +
+      '<td>' + dateFieldHtml('date', ' class="mpDate" aria-label="予定の日"', x.date) + '</td>' +
       '<td class="nowrap"><input type="time" class="mpStart" value="' + esc(('0' + x.start).slice(-5)) + '">〜<input type="time" class="mpEnd" value="' + esc(('0' + x.end).slice(-5)) + '"></td>' +
       '<td><b>' + esc(x.name) + '</b><span class="minor">' + esc(x.area) + (x.prev ? '・先月 ' + esc(x.prev) : '') + '</span></td>' +
       '<td class="nowrap">' + x.devices + '台・' + x.minutes + '分</td>' +
