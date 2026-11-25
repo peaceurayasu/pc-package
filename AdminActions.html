@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.133.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.134.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -793,6 +793,25 @@ var ACT = {
       item('customer', '顧客を追加', '新しい取引先') +
       '</div></div>', true, true);
   },
+  // 一覧から、開かずに完了にする（v0.134.0）。完了日時（対応）・完了日（修理）が空なら、今を入れる
+  quickDone: function (el) {
+    var key = el.dataset.key, id = el.dataset.id, schema = S.D.schema[key], rec = findRecord(key, id);
+    if (!schema || !rec || rec._pending || el.dataset.busy) return;
+    var data = {}; data[schema.idField] = id;
+    data['ステータス'] = key === 'activity' ? S.D.activityDone : S.D.repairDone;
+    if (key === 'activity' && !rec['完了日時']) data['完了日時'] = nowYmdHm();
+    if (key === 'repair' && !rec['完了日']) data['完了日'] = todayLocal();
+    el.dataset.busy = '1'; el.textContent = '保存中…';
+    call(SAVE_FN[key], { data: data }, 'nolock').then(function (r) {
+      var list = S.D[COLLECTION[key]];
+      if (list.some(function (x) { return x[schema.idField] === id; })) upsert(list, schema.idField, r.record);
+      if (key === 'activity') Object.keys(S.custActs).forEach(function (c) { var l = S.custActs[c]; for (var i = 0; i < l.length; i++) if (l[i]['対応ID'] === id) l[i] = r.record; });
+      S.savedAt[key + ':' + id] = Date.now();
+      reindex(); S.alertsStale = true;
+      toast((key === 'activity' ? '対応' : '修理') + 'を完了にしました');
+      softRender();
+    }).catch(function (e) { delete el.dataset.busy; el.textContent = '✓ 完了'; failToast(e); });
+  },
   // PC の入力画面：顧客を先に選ぶ（v0.133.0）
   homeCustPick: function (el) { S.homeCust = el.dataset.id; S.homeCustQ = ''; noteRecentCust(el.dataset.id); render(); },
   homeCustClear: function () { S.homeCust = ''; S.homeCustQ = ''; render(); var i = $('homeCustQ'); if (i) i.focus(); },
@@ -856,7 +875,13 @@ var ACT = {
   },
   pFilter: function (el) { var st = pState(el.dataset.key); st.f = el.dataset.f; st.n = P_STEP; render(); },
   pMore: function (el) { var st = pState(el.dataset.key); st.n += P_STEP; pDraw(el.dataset.key); },
-  pAlerts: function () { S.pAlertsOpen = !S.pAlertsOpen; render(); },
+  // スマホの要対応：下から一覧を出す（v0.134.0）
+  pAlerts: function () {
+    openModal('<header><h2>要対応 <span class="sub">' + pcAlerts().length + '件</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<div class="body" id="pAlertSheetBody">' + pAlertSheetInner() + '</div>', true, true).querySelector('.dialog').classList.add('pasheet');
+  },
+  pAlertCat: function (el) { S.pAlertCat = el.dataset.cat || ''; var b = $('pAlertSheetBody'); if (b) b.innerHTML = pAlertSheetInner(); },
+  pAlertOpen: function (el) { closeModal(el); ACT.openAlert(el); },
   mmCust: function (el) {
     var id = el.dataset.id || '';
     S.mm.cust = id; S.mm.dev = ''; S.mm.diag = null; S.mm.diagFor = '';
@@ -1694,7 +1719,7 @@ var ACT = {
   alertDone: function () { S.q['alert.done'] = q('alert.done') === '1' ? '' : '1'; render(); },
   resolveAlert: function (el) {
     el.disabled = true;
-    call('resolveAlert', { key: el.dataset.key }).then(function (r) { setAlerts(r.alerts); toast('対応済みにしました'); })
+    call('resolveAlert', { key: el.dataset.key }).then(function (r) { setAlerts(r.alerts); toast('対応済みにしました'); var sb = $('pAlertSheetBody'); if (sb) sb.innerHTML = pAlertSheetInner(); })
       .catch(function (e) { el.disabled = false; failToast(e); if (e && e.error === 'notfound') { S.alertsStale = true; render(); } });
   },
   unresolveAlert: function (el) {

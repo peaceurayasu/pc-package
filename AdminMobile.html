@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.132.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.134.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -95,11 +95,11 @@ var P_CARD = {
       devLabel(id) || id, [custName(d['顧客ID']), d['設置場所'], d['利用者']].filter(function (x) { return x; }).join('・'), isPendingCust(d['顧客ID']) ? 'unassigned' : '', memoText(d));
   },
   act: function (a) {
-    return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + (a['会議で共有'] === 'はい' ? ' ' + pill('共有', 'brand') : '') + photoMark('activity', a['対応ID']),
+    return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + quickDoneHtml('activity', a, 'span') + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + (a['会議で共有'] === 'はい' ? ' ' + pill('共有', 'brand') : '') + photoMark('activity', a['対応ID']),
       custName(a['顧客ID']) + (a['機器ID'] ? '　' + devLabel(a['機器ID']) : ''), a['内容'], '', memoText(a));
   },
   rep: function (r) {
-    return pCard('editRecord:repair', r['修理ID'], esc(r['受付日']) + ' ' + statusPill(r['ステータス']) + (r['種別'] ? ' ' + esc(r['種別']) : '') + photoMark('repair', r['修理ID']),
+    return pCard('editRecord:repair', r['修理ID'], esc(r['受付日']) + ' ' + statusPill(r['ステータス']) + quickDoneHtml('repair', r, 'span') + (r['種別'] ? ' ' + esc(r['種別']) : '') + photoMark('repair', r['修理ID']),
       r['件名'], [custName(r['顧客ID']), r['預かり品'], r['型番']].filter(function (x) { return x; }).join('・'), '', memoText(r));
   },
   lic: function (l) {
@@ -116,14 +116,36 @@ function addDaysYmd(ymd, n) {
   var p = String(ymd).split('-'), d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n));
   return d.getUTCFullYear() + '-' + ('0' + (d.getUTCMonth() + 1)).slice(-2) + '-' + ('0' + d.getUTCDate()).slice(-2);
 }
+/** スマホの要対応の一覧（ボトムシートの中身。v0.134.0）。種類で絞れる。1件ずつ「開く」「対応済み」 */
+function pAlertSheetInner() {
+  var all = pcAlerts(), cat = S.pAlertCat || '';
+  var counts = {};
+  all.forEach(function (a) { counts[a.category] = (counts[a.category] || 0) + 1; });
+  if (cat && !counts[cat]) cat = S.pAlertCat = '';
+  var list = all.filter(function (a) { return !cat || a.category === cat; });
+  var chips = '<div class="chipset small pacats"><button type="button" data-act="pAlertCat" data-cat="" aria-pressed="' + !cat + '">すべて ' + all.length + '</button>' +
+    S.D.alertCategories.filter(function (c) { return counts[c[0]]; }).map(function (c) {
+      return '<button type="button" data-act="pAlertCat" data-cat="' + esc(c[0]) + '" aria-pressed="' + (cat === c[0]) + '">' + esc(c[1]) + ' ' + counts[c[0]] + '</button>';
+    }).join('') + '</div>';
+  if (!list.length) return chips + '<p class="empty">要対応はありません。</p>';
+  return chips + '<div class="palist">' + list.map(function (a) {
+    return '<div class="paitem' + (a.level === 'danger' ? ' hot' : '') + '">' +
+      '<div class="pai-top">' + pill(a.label, a.level) + '<span class="pai-cust">' + esc(custName(a.customerId)) + '</span></div>' +
+      '<b>' + esc(a.title) + '</b>' + (a.detail ? '<span class="pai-detail">' + esc(a.detail) + '</span>' : '') +
+      '<div class="pai-btns"><button type="button" class="btn small" data-act="pAlertOpen" data-id="' + esc(a.key) + '">開く</button>' +
+      '<button type="button" class="btn small" data-act="resolveAlert" data-key="' + esc(a.key) + '">対応済みにする</button></div></div>';
+  }).join('') + '</div>';
+}
 var PHONE_VIEWS = {
   customers: function () {
     var alerts = '';
     if (S.have.alert) {
-      var n = pcAlerts().length;
-      alerts = '<section class="panel" id="pAlertBox"><div class="hpad"><button type="button" class="btn palerts" data-act="pAlerts" aria-expanded="' + !!S.pAlertsOpen + '">' +
-        (n ? pill('要対応 ' + n + '件', 'danger') : pill('要対応なし', 'ok')) + '<span class="grow"></span>' + (n ? (S.pAlertsOpen ? '閉じる' : '見る') : '') + '</button>' +
-        (S.pAlertsOpen && n ? alertsHtml() : '') + '</div></section>';
+      // v0.134.0：上には1行の帯だけ。押すと、下から一覧（ボトムシート）が出る（前は、PC用の枠が中に開いて崩れていた）
+      var pa = pcAlerts(), n = pa.length, urgent = pa.filter(function (a) { return a.level === 'danger'; }).length;
+      alerts = n
+        ? '<button type="button" class="palertbar' + (urgent ? ' hot' : '') + '" id="pAlertBox" data-act="pAlerts"><span class="pab-ico" aria-hidden="true">⚠️</span>' +
+            '<span class="pab-txt"><b>要対応 ' + n + '件</b>' + (urgent ? '<span>うち急ぎ ' + urgent + '件</span>' : '') + '</span><span class="pab-go">一覧 ›</span></button>'
+        : '<p class="palertnone" id="pAlertBox">✓ 要対応はありません</p>';
     } else if (S.restFailed) {
       alerts = '<p class="note">要対応を読み込めませんでした。<button type="button" class="btn small" data-act="retryRest">もう一度読み込む</button></p>';
     } else alerts = '<p class="note" id="pAlertWait">要対応を読み込んでいます…</p>';
@@ -1564,7 +1586,7 @@ function repCols() {
   return REP_COLS || (REP_COLS = [COL.repDate, COL.repCustomer, COL.repTitle, COL.repKind, COL.repItems,
     { label: 'ステータス', html: function (r) {
       var n = repElapsed(r);
-      return statusPill(r['ステータス']) + (isOpenRepair(r) && n !== null ? '<span class="minor">' + (repIsLong(r) ? pill(n + '日経過', 'danger') : n + '日経過') + '</span>' : '');
+      return statusPill(r['ステータス']) + quickDoneHtml('repair', r) + (isOpenRepair(r) && n !== null ? '<span class="minor">' + (repIsLong(r) ? pill(n + '日経過', 'danger') : n + '日経過') + '</span>' : '');
     }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
     COL.repDone,
     { label: '担当', html: function (r) { return esc(r['担当スタッフ']); }, key: function (r) { return r['担当スタッフ']; }, cls: 'nowrap', ml: '担当' }]);

@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.133.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.134.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -12,6 +12,17 @@ var NAV = [
 ];
 // rest が届くまで中身を出せない画面
 var NAV_MORE = ['notices', 'settings'];
+/**
+ * 一覧の行に出す「完了」ボタン（v0.134.0）。完了していない対応・修理だけ。押すと、開かずに完了にする（完了日時・完了日も入る）。
+ * tag：表の中は button、スマホのカード（カード自体がボタン）の中は span にする
+ */
+function quickDoneHtml(key, r, tag) {
+  var open = key === 'activity' ? isOpenActivity(r) : isOpenRepair(r);
+  if (!open || r._pending) return '';
+  var id = r[key === 'activity' ? '対応ID' : '修理ID'];
+  tag = tag || 'button';
+  return ' <' + tag + (tag === 'button' ? ' type="button"' : ' role="button" tabindex="0"') + ' class="qdone" data-act="quickDone" data-key="' + key + '" data-id="' + esc(id) + '" title="開かずに完了にします">✓ 完了</' + tag + '>';
+}
 /**
  * 上のメニューが入りきらないとき（ロゴがある・案件・営業を使う・画面が狭い）、右から順に「その他」の中へ移す（v0.132.0）。
  * いま開いている画面のボタンは、なるべく外に残す。
@@ -536,7 +547,7 @@ var COL = {
   actCustomer: { label: '顧客', html: function (a) { return esc(custName(a['顧客ID'])); }, key: function (a) { return custName(a['顧客ID']); }, cls: 'cname' },
   actKind: { label: '種別', html: function (a) { return esc(a['対応種別']) + (a['インシデント種別'] ? '<span class="minor">' + esc(a['インシデント種別']) + '</span>' : ''); }, key: function (a) { return a['対応種別']; }, cls: 'nowrap' },
   actBody: { label: '内容', html: function (a) { return '<span>' + linkify(a['内容']) + '</span>' + photoMark('activity', a['対応ID']) + (a['機器ID'] ? '<span class="minor">' + esc(devLabel(a['機器ID'])) + '</span>' : ''); }, cls: 'clamp' },
-  actStatus: { label: 'ステータス', html: function (a) { return statusPill(a['ステータス']); }, key: function (a) { return a['ステータス']; }, cls: 'nowrap' },
+  actStatus: { label: 'ステータス', html: function (a) { return statusPill(a['ステータス']) + quickDoneHtml('activity', a); }, key: function (a) { return a['ステータス']; }, cls: 'nowrap' },
   actStaff: { label: 'スタッフ', html: function (a) { return esc(a['受付スタッフ']); }, key: function (a) { return a['受付スタッフ']; }, cls: 'nowrap', ml: '受付' },
 
   repDate: { label: '受付日', html: function (r) { return esc(r['受付日']); }, key: function (r) { return r['受付日'] + r['修理ID']; }, cls: 'nowrap' },
@@ -544,7 +555,7 @@ var COL = {
   repTitle: { label: '件名', html: function (r) { return esc(r['件名']) + photoMark('repair', r['修理ID']) + (r['型番'] ? '<span class="minor">' + esc(r['型番']) + '</span>' : ''); }, key: function (r) { return r['件名']; }, cls: 'title' },
   repKind: { label: '種別', html: function (r) { return esc(r['種別']); }, key: function (r) { return r['種別']; }, cls: 'nowrap' },
   repItems: { label: '預かり品', html: function (r) { return esc(r['預かり品']); }, ml: '預かり' },
-  repStatus: { label: 'ステータス', html: function (r) { return statusPill(r['ステータス']); }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
+  repStatus: { label: 'ステータス', html: function (r) { return statusPill(r['ステータス']) + quickDoneHtml('repair', r); }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
   repDone: { label: '完了日', html: function (r) { return r['完了日'] ? esc(r['完了日']) : DASH; }, key: function (r) { return r['完了日']; }, cls: 'nowrap', ml: '完了' },
 
   licCustomer: { label: '顧客', html: function (l) { return esc(custName(l['顧客ID'])); }, key: function (l) { return custName(l['顧客ID']); }, cls: 'cname' },
@@ -772,7 +783,7 @@ function homePcHtml() {
     '<section class="panel hstep"><h2><span class="hnum">1</span><span class="grow">顧客を選ぶ <span class="sub">（先に選ぶと、入力の窓に入ります）</span></span></h2><div class="hpad">' + custBox + '</div></section>' +
     '<section class="panel hstep"><h2><span class="hnum">2</span><span class="grow">記録するもの ' + forWhom + '</span></h2><div class="hpad">' +
       '<div class="hgrid2">' + HOME_PC_MAIN.map(function (b) {
-        return '<button type="button" class="hbtn big primary" data-act="quickNew" data-key="' + b[0] + '"><span class="hico" aria-hidden="true">' + b[1] + '</span><span class="htxt"><b>' + b[2] + '</b><span>' + b[3] + '</span></span></button>';
+        return '<button type="button" class="hbtn big" data-act="quickNew" data-key="' + b[0] + '"><span class="hico" aria-hidden="true">' + b[1] + '</span><span class="htxt"><b>' + b[2] + '</b><span>' + b[3] + '</span></span></button>';
       }).join('') + '</div>' +
       '<div class="hgrid4">' + HOME_PC_SUB.map(function (b) {
         return '<button type="button" class="hbtn small" data-act="quickNew" data-key="' + b[0] + '"><span class="hico" aria-hidden="true">' + b[1] + '</span><b>' + b[2] + '</b></button>';
