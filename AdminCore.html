@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.137.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -342,7 +342,10 @@ function unpackRecords(v) {
   return v;
 }
 // quiet: true … 裏の読み込み（上の細い線だけ）／'nolock' … 先に画面へ出した保存など（待ちが長くても画面を止めない。v0.126.0）
+// v0.137.0：小さな保存・削除は、待っている間も画面を止めない（右下の「保存中…」だけ）。押したボタンは、それぞれ押せなくしてある
+var NOLOCK_FNS = { resolveAlert: 1, unresolveAlert: 1, addAllocation: 1, removeAllocation: 1, setAttachmentVisible: 1, deleteAttachment: 1, pinWinInfo: 1, saveWinInfo: 1, saveMyView: 1 };
 function call(fn, params, quiet) {
+  if (!quiet && (NOLOCK_FNS[fn] || (/^delete/.test(fn) && fn !== 'deleteLayout'))) quiet = 'nolock';
   var bname = quiet === 'nolock' ? '__nolock' : fn;
   if (quiet === 'nolock') quiet = false;
   var busy = quiet ? setBg : setBusy;

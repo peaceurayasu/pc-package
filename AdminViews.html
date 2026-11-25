@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.137.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -844,6 +844,7 @@ function drawHomeHits() {
 function noteSaved(key, rec) {
   var schema = S.D && S.D.schema[key];
   if (!schema || !rec || key === 'credential') return;
+  if (typeof refreshPartSoon === 'function') refreshPartSoon(key);      // v0.137.0：保存したところだけ、裏で最新にする
   var id = rec[schema.idField];
   S.recent = [{ key: key, id: id }].concat((S.recent || []).filter(function (x) { return !(x.key === key && x.id === id); })).slice(0, 5);
   var box = $('homeRecent');

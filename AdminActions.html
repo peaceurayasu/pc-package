@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.137.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -532,6 +532,29 @@ function autoRenderSoon() {
   if (!typingNow()) { render(); return; }
   document.activeElement.addEventListener('blur', function () { setTimeout(function () { if (S.D && !$('modals').children.length && !typingNow()) render(); }, 0); }, { once: true });
 }
+// ---- v0.137.0：保存したら、そのところ（対応なら対応だけ）を、裏で最新にする
+//   自分の保存はもう画面に入っているので、ここで入るのは、ほかの人がその間に入れた・直したものだけ。画面は止めず、知らせも出さない。
+//   続けて保存したときは、まとめて1回（最後の保存から2秒後）。保存の返事を待っている間は、待ってから
+var partG = {}, partCore = false, partTimer = null;
+function refreshPartSoon(key) {
+  var g = RECORD_GROUP[key];
+  if (g) partG[g] = true;
+  else if (key === 'customer' || key === 'device') partCore = true;
+  else return;
+  clearTimeout(partTimer);
+  partTimer = setTimeout(refreshPartNow, window.__partDelay || 2000);
+}
+function refreshPartNow() {
+  partTimer = null;
+  if (!S.D || !S.ready) { partG = {}; partCore = false; return; }
+  if (refreshBusy || saveChipCount > 0) { partTimer = setTimeout(refreshPartNow, 2000); return; }
+  var groups = Object.keys(partG).filter(function (g) { return S.have[g]; });
+  var core = partCore;
+  partG = {}; partCore = false;
+  if (!groups.length && !core) return;
+  S.lastRefreshAt = Date.now();
+  ACT.refreshAll(null, { auto: true, silent: true, groups: groups });
+}
 setInterval(function () { autoRefresh(false); }, 60 * 1000);
 var hiddenAt = 0;
 document.addEventListener('visibilitychange', function () {
@@ -656,13 +679,15 @@ var ACT = {
   refreshAll: function (el, opt) {
     if (!S.D || refreshBusy) return;
     var auto = !!(opt && opt.auto);      // v0.136.0：自動の更新（画面を止めない・新着が無ければ何も出さない・差分で受けられるときだけ）
+    var only = opt && Array.isArray(opt.groups) ? opt.groups : null;      // v0.137.0：保存したところのグループだけ（対応を保存したら、対応だけ）
+    var silent = !!(opt && opt.silent);
     refreshBusy = true;
     S.lastRefreshAt = Date.now();
     if (!auto) $('blocker').hidden = false;
     var token = S.token, epoch = S.epoch;
     var groups = [];
-    viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).forEach(function (g) { if (groups.indexOf(g) === -1 && g !== 'diag') groups.push(g); });
-    var useDiag = viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).indexOf('diag') !== -1 && !!S.have.diag;
+    (only || viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub))).forEach(function (g) { if (groups.indexOf(g) === -1 && g !== 'diag') groups.push(g); });
+    var useDiag = !only && viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).indexOf('diag') !== -1 && !!S.have.diag;
     var pending = viewTimer ? sendView() : Promise.resolve();
     var done = function () { refreshBusy = false; $('blocker').hidden = true; };
     var alive = function () { return S.D && S.token === token && S.epoch === epoch; };
@@ -674,7 +699,7 @@ var ACT = {
       var stamps = {};
       haveG.forEach(function (g) { stamps[g] = (S.gStamp && S.gStamp[g]) || S.baseStamp; });
       var canDelta = haveG.length && haveG.every(function (g) { return !!stamps[g]; });
-      if (auto && !canDelta) return null;
+      if (auto && !canDelta && (haveG.length || !only)) return null;      // 差分で受けられないときは、自動ではしない（顧客・機器だけのときは、下の getChanges で受ける）
       var n = 0;
       // まるごと読み直す（差分にできないとき）：その画面のグループを、控えを捨てて読む
       var fullLoad = function (list) {
@@ -707,7 +732,7 @@ var ACT = {
           if (!n) return;
           S.cal = null; S.release = undefined; S.audit = null; S.report = null;
           autoRenderSoon();
-          toast('ほかの人の新しい記録 ' + n + '件を入れました');
+          if (!silent) toast('ほかの人の新しい記録 ' + n + '件を入れました');
           return;
         }
         // 画面ごとにあとから読むもの（カレンダー・変更履歴・設定など）は、読み直す
@@ -846,7 +871,7 @@ var ACT = {
       S.savedAt[key + ':' + id] = Date.now();
       reindex(); S.alertsStale = true;
       toast((key === 'activity' ? '対応' : '修理') + 'を完了にしました');
-      softRender();
+      refreshPartSoon(key); softRender();
     }).catch(function (e) { delete el.dataset.busy; el.textContent = '✓ 完了'; failToast(e); });
   },
   // PC の入力画面：顧客を先に選ぶ（v0.133.0）
@@ -901,8 +926,8 @@ var ACT = {
     var st = mtgState(), w = mtgWeek(st.off), t = ($('mtgMemo') || {}).value || '';
     if (!t.trim()) { toast('メモを書いてください。', true); return; }
     el.disabled = true;
-    call('saveMemo', { data: { '顧客ID': '', '本文': '【ミーティング ' + w.from + '〜' + w.to + '】\n' + t } }).then(function (r) {
-      el.disabled = false; upsert(S.D.memos, 'メモID', r.record); delete st.memos[w.from]; toast('社内メモに残しました'); render();
+    callSave('saveMemo', { data: { '顧客ID': '', '本文': '【ミーティング ' + w.from + '〜' + w.to + '】\n' + t } }).then(function (r) {
+      el.disabled = false; upsert(S.D.memos, 'メモID', r.record); delete st.memos[w.from]; toast('社内メモに残しました'); refreshPartSoon('memo'); softRender();
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   pFilter: function (el) { var st = pState(el.dataset.key); st.f = el.dataset.f; st.n = P_STEP; render(); },
@@ -955,7 +980,7 @@ var ACT = {
       if (before && !list.some(function (m) { return m['実施ID'] === before['実施ID']; })) list.unshift(before);    // 待っている間に読み直していたら、入れ直さない
     };
     var redraw = function () { if (S.view === 'mmaint' && !$('modals').children.length) mmRedraw(); else S.renderPending = true; };
-    call('saveMaintenance', { data: data }).then(function (r) {
+    callSave('saveMaintenance', { data: data }).then(function (r) {
       if (!S.D || S.token !== token) return;     // ログインし直したあとに届いた返事は捨てる
       delete S.mm.saving[id];
       putBack();
@@ -995,8 +1020,8 @@ var ACT = {
     var loan = findRecord('loan', el.dataset.id);
     if (!loan) return;
     el.disabled = true;
-    call('saveLoan', { data: { '貸出ID': loan['貸出ID'], '返却日': S.D.today } }).then(function (r) {
-      upsert(S.D.loans, '貸出ID', r.record); reindex(); S.alertsStale = true; toast('今日の日付で返却を記録しました'); render();
+    callSave('saveLoan', { data: { '貸出ID': loan['貸出ID'], '返却日': S.D.today } }).then(function (r) {
+      upsert(S.D.loans, '貸出ID', r.record); reindex(); S.alertsStale = true; toast('今日の日付で返却を記録しました'); refreshPartSoon('loan'); softRender();
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   salesFromProject: function (el) {
@@ -1034,9 +1059,10 @@ var ACT = {
   salesDone: function (el) {
     var r = findRecord('saleslog', el.dataset.id);
     if (!r) return;
-    call('saveSalesLog', { data: { '営業ID': r['営業ID'], 'アクション完了': 'はい' } }).then(function (res) {
-      upsert(S.D.saleslogs, '営業ID', res.record); reindex(); S.alertsStale = true; toast('完了にしました'); render();
-    }).catch(failToast);
+    el.disabled = true;
+    callSave('saveSalesLog', { data: { '営業ID': r['営業ID'], 'アクション完了': 'はい' } }).then(function (res) {
+      upsert(S.D.saleslogs, '営業ID', res.record); reindex(); S.alertsStale = true; toast('完了にしました'); refreshPartSoon('saleslog'); softRender();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   convertProject: function (el) {
     var d = findRecord('project', el.dataset.id), to = el.dataset.to;
@@ -1858,6 +1884,7 @@ var ACT = {
         S.alertsStale = true;
         if (PHOTO_LABEL[key]) { if (photoCount(key, id)) S.files = null; delete S.D.photoCounts[photoCountKey(key, id)]; }
         toast('削除しました');
+        refreshPartSoon(key);
         softRender();
       }).catch(function (e) {
         if (!S.D) return;
@@ -1880,13 +1907,13 @@ var ACT = {
   addAlloc: function (el) {
     el.disabled = true;
     call('addAllocation', { licenseId: $('allocBody').dataset.license, deviceId: el.dataset.device }).then(function (r) {
-      S.D.allocations.push(r.allocation); reindex(); refreshAlloc();
+      S.D.allocations.push(r.allocation); reindex(); refreshAlloc(); refreshPartSoon('license');
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   removeAlloc: function (el) {
     el.disabled = true;
     call('removeAllocation', { allocationId: el.dataset.id }).then(function (r) {
-      S.D.allocations = S.D.allocations.filter(function (a) { return a['割当ID'] !== r.id; }); reindex(); refreshAlloc();
+      S.D.allocations = S.D.allocations.filter(function (a) { return a['割当ID'] !== r.id; }); reindex(); refreshAlloc(); refreshPartSoon('license');
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
 

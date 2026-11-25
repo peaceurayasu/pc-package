@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.137.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -1766,8 +1766,8 @@ function loanDateSave(el, field, label, doneText) {
   var data = { '貸出ID': loan['貸出ID'] };
   data[field] = d;
   closeModal(el);
-  call('saveLoan', { data: data }).then(function (r) {
-    upsert(S.D.loans, '貸出ID', r.record); reindex(); S.alertsStale = true; toast(doneText(d)); render();
+  callSave('saveLoan', { data: data }).then(function (r) {
+    upsert(S.D.loans, '貸出ID', r.record); reindex(); S.alertsStale = true; toast(doneText(d)); refreshPartSoon('loan'); softRender();
   }).catch(failToast);
 }
 /** 機器の見分け（タイルと絞り込みで同じものを使う）：free 貸出可／out 貸出中（遅れ・もうすぐも含む）／soon もうすぐ返却／late 返却が過ぎた／other 修理中・廃棄など */
@@ -1929,7 +1929,7 @@ function movePj(id, to) {
     else { toast('顧客がまだ決まっていません。先に「顧客にする」を押してください', true); render(); }
     return;
   }
-  call('saveProject', { data: { '案件ID': id, '状態': to } }).then(function (r) {
+  callSave('saveProject', { data: { '案件ID': id, '状態': to } }).then(function (r) {
     upsert(S.D.projects, '案件ID', r.record); reindex(); S.alertsStale = true;
     toast('「' + to + '」に移しました'); render();
   }).catch(function (e) { failToast(e); render(); });
