@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.126.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.133.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -178,6 +178,10 @@ function validateEntity_(key, data, existing, me, ctx0) {
     }
   }
   if (key === 'activity') {
+    // v0.133.0：完了にしたのに完了日時が空なら、今の日時を入れる（修理の完了日と同じ）
+    if (merged['ステータス'] === ACTIVITY_DONE && !merged['完了日時'] && ent.fields.some(function (f) { return f.name === '完了日時'; })) {
+      values['完了日時'] = merged['完了日時'] = nowStamp_();
+    }
     if (merged['開始日時'] && merged['完了日時'] && merged['完了日時'] < merged['開始日時']) {
       throw appError_('invalid', '完了日時が開始日時より前になっています。');
     }

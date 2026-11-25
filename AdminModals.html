@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.131.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.133.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1516,6 +1516,8 @@ function openForm(key, rec, preset) {
   var lockCustomer = (!isNew && ((key === 'device' && !S.D.me.isAdmin) || key === 'license' || key === 'credential')) || !!(preset && preset.lockCustomer);
   var one = function (f) {
     var value = rec ? rec[f.name] : (preset && preset[f.name] !== undefined ? preset[f.name] : fieldDefault(f));
+    // v0.133.0：対応を新しく記録するときは、開始日時に今の日時を入れておく
+    if (isNew && key === 'activity' && f.name === '開始日時' && !value) value = nowYmdHm();
     return fieldHtml(key, f, value === undefined ? '' : value, { seq: seq, i: fields.indexOf(f), lockCustomer: lockCustomer, lockRental: key === 'loan' && (!isNew || !!(preset && preset.lockRental)) });
   };
   // よく使う項目だけ先に出し、残りは「詳しい項目」にたたむ（編集のときは最初から開く）
@@ -1632,9 +1634,14 @@ function dateFieldHtml(kind, common, value) {
   var v = String(value || '').replace('T', ' ');
   return '<span class="datefield"><input type="text" inputmode="numeric" autocomplete="off" data-datefmt="' + kind + '"' + common + ' value="' + esc(v) + '"' +
     ' placeholder="' + (kind === 'date' ? '例：20260426' : '例：202604261030 または 1030') + '">' +
-    '<button type="button" class="btn small datepick" data-act="datePick" tabindex="-1" aria-label="カレンダーから選ぶ" title="カレンダーから選ぶ">📅</button>' +
-    '<input type="' + (kind === 'date' ? 'date' : 'datetime-local') + '" class="datepicker" tabindex="-1" aria-hidden="true"></span>';
+    // v0.133.0：📅の上に、透明にしたブラウザのカレンダーの欄を重ねる（押したのが直接カレンダーの欄なので、どのブラウザでも開く）
+    '<span class="datepickwrap" title="カレンダーから選ぶ"><span class="btn small datepick" aria-hidden="true">📅</span>' +
+    '<input type="' + (kind === 'date' ? 'date' : 'datetime-local') + '" class="datepicker" tabindex="-1" aria-label="カレンダーから選ぶ"></span></span>';
 }
+/** 今の日時 'yyyy-MM-dd HH:mm'（この端末の時計） */
+function nowYmdHm() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+/** 今日 'yyyy-MM-dd'（この端末の時計） */
+function todayLocal() { return nowYmdHm().slice(0, 10); }
 function zen2han(s) { return String(s || '').replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }).replace(/[／．。、ー－―]/g, function (c) { return '／．'.indexOf(c) !== -1 ? '/' : (c === '。' || c === '、' ? '.' : '-'); }).replace(/：/g, ':').replace(/　/g, ' '); }
 function ymdOk(y, m, d) {
   y = +y; m = +m; d = +d;
@@ -1692,6 +1699,20 @@ document.addEventListener('focusout', function (e) { if (e.target && e.target.da
 // 期間の欄など、change で動くところのために、ほかの処理より先に形を直す（v0.131.0）
 document.addEventListener('change', function (e) { if (e.target && e.target.dataset && e.target.dataset.datefmt) normDateField(e.target); }, true);
 document.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target && e.target.dataset && e.target.dataset.datefmt) normDateField(e.target); }, true);
+// カレンダーを開く前に、文字の欄の値を入れておく（開いたときに、その日が出るように）
+['pointerdown', 'focusin'].forEach(function (ev) {
+  document.addEventListener(ev, function (e) {
+    var pk = e.target;
+    if (!pk.classList || !pk.classList.contains('datepicker')) return;
+    var txt = pk.closest('.datefield') && pk.closest('.datefield').querySelector('[data-datefmt]');
+    if (!txt) return;
+    normDateField(txt);
+    var v = txt.classList.contains('bad') ? '' : String(txt.value || '');
+    if (!v && pk.type === 'datetime-local') v = nowYmdHm();
+    if (!v && pk.type === 'date') v = todayLocal();
+    try { pk.value = v.replace(' ', 'T'); } catch (err) { /* 入れられなくても開く */ }
+  }, true);
+});
 // カレンダーで選んだら、文字の欄に入れる
 document.addEventListener('change', function (e) {
   var pk = e.target;

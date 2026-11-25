@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.132.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.133.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -739,7 +739,51 @@ var HOME_BTNS = [
   ['license', 'ライセンスを追加', '製品名・数量・期限'],
   ['device', '機器を追加', 'PC・プリンターを台帳に'], ['memo', 'メモを書く', '社内の連絡']
 ];
+// PC の入力画面（v0.133.0）。よくある業務アプリの「新規作成」画面にならって、
+//   ① 顧客を先に選ぶ（任意。選ぶと入力の窓に入る）→ ② 記録するものを押す、の2つだけにした。「保守をはじめる」はスマホだけ
+var HOME_PC_MAIN = [['activity', '🛠', '対応を記録', '訪問・リモート・電話。開始日時は今の日時が入ります'], ['repair', '🔧', '修理を受け付け', '預かった機器と状況。機器を選ぶと型番・シリアルが入ります']];
+var HOME_PC_SUB = [['maintenance', '🧰', '保守を記録'], ['license', '🔑', 'ライセンスを追加'], ['device', '💻', '機器を追加'], ['memo', '📝', 'メモを書く']];
+/** 最近の顧客（この端末で最近選んだ顧客 → 最近の対応・修理の顧客）。有効な顧客だけ、n社まで */
+function recentCustomerList(n) {
+  var seen = {}, out = [];
+  var add = function (cid) { var c = IDX.cust[cid]; if (c && c['状態'] === '有効' && !seen[cid] && out.length < n) { seen[cid] = true; out.push(c); } };
+  recentCustIds().forEach(add);
+  S.D.activities.concat(S.D.repairs).slice().sort(function (a, b) { return cmp(b['受付日'], a['受付日']); }).forEach(function (r) { add(r['顧客ID']); });
+  return out;
+}
+function homeCustHitsHtml() {
+  var words = String(S.homeCustQ || '').trim();
+  var live = S.D.customers.filter(function (c) { return c['状態'] === '有効' && !c._pending; });
+  var list = words ? live.filter(function (c) { return textMatch(words, [c['顧客名'], c['ふりがな'], c['電話']]); }).sort(function (a, b) { return cmp(a['ふりがな'] || a['顧客名'], b['ふりがな'] || b['顧客名']); }).slice(0, 12) : recentCustomerList(8);
+  if (!list.length) return '<p class="note">' + (words ? '見つかりません。' : '顧客の名前・ふりがな・電話で探せます。') + '</p>';
+  return '<div class="cap">' + (words ? '探した結果' : '最近の顧客') + '</div><div class="chipset hcustchips">' + list.map(function (c) {
+    return '<button type="button" data-act="homeCustPick" data-id="' + esc(c['顧客ID']) + '">' + esc(c['顧客名']) + '</button>';
+  }).join('') + '</div>';
+}
+function homePcHtml() {
+  var c = S.homeCust && IDX.cust[S.homeCust];
+  var custBox = c
+    ? '<div class="hcustsel"><span class="hcustname">🏢 ' + esc(c['顧客名']) + '</span>' + contractPill(c['保守契約']) +
+        '<span class="grow"></span><button type="button" class="btn small" data-act="openCustomer" data-id="' + esc(c['顧客ID']) + '">顧客の画面</button><button type="button" class="btn small" data-act="homeCustClear">選び直す</button></div>'
+    : '<input type="search" id="homeCustQ" data-homecust="1" autocomplete="off" placeholder="顧客の名前・ふりがな・電話で探す（選ばなくても記録できます）" value="' + esc(S.homeCustQ || '') + '">' +
+      '<div id="homeCustHits">' + homeCustHitsHtml() + '</div>';
+  var forWhom = c ? '<span class="sub">' + esc(c['顧客名']) + ' の</span>' : '';
+  return '<div class="head"><h1>入力</h1><span class="sub">何を記録しますか？</span></div>' +
+    '<section class="panel hstep"><h2><span class="hnum">1</span><span class="grow">顧客を選ぶ <span class="sub">（先に選ぶと、入力の窓に入ります）</span></span></h2><div class="hpad">' + custBox + '</div></section>' +
+    '<section class="panel hstep"><h2><span class="hnum">2</span><span class="grow">記録するもの ' + forWhom + '</span></h2><div class="hpad">' +
+      '<div class="hgrid2">' + HOME_PC_MAIN.map(function (b) {
+        return '<button type="button" class="hbtn big primary" data-act="quickNew" data-key="' + b[0] + '"><span class="hico" aria-hidden="true">' + b[1] + '</span><span class="htxt"><b>' + b[2] + '</b><span>' + b[3] + '</span></span></button>';
+      }).join('') + '</div>' +
+      '<div class="hgrid4">' + HOME_PC_SUB.map(function (b) {
+        return '<button type="button" class="hbtn small" data-act="quickNew" data-key="' + b[0] + '"><span class="hico" aria-hidden="true">' + b[1] + '</span><b>' + b[2] + '</b></button>';
+      }).join('') + '</div></div></section>' +
+    '<section class="panel" id="homeFind"><h2>探して直す</h2><div class="hpad">' +
+      '<input type="search" id="homeQ" data-homeq="1" autocomplete="off" placeholder="機器・ライセンスを探す（利用者・シリアル・顧客名）" value="' + esc(S.homeQ || '') + '">' +
+      '<div id="homeHits">' + homeHitsHtml() + '</div></div></section>' +
+    '<div id="homeRecent">' + homeRecentHtml() + '</div>';
+}
 VIEWS.home = function () {
+  if (!isPhone()) return homePcHtml();
   return '<div class="head"><h1>入力</h1><span class="sub">' + esc(S.D.me.name) + '</span></div>' +
     '<button type="button" class="hbtn primary mmstart" id="mmStart" data-act="mmStart"><b>保守をはじめる</b><span>収集ツールの情報を、PCごとに確かめて記録</span></button>' +
     '<div class="hgrid" id="homeBtns">' + HOME_BTNS.map(function (b) {

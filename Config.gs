@@ -5,9 +5,9 @@
  * このファイルは「何を持つか」だけを書く。処理は書かない。
  * シートの列を足すときは SCHEMA に追記して「初期設定」を実行する（既存の列は消さない・並べ替えない）。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.132.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.133.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
-const APP_VERSION = '0.132.0';
+const APP_VERSION = '0.133.0';
 
 // ---------------------------------------------------------------------------
 // 差し替え漏れの確かめ（v0.111.0）
@@ -16,21 +16,21 @@ const APP_VERSION = '0.132.0';
 // ---------------------------------------------------------------------------
 const FILE_MANIFEST = {
   'Admin.html': '0.131.0',
-  'AdminActions.html': '0.132.0',
+  'AdminActions.html': '0.133.0',
   'AdminCore.html': '0.132.0',
-  'AdminCss.html': '0.132.0',
+  'AdminCss.html': '0.133.0',
   'AdminMobile.html': '0.132.0',
-  'AdminModals.html': '0.131.0',
-  'AdminViews.html': '0.132.0',
+  'AdminModals.html': '0.133.0',
+  'AdminViews.html': '0.133.0',
   'Alerts.gs': '0.123.0',
   'Auth.gs': '0.128.2',
   'Code.gs': '0.132.0',
-  'Config.gs': '0.132.0',
+  'Config.gs': '0.133.0',
   'Db.gs': '0.126.0',
   'Portal.gs': '0.111.0',
   'Portal.html': '0.122.0',
   'Receiver.gs': '0.111.0',
-  'Records.gs': '0.126.0',
+  'Records.gs': '0.133.0',
   'Setup.gs': '0.128.0'
 };
 const APP_NAME = '管理システム';
@@ -654,11 +654,13 @@ const ENTITIES = {
       { name: '内容', type: 'longtext', required: true, max: 5000, quick: true },
       { name: '案件ID', type: 'project' },
       { name: 'ステータス', type: 'option', category: '対応のステータス', required: true, def: ACTIVITY_HOLD, quick: true, chips: true },
+      // v0.133.0：担当（受付スタッフ）と開始日時は、いつも出す。開始日時は、新しく記録するとき今の日時が入る。
+      //   完了日時は「詳しい項目」へ（ステータスを完了にすると、自動で今の日時が入る）
+      { name: '受付スタッフ', type: 'staff', def: 'me', quick: true },
+      { name: '開始日時', type: 'datetime', quick: true },
       { name: '受付日', type: 'date', required: true, def: 'today' },
+      { name: '完了日時', type: 'datetime' },
       { name: '先方担当者', type: 'text', max: 60 },
-      { name: '受付スタッフ', type: 'staff', def: 'me' },
-      { name: '開始日時', type: 'datetime', quick: true },      // v0.130.0：詳しい項目にたたまず、いつも出す
-      { name: '完了日時', type: 'datetime', quick: true },
       { name: 'ピン留め', type: 'yesno', def: NO },
       { name: '会議で共有', type: 'yesno', def: NO },
       { name: 'ひとこと', type: 'text', max: 200 }
@@ -672,15 +674,16 @@ const ENTITIES = {
       { name: '種別', type: 'option', category: '修理種別', required: true, quick: true, chips: true },
       { name: '件名', type: 'text', required: true, max: 100, quick: true },
       { name: '預かり品', type: 'text', max: 200, quick: true, suggest: REPAIR_ITEM_SUGGESTIONS },
+      // v0.133.0：型番・シリアル・担当は、いつも出す（機器を選ぶと、型番とシリアルは台帳から入る）
+      { name: '型番', type: 'text', max: 100, quick: true },
+      { name: 'シリアル', type: 'text', max: 60, quick: true },
       { name: '内容', type: 'longtext', max: 5000, quick: true },
       { name: 'ステータス', type: 'option', category: '修理のステータス', required: true, def: '受付', quick: true, chips: true },
+      { name: '担当スタッフ', type: 'staff', def: 'me', quick: true },
       { name: '受付日', type: 'date', required: true, def: 'today' },
       { name: '完了日', type: 'date' },
-      { name: '型番', type: 'text', max: 100 },
-      { name: 'シリアル', type: 'text', max: 60 },
       { name: '元の対応ID', type: 'text', max: 20, ref: 'activity' },
       { name: '先方担当者', type: 'text', max: 60 },
-      { name: '担当スタッフ', type: 'staff', def: 'me' },
       { name: 'ひとこと', type: 'text', max: 200 }
     ]
   },

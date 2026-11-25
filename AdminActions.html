@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.132.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.133.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -793,9 +793,13 @@ var ACT = {
       item('customer', '顧客を追加', '新しい取引先') +
       '</div></div>', true, true);
   },
+  // PC の入力画面：顧客を先に選ぶ（v0.133.0）
+  homeCustPick: function (el) { S.homeCust = el.dataset.id; S.homeCustQ = ''; noteRecentCust(el.dataset.id); render(); },
+  homeCustClear: function () { S.homeCust = ''; S.homeCustQ = ''; render(); var i = $('homeCustQ'); if (i) i.focus(); },
   quickNew: function (el) {
     if (el.closest('.overlay')) closeModal(el);
     var preset = S.view === 'customer' && el.dataset.key !== 'customer' ? { '顧客ID': S.customerId, lockCustomer: true } : null;
+    if (!preset && S.view === 'home' && !isPhone() && S.homeCust && IDX.cust[S.homeCust] && el.dataset.key !== 'customer') preset = { '顧客ID': S.homeCust };
     openForm(el.dataset.key, null, preset);
   },
   draftOpen: function (el) {
@@ -1576,15 +1580,6 @@ var ACT = {
   custView: function (el) { S.q['pref.custview'] = el.dataset.v === 'table' ? 'table' : ''; sendView(); render(); },
   // 対応・修理の「集計」を開く・たたむ（スタッフごとに覚える。v0.130.0）
   toggleStats: function () { S.q['pref.stats'] = statsOpen() ? '' : '1'; sendView(); render(); },
-  // 日付の欄の横の📅：ブラウザのカレンダーを開く（選んだら、文字の欄に入る。v0.130.0）
-  datePick: function (el) {
-    var box = el.closest('.datefield'), txt = box && box.querySelector('[data-datefmt]'), pk = box && box.querySelector('.datepicker');
-    if (!txt || !pk) return;
-    normDateField(txt);
-    pk.value = txt.classList.contains('bad') ? '' : String(txt.value || '').replace(' ', 'T');
-    try { if (pk.showPicker) { pk.showPicker(); return; } } catch (e) { /* 使えないブラウザは、下で */ }
-    pk.focus(); pk.click();
-  },
   mtgOpenList: function (el) { var w = openModal(mtgOpenListHtml(el.dataset.kind === 'repair' ? 'repair' : 'activity')); var dlg = w.querySelector('.dialog'); if (dlg) dlg.classList.add('wide'); },
   tileOpenActs: function (el) {
     if (el && el.closest && el.closest('.overlay')) closeModal(el);
@@ -1959,6 +1954,7 @@ document.addEventListener('click', function (e) {
       Array.prototype.forEach.call(cform.querySelectorAll('select[data-dep]'), function (sel) { sel.dataset.touched = '1'; });
       refreshDependents(cform);
     }
+    if (set.dataset.chips === 'ステータス' && !on) autoDoneStamp(cform, chip.dataset.chip);
     return;
   }
   var pick = e.target.closest('[data-pick]');
@@ -2093,6 +2089,7 @@ document.addEventListener('input', function (e) {
   if (e.target && e.target.id === 'setFind') { filterSettings(e.target.value); return; }
   var t = e.target;
   if (t && t.dataset && t.dataset.homeq) { S.homeQ = t.value; drawHomeHits(); }
+  if (t && t.dataset && t.dataset.homecust) { S.homeCustQ = t.value; var hb = $('homeCustHits'); if (hb) hb.innerHTML = homeCustHitsHtml(); }
   if (t && t.dataset && t.dataset.pq) { var pst = pState(t.dataset.pq); pst.q = t.value; pst.n = P_STEP; pDraw(t.dataset.pq); }
   if (t && t.dataset && t.dataset.mtgmemo) mtgState().memos[mtgMemoKey()] = t.value;
   if (t && t.dataset && t.dataset.mmq) { S.mm.q = t.value; var box = $('mmCustList'); if (box) box.innerHTML = mmCustListHtml(); }
@@ -2161,6 +2158,22 @@ document.addEventListener('change', function (e) {
     }
   }
 });
+
+/**
+ * ステータスを「完了」にしたとき、空いていれば完了日時（対応）・完了日（修理）に今を入れる（v0.133.0）。
+ * 入れた欄が「詳しい項目」の中なら、入れたことを知らせる。
+ */
+function autoDoneStamp(form, status) {
+  var key = form && form.dataset.form;
+  var target = key === 'activity' && status === S.D.activityDone ? ['完了日時', nowYmdHm()] : key === 'repair' && status === S.D.repairDone ? ['完了日', todayLocal()] : null;
+  if (!target) return;
+  var el = form.elements[target[0]];
+  if (!el || String(el.value).trim()) return;
+  el.value = target[1];
+  el.classList.remove('bad');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  toast(target[0] + 'に ' + target[1] + ' を入れました（「詳しい項目」で直せます）');
+}
 
 document.addEventListener('submit', function (e) {
   var form = e.target;
