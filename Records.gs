@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.133.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.136.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -283,7 +283,20 @@ function saveEntity_(key, params, after) {
   // 選択肢とスタッフの名前は、ロックの前に控えから読んでおく（v0.18.0。ロックの中でシートを読まない）
   const ctx0 = { options: getOptions_(), staffNames: activeStaffNames_() };
   const tStart = Date.now();
+  // v0.136.0：同じ保存を2回受けても、2件にしない。画面は電波が切れたとき、同じ reqId でもう一度送る
+  //   （1回目がサーバーに届いていて、返事だけが届かなかったこともある）。1回目の返事を6時間覚えておき、2回目はそれを返す
+  const reqKey = typeof p.reqId === 'string' && /^r[0-9a-z]{6,40}$/.test(p.reqId) ? 'req_' + me.id + '_' + p.reqId : '';
   const res = withLock_(function () {
+    if (reqKey) {
+      let seen = null;
+      try { seen = CacheService.getScriptCache().get(reqKey); } catch (e) { seen = null; }
+      if (seen) { try { const again = JSON.parse(seen); again.repeated = true; return again; } catch (e) { /* 読めなければ、ふつうに保存する */ } }
+    }
+    const out = saveBody_();
+    if (reqKey) { try { const txt = JSON.stringify(out); if (txt.length < 90000) CacheService.getScriptCache().put(reqKey, txt, 21600); } catch (e) { /* 覚えられなくても、保存はできている */ } }
+    return out;
+  });
+  function saveBody_() {
     ensureColumns_(ent.sheet);
     let existing = id ? findById_(ent.sheet, ent.idField, id) : null;
     // 退避した古い対応を直すときは、元のシートに戻してから（v0.112.0）
@@ -328,7 +341,7 @@ function saveEntity_(key, params, after) {
     }
     const saved = { record: toClient_(key, echoRow_(ent.sheet, existing, changes)), created: false };
     return after ? Object.assign(saved, after(Object.assign({}, existing, changes), me)) : saved;
-  });
+  }
   res.srvMs = Date.now() - tStart;      // サーバーで使った時間（画面の下の「読み込み：…」に出す。v0.88.0）
   // 控えの作り直しは、画面がこのあと別に呼ぶ warmAfterSave で（v0.112.0。保存の返事を待たせない）
   if (key !== 'credential') res.warm = ent.sheet;

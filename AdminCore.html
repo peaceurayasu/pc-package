@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.135.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -224,6 +224,8 @@ function showWelcome() {
   if (!S.D || !S.D.me || !$('welcomeMsg')) return;
   $('welcomeMsg').textContent = S.D.me.name;
   var av = $('acctAvatar'); if (av) av.textContent = String(S.D.me.name || '?').trim().charAt(0);
+  // v0.136.0：「すべて読み直す」はスプレッドシートを手で直したとき用なので、管理者だけ（ふだんは「⟳ 更新」と、自動の更新で足りる）
+  var rf = $('refreshFullBtn'); if (rf) rf.hidden = !S.D.me.isAdmin;
   var tm = $('timingSlot'); if (tm) tm.innerHTML = S.view === 'home' ? '' : timingHtml();
   var ll = S.D.me.lastLogin ? String(S.D.me.lastLogin).replace(/-/g, '/').slice(0, 16) : '';
   $('lastLogin').textContent = ll ? '前回ログイン：' + ll : '';
@@ -253,14 +255,43 @@ function setBusy(on, fn) {
   busyLock(busyCount - lockFree > 0, BUSY_NO_LOCK[fn] ? '' : fn);
 }
 // v0.135.0：画面を止めない保存（窓を閉じて先に一覧へ出したもの・「✓ 完了」）の間は、右下に小さく「保存中…」を出す（操作はできる）
-var saveChipCount = 0, saveChipTimer = null;
-function saveChip(on) {
-  saveChipCount = Math.max(0, saveChipCount + (on ? 1 : -1));
+var saveChipCount = 0, saveChipTimer = null, saveWaitCount = 0;
+function saveChip(on, waitNet) {
+  if (waitNet) saveWaitCount = Math.max(0, saveWaitCount + (on ? 1 : -1));
+  else saveChipCount = Math.max(0, saveChipCount + (on ? 1 : -1));
   var el = document.getElementById('saveChip');
   if (!el) { el = document.createElement('div'); el.id = 'saveChip'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite'); el.hidden = true; el.innerHTML = '<span class="blspin"></span><span class="t">保存中…</span>'; document.body.appendChild(el); }
   clearTimeout(saveChipTimer);
-  if (saveChipCount > 0) { el.querySelector('.t').textContent = saveChipCount > 1 ? '保存中…（' + saveChipCount + '件）' : '保存中…'; el.hidden = false; }
+  var n = saveChipCount + saveWaitCount;
+  el.classList.toggle('wait', saveWaitCount > 0 && !saveChipCount);
+  if (n > 0) { el.querySelector('.t').textContent = (saveWaitCount && !saveChipCount ? '電波を待っています（つながったら送ります）' : '保存中…') + (n > 1 ? '（' + n + '件）' : ''); el.hidden = false; }
   else saveChipTimer = setTimeout(function () { el.hidden = true; }, 150);
+}
+/**
+ * v0.136.0：画面を止めない保存。電波が切れて送れなかったときは、つながったとき（または少し待って）自動でもう一度送る（10分ほど）。
+ *   同じ reqId で送るので、1回目がサーバーに届いていても2件にならない（サーバーの saveEntity_ が見分ける）
+ */
+var SAVE_RETRY_WAITS = window.__saveRetryWaits || [3000, 8000, 15000, 30000, 30000, 60000, 60000, 120000, 120000, 180000];
+function callSave(fn, params) {
+  var p = {};
+  Object.keys(params || {}).forEach(function (k) { p[k] = params[k]; });
+  p.reqId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  var token = S.token, tries = 0;
+  return new Promise(function (resolve, reject) {
+    var attempt = function () {
+      call(fn, p, 'nolock').then(resolve, function (e) {
+        if (!e || !e.network || !S.D || S.token !== token || tries >= SAVE_RETRY_WAITS.length) { reject(e); return; }
+        var wait = SAVE_RETRY_WAITS[tries++];
+        if (tries === 1) toast('電波が弱いようです。つながったら自動で送ります（このまま使えます）');
+        saveChip(true, true);
+        var timer = null;
+        var fire = function () { clearTimeout(timer); window.removeEventListener('online', fire); saveChip(false, true); attempt(); };
+        timer = setTimeout(fire, wait);
+        window.addEventListener('online', fire);
+      });
+    };
+    attempt();
+  });
 }
 var BUSY_NO_LOCK = { __nolock: 1, warmAfterSave: 1, getBootstrap: 1, getViewChanges: 1, getChanges: 1, getAlerts: 1, loadGroupBatch: 1, getCustomerActivities: 1, listPhotos: 1 };
 var lockFree = 0;
@@ -331,7 +362,7 @@ function call(fn, params, quiet) {
       })
       .withFailureHandler(function () {
         if (quiet) busy(false); else busy(false, bname);
-        reject({ message: '通信に失敗しました。電波の状態を確かめて、もう一度試してください。' });
+        reject({ message: '通信に失敗しました。電波の状態を確かめて、もう一度試してください。', network: true });
       })[fn](p);
   });
 }
@@ -454,7 +485,7 @@ function sessionExpired() {
 //            開いた画面に要るグループだけを、同時に頼む。パソコンは、そのあと裏で残りも先読みする（スマホはしない）
 // S.have … 届いたグループ。S.ready … いまの画面に要るぶんが届いたか。S.all … 全部届いたか。
 // 届く前の画面は「読み込んでいます…」を出す。
-var REST_EMPTY = { diagnostics: [], licenses: [], allocations: [], repairs: [], activities: [], activityTotal: 0, activityMonthCounts: {},
+var REST_EMPTY = { diagnostics: [], licenses: [], allocations: [], repairs: [], repairTotal: 0, activities: [], activityTotal: 0, activityMonthCounts: {},
   maintenances: [], memos: [], notices: [], rentals: [], loans: [], projects: [], saleslogs: [], photoCounts: {}, wininfo: [], alerts: [], notify: null };
 // ---- 前回のデータを端末に残す（v0.112.0）
 //   ログインしたとき、前回の残りのデータ（対応・修理・ライセンスなど）をすぐ画面に出し、裏で差分だけ受けて入れ替える。
@@ -463,7 +494,7 @@ var REST_EMPTY = { diagnostics: [], licenses: [], allocations: [], repairs: [], 
 var SNAP_KEY = 'pcpkg_snap';
 var SNAP_MAX_AGE = 7 * 86400000;
 var SNAP_GROUP_KEYS = { act: ['activities', 'activityTotal', 'activityMonthCounts'], win: ['wininfo'], lic: ['licenses', 'allocations', 'rentals', 'loans'],
-  rep: ['repairs'], mnt: ['maintenances'], misc: ['memos', 'notices', 'photoCounts', 'projects', 'saleslogs', 'notify'], alert: [] };
+  rep: ['repairs', 'repairTotal'], mnt: ['maintenances'], misc: ['memos', 'notices', 'photoCounts', 'projects', 'saleslogs', 'notify'], alert: [] };
 /** 送る量を小さくするのと同じ形（列名＋値）にする。サーバーの packRecords_ と同じ */
 function packRecordsClient(v) {
   if (Array.isArray(v)) {
@@ -592,6 +623,18 @@ function applyCore(core, token, resume) {
   if (snapGroups.length) { S.timing.snap = snapGroups.length; snapCatchUp(snapGroups); }
   schedulePrefetch();
 }
+/** スマホで、修理を全部読む（「すべて」を選んだとき・顧客の画面。v0.136.0） */
+function ensureFullRepairs() {
+  if (!S.repLite || S.repFullBusy || !S.have.rep) return;
+  S.repFullBusy = true;
+  var token = S.token, asked = Date.now();
+  call('getBootstrap', { part: 'rest', groups: ['rep'] }, true).then(function (rest) {
+    S.repFullBusy = false;
+    if (!S.D || S.token !== token) return;
+    if (Array.isArray(rest.repairs)) rest.repairTotal = rest.repairs.length;      // 全部を読んだので、もう一部ではない（読み直しをくり返さない）
+    applyRest(rest, asked, ['rep']);
+  }, function () { S.repFullBusy = false; });
+}
 function applyRest(rest, asked, groups) {
   var D = S.D;
   if (!D) return;
@@ -608,6 +651,8 @@ function applyRest(rest, asked, groups) {
     });
   });
   Object.keys(REST_EMPTY).forEach(function (k) { if (rest[k] !== undefined) D[k] = rest[k]; });
+  // v0.136.0：スマホは修理も一部だけ（終わっていないもの・直近のもの）。全部が要る画面で、残りを読む（ensureFullRepairs）
+  if (Array.isArray(rest.repairs)) S.repLite = Number(rest.repairTotal) > rest.repairs.length;
   if (rest.alerts) { S.alerts = rest.alerts; S.alertsStale = false; }
   groups = groups || ALL_GROUPS;
   groups.forEach(function (g) { S.have[g] = true; });

@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.135.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1756,6 +1756,13 @@ function bnavList() {
   opts.forEach(function (c) { if (out.indexOf(c) === -1 && out.length < 4) out.push(c); });
   return out;
 }
+/** スマホの「☰ メニュー」に並べる画面（下のメニューに無いものだけ。v0.136.0） */
+function menuScreens() {
+  var bl = bnavList().map(function (n) { return n[0]; });
+  var out = NAV.filter(function (n) { return n[0] !== 'home' && navVisible(n[0]) && bl.indexOf(n[0]) === -1; });
+  if (S.D.me.isAdmin) out.push(['audit', '変更履歴']);
+  return out;
+}
 /** 直して保存するときに「この内容で保存しますか」を出すか（自分の設定。おすすめ＝項目が3つ以上・認証情報・機器の顧客の移動のときだけ） */
 function confirmNeeded(key, changes, moveNote, extra) {
   var mode = q('pref.confirm', window.__forceConfirm ? 'always' : 'auto');
@@ -2047,7 +2054,7 @@ function submitRecordForm(form, next) {
   var saveT0 = Date.now();
   var saveTok = S.token;
   // v0.126.0：窓はもう閉じて一覧にも出しているので、返事を待つ間も画面は止めない（「保存中…」で操作できなくなっていた）
-  call(SAVE_FN[key], cred ? { data: data, cred: cred } : { data: data }, 'nolock').then(function (r) {
+  callSave(SAVE_FN[key], cred ? { data: data, cred: cred } : { data: data }).then(function (r) {
     if (draftId) { draftDropId(draftId); delete S.sending[draftId]; }     // 保存できたので、下書き（保存の途中）は先に消す
     // v0.135.0：「続きから」を使わずに入れ直したときの、同じ記録の古い下書きも消す（新しい記録は、同じ顧客のもの）
     if (S.D && S.token === saveTok) draftDropSameAs(key, before ? id : '', data['顧客ID'] || '', draftId);

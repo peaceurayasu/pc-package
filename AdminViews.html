@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.134.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -77,6 +77,7 @@ function navVisible(view) {
   if (view === 'settings' || view === 'audit') return S.D.me.isAdmin;
   if (view === 'rentals') return S.D.rentalOn;
   if (view === 'projects') return S.D.bizOn;
+  if (view === 'meeting') return !isPhone();      // v0.136.0：ミーティングはPCだけ（スマホで開くと、ほぼ全部のデータを読むので重い）
   return true;
 }
 function mtgFullOff() {
@@ -267,7 +268,9 @@ function groupOf(tableId, r) {
 }
 
 function render() {
+  if (S.view === 'meeting' && isPhone()) S.view = 'home';      // v0.136.0：スマホにはミーティングを出さない（前に開いていた・開始画面にしていた、など）
   syncReady();
+  if (S.view === 'customer' && S.repLite) ensureFullRepairs();      // 顧客の画面の修理のタブは、その顧客の修理を全部出す（スマホは一部しか読んでいないので、残りを読む。v0.136.0）
   saveLocSoon();
   armBack();                       // スマホは、いちばん最初の画面でも「戻る」を受け止める（誤って閉じないように。v0.68.0）
   // 自分のメニューは、画面が変わったときだけ閉じる（裏で読み直して描き直しても、開いたまま）
@@ -323,8 +326,8 @@ function render() {
     // 画面の説明は、ふだんは隠して「？」で出す（自分の設定で、いつも出すにもできる。v0.108.0）
     if (PAGE_INTRO[S.view]) {
       var showIntro = q('pref.intro', 'hide') === 'show' || S.introOpen === S.view;
-      // スマホは、📖（マニュアル）の中に説明も出すので、「？」は出さない（v0.132.0。見出しの行が増えないように）
-      if (q('pref.intro', 'hide') !== 'show' && !(isPhone() && HELP[S.view])) headEl.insertAdjacentHTML('beforeend', '<button type="button" class="btn small intro-q" data-act="introToggle" aria-pressed="' + showIntro + '" title="この画面の説明" aria-label="この画面の説明">？</button>');
+      // 📖（マニュアル）の中に説明も出すので、マニュアルがある画面では「？」は出さない（v0.132.0 スマホ・v0.136.0 PC も。同じ働きのボタンを2つ並べない）
+      if (q('pref.intro', 'hide') !== 'show' && !HELP[S.view]) headEl.insertAdjacentHTML('beforeend', '<button type="button" class="btn small intro-q" data-act="introToggle" aria-pressed="' + showIntro + '" title="この画面の説明" aria-label="この画面の説明">？</button>');
       if (showIntro) headEl.insertAdjacentHTML('afterend', '<p class="page-intro">' + esc(PAGE_INTRO[S.view]) + '</p>');
     }
   }

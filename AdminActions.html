@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.134.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -512,6 +512,33 @@ function provisionalRecord(key, before, data) {
   rec._pending = true;
   return rec;
 }
+// ---- v0.136.0：自動の更新（ほかの人が入れた記録を、押さなくても入れる）
+//   5分ごと・タブに戻ってきたとき（1分以上離れていたら）に、いま見ている画面の差分だけを受ける。
+//   入力の窓が開いている・文字を打っている・保存の返事を待っている・画面が隠れているときは、何もしない（打っている途中のものを消さない）
+var AUTO_REFRESH_MS = 5 * 60 * 1000, AUTO_AWAY_MS = 60 * 1000;
+function typingNow() { var a = document.activeElement; return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); }
+function autoRefreshOk() {
+  return !!(S.D && S.ready && S.token && !refreshBusy && document.visibilityState === 'visible' && !$('modals').children.length && !typingNow() &&
+    !Object.keys(S.sending || {}).length && (document.getElementById('busyLock') || { hidden: true }).hidden && !window.__noAutoRefresh);
+}
+function autoRefresh(force) {
+  if (!autoRefreshOk()) return;
+  if (!force && Date.now() - (S.lastRefreshAt || S.loadedAt || 0) < AUTO_REFRESH_MS) return;
+  ACT.refreshAll(null, { auto: true });
+}
+/** 自動の更新で届いたものを描く（打っている途中なら、欄を離れてから） */
+function autoRenderSoon() {
+  if ($('modals').children.length) { S.renderPending = true; return; }
+  if (!typingNow()) { render(); return; }
+  document.activeElement.addEventListener('blur', function () { setTimeout(function () { if (S.D && !$('modals').children.length && !typingNow()) render(); }, 0); }, { once: true });
+}
+setInterval(function () { autoRefresh(false); }, 60 * 1000);
+var hiddenAt = 0;
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  if (hiddenAt && Date.now() - hiddenAt >= AUTO_AWAY_MS && Date.now() - (S.lastRefreshAt || S.loadedAt || 0) >= AUTO_AWAY_MS) setTimeout(function () { autoRefresh(true); }, 800);
+  hiddenAt = 0;
+});
 /** 窓が開いていたら、閉じたときに描き直す。開いていなければ、すぐ描き直す */
 function softRender() {
   if ($('modals').children.length) S.renderPending = true; else render();
@@ -626,10 +653,12 @@ var ACT = {
    * その画面に要るグループは getViewChanges（差分）で、顧客・機器・収集ツールは getChanges（差分）で読む。まだ読んでいないグループだけ、まるごと読む。
    * 差分で読めなかったとき（時刻のずれなど）は、その画面のぶんを読み直す。全部を読み直すのは、メニューの「すべて読み直す」（refreshFull）
    */
-  refreshAll: function () {
+  refreshAll: function (el, opt) {
     if (!S.D || refreshBusy) return;
+    var auto = !!(opt && opt.auto);      // v0.136.0：自動の更新（画面を止めない・新着が無ければ何も出さない・差分で受けられるときだけ）
     refreshBusy = true;
-    $('blocker').hidden = false;
+    S.lastRefreshAt = Date.now();
+    if (!auto) $('blocker').hidden = false;
     var token = S.token, epoch = S.epoch;
     var groups = [];
     viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).forEach(function (g) { if (groups.indexOf(g) === -1 && g !== 'diag') groups.push(g); });
@@ -645,6 +674,7 @@ var ACT = {
       var stamps = {};
       haveG.forEach(function (g) { stamps[g] = (S.gStamp && S.gStamp[g]) || S.baseStamp; });
       var canDelta = haveG.length && haveG.every(function (g) { return !!stamps[g]; });
+      if (auto && !canDelta) return null;
       var n = 0;
       // まるごと読み直す（差分にできないとき）：その画面のグループを、控えを捨てて読む
       var fullLoad = function (list) {
@@ -671,8 +701,15 @@ var ACT = {
         n += applyChanges(r, true);
         S.syncStamp = r.stamp || S.syncStamp;
       }) : Promise.resolve();
-      return Promise.all([deltaCall, coreCall, fullLoad(missG)]).then(function () {
+      return Promise.all([deltaCall, coreCall, auto ? Promise.resolve() : fullLoad(missG)]).then(function () {
         if (!alive()) return;
+        if (auto) {
+          if (!n) return;
+          S.cal = null; S.release = undefined; S.audit = null; S.report = null;
+          autoRenderSoon();
+          toast('ほかの人の新しい記録 ' + n + '件を入れました');
+          return;
+        }
         // 画面ごとにあとから読むもの（カレンダー・変更履歴・設定など）は、読み直す
         //   顧客ごと・期間ごとの対応の一覧（custActs・actRange）は、上で差分を入れたので捨てない（捨てると、全部を読み直して遅くなる。v0.106.0）
         S.cal = null; S.creds = null; S.staff = null; S.release = undefined; S.audit = null; S.files = null; S.report = null;
@@ -682,7 +719,7 @@ var ACT = {
         toast(n ? 'この画面の新着 ' + n + '件を読み込みました（' + sec + '秒）' : '新しいデータはありませんでした（' + sec + '秒）');
       });
     };
-    pending.then(run, run).then(function () { done(); }, function (e) { done(); failToast(e); });
+    pending.then(run, run).then(function () { done(); }, function (e) { done(); if (!auto) failToast(e); });
   },
   /** 全部（対応・修理・ライセンスなども）をシートから読み直す。スプレッドシートを手で直したあとは、こちら */
   refreshFull: function () {
@@ -802,7 +839,7 @@ var ACT = {
     if (key === 'activity' && !rec['完了日時']) data['完了日時'] = nowYmdHm();
     if (key === 'repair' && !rec['完了日']) data['完了日'] = todayLocal();
     el.dataset.busy = '1'; el.textContent = '保存中…';
-    call(SAVE_FN[key], { data: data }, 'nolock').then(function (r) {
+    callSave(SAVE_FN[key], { data: data }).then(function (r) {
       var list = S.D[COLLECTION[key]];
       if (list.some(function (x) { return x[schema.idField] === id; })) upsert(list, schema.idField, r.record);
       if (key === 'activity') Object.keys(S.custActs).forEach(function (c) { var l = S.custActs[c]; for (var i = 0; i < l.length; i++) if (l[i]['対応ID'] === id) l[i] = r.record; });
@@ -838,15 +875,10 @@ var ACT = {
   openMenu: function () {
     var go2 = function (view, title) { return '<button type="button" class="btn" data-act="menuGo" data-view="' + view + '">' + title + '</button>'; };
     openModal('<header><h2>メニュー <span class="sub">' + esc(S.D.me.name) + '（' + esc(S.D.me.role) + '）</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
-      '<div class="body"><div class="sheet-list">' + go2('meeting', 'ミーティング') + go2('licenses', 'ライセンス') +
-      (S.D.rentalOn ? go2('rentals', 'レンタル') : '') + (S.D.bizOn ? go2('projects', '案件・営業（テスト版）') : '') + go2('notices', 'お知らせ') +
-      (S.D.me.isAdmin ? go2('settings', '設定') + go2('audit', '変更履歴') : '') +
-      '<button type="button" class="btn" data-act="openMyPrefs">自分の設定（下のメニュー・説明など）</button>' +
-      '<button type="button" class="btn" data-act="openPassword">パスワード変更</button>' +
-      '<button type="button" class="btn" data-act="menuRefreshFull">すべて読み直す（手で直したあと）</button>' +
-      '<button type="button" class="btn" data-act="logout">ログアウト</button></div></div>', true, true);
+      // v0.136.0：下のメニューにある画面と、名前のメニュー（自分の設定・パスワード変更・ログアウト）にあるものは、ここに出さない（同じボタンを2か所に置かない）
+      '<div class="body"><div class="sheet-list">' + menuScreens().map(function (n) { return go2(n[0], n[1]); }).join('') +
+      '</div><p class="note" style="margin:12px 0 0">自分の設定・パスワード変更・ログアウトは、右上の名前のボタンから。</p></div>', true, true);
   },
-  menuRefreshFull: function (el) { closeModal(el); ACT.refreshFull(); },
   cinfoToggle: function () { S.cinfoOpen = !S.cinfoOpen; render(); },
   introToggle: function () { S.introOpen = S.introOpen === S.view ? '' : S.view; render(); },
   showMore: function (el) { S.more = S.more || {}; var t = el.dataset.table; S.more[t] = (S.more[t] || TABLE_PAGE) + TABLE_PAGE; render(); },
@@ -1626,7 +1658,7 @@ var ACT = {
     var h = helpFor(el.dataset.view);
     if (!h) return;
     openModal('<header><h2>使い方：' + esc(h[0]) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
-      '<div class="body">' + (isPhone() && PAGE_INTRO[el.dataset.view] ? '<p class="page-intro" style="margin:0">' + esc(PAGE_INTRO[el.dataset.view]) + '</p>' : '') + manualHtml(el.dataset.view) + '<h3 style="font-size:14px;margin:14px 0 6px">ポイント</h3><ul class="help-list">' + h[1].map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
+      '<div class="body">' + (PAGE_INTRO[el.dataset.view] ? '<p class="page-intro" style="margin:0">' + esc(PAGE_INTRO[el.dataset.view]) + '</p>' : '') + manualHtml(el.dataset.view) + '<h3 style="font-size:14px;margin:14px 0 6px">ポイント</h3><ul class="help-list">' + h[1].map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
       '<footer><span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>', true, true);
   },
   phrase: function (el) {

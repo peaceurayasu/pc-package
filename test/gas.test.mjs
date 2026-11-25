@@ -339,3 +339,44 @@ test('スマホに渡す対応履歴：完了していないものと、直近90
   ];
   assert.deepEqual(plain(G.liteActivities_(list)).map((a) => a['対応ID']), ['A1', 'A2', 'A4']);
 });
+
+test('スマホに渡す修理：終わっていないものと、直近90日に受け付けた・終わったものだけ', () => {
+  const today = G.todayYmd_();
+  const p = today.split('-').map(Number);
+  const ago = (n) => { const d = new Date(p[0], p[1] - 1, p[2] - n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const list = [
+    { '修理ID': 'R1', '受付日': ago(5), '完了日': ago(1), 'ステータス': '完了' },
+    { '修理ID': 'R2', '受付日': ago(200), '完了日': ago(30), 'ステータス': '完了' },
+    { '修理ID': 'R3', '受付日': ago(200), '完了日': ago(150), 'ステータス': '完了' },
+    { '修理ID': 'R4', '受付日': ago(400), '完了日': '', 'ステータス': '対応中' }
+  ];
+  assert.deepEqual(plain(G.liteRepairs_(list)).map((r) => r['修理ID']), ['R1', 'R2', 'R4']);
+});
+
+test('新しい番号：覚えた番号の次を使い、手で足した大きい番号があれば列を全部読む', () => {
+  const g = G.$global, realHead = g.tableHead_;
+  const ids = ['X0001', 'X0002', 'X0003'];
+  let fullReads = 0;
+  const sheet = {
+    getLastRow: () => ids.length + 1,
+    getRange: (r, c, nr) => ({
+      getValue: () => ids[r - 2],
+      getValues: () => { fullReads++; return ids.slice(r - 2, r - 2 + (nr || 1)).map((v) => [v]); },
+      createTextFinder: (want) => ({ matchCase() { return this; }, matchEntireCell() { return this; }, findNext: () => (ids.indexOf(want) !== -1 ? { getRow: () => 0 } : null) })
+    })
+  };
+  g.tableHead_ = () => ({ sheet, headers: ['ID'] });
+  try {
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0004');       // 初めては、列を全部読む
+    assert.equal(fullReads, 1);
+    ids.push('X0004');
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0005');       // 2回めからは、覚えた番号の次（全部は読まない）
+    assert.equal(fullReads, 1);
+    ids.push('X0005', 'X0009');                                     // 手で大きい番号を足した
+    ids.splice(ids.indexOf('X0009'), 1); ids.splice(2, 0, 'X0009');  // しかも、いちばん下の行ではない
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0006');       // 空いている番号なので、そのまま使う（かぶらないことが大事）
+    ids.push('X0006', 'X0007', 'X0008');                           // ほかの方法で、まとめて足した（覚えた番号は 6 のまま）
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0010');       // いちばん下の 8 の次は 9 だが、もうある → 全部読んで 10
+    assert.equal(fullReads, 2);
+  } finally { g.tableHead_ = realHead; }
+});

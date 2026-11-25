@@ -5,9 +5,9 @@
  * このファイルは「何を持つか」だけを書く。処理は書かない。
  * シートの列を足すときは SCHEMA に追記して「初期設定」を実行する（既存の列は消さない・並べ替えない）。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.135.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.136.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
-const APP_VERSION = '0.135.0';
+const APP_VERSION = '0.136.0';
 
 // ---------------------------------------------------------------------------
 // 差し替え漏れの確かめ（v0.111.0）
@@ -15,23 +15,23 @@ const APP_VERSION = '0.135.0';
 //   ファイルを直したら、そのファイルの印と、ここの版を一緒に上げる（Config.gs は毎回差し替える）。
 // ---------------------------------------------------------------------------
 const FILE_MANIFEST = {
-  'Admin.html': '0.131.0',
-  'AdminActions.html': '0.134.0',
-  'AdminCore.html': '0.135.0',
-  'AdminCss.html': '0.135.0',
-  'AdminMobile.html': '0.135.0',
-  'AdminModals.html': '0.135.0',
-  'AdminViews.html': '0.134.0',
+  'Admin.html': '0.136.0',
+  'AdminActions.html': '0.136.0',
+  'AdminCore.html': '0.136.0',
+  'AdminCss.html': '0.136.0',
+  'AdminMobile.html': '0.136.0',
+  'AdminModals.html': '0.136.0',
+  'AdminViews.html': '0.136.0',
   'Alerts.gs': '0.123.0',
   'Auth.gs': '0.128.2',
-  'Code.gs': '0.132.0',
-  'Config.gs': '0.135.0',
-  'Db.gs': '0.126.0',
+  'Code.gs': '0.136.0',
+  'Config.gs': '0.136.0',
+  'Db.gs': '0.136.0',
   'Portal.gs': '0.111.0',
   'Portal.html': '0.122.0',
   'Receiver.gs': '0.111.0',
-  'Records.gs': '0.133.0',
-  'Setup.gs': '0.128.0'
+  'Records.gs': '0.136.0',
+  'Setup.gs': '0.136.0'
 };
 const APP_NAME = '管理システム';
 

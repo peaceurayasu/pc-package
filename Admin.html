@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
-<meta name="file-version" content="@file-version 0.131.0">
+<meta name="file-version" content="@file-version 0.136.0">
 <head>
 <meta charset="utf-8">
 <base target="_top">
@@ -47,7 +47,7 @@
             <div class="acct-info"><span id="lastLogin"></span><span id="timingSlot"></span></div>
             <button class="btn small" type="button" data-act="openMyPrefs">自分の設定</button>
             <button class="btn small" type="button" data-act="openPassword">パスワード変更</button>
-            <button class="btn small" type="button" data-act="refreshFull" title="スプレッドシートを手で直したあとなど">すべて読み直す</button>
+            <button class="btn small" type="button" id="refreshFullBtn" data-act="refreshFull" title="スプレッドシートを手で直したあとなど" hidden>すべて読み直す（管理者）</button>
             <button class="btn small" type="button" id="welcomeLogout" data-act="logout">ログアウト</button>
           </div></details>
       </div>

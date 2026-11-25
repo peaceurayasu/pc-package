@@ -5,7 +5,7 @@
  * 最初に SpreadsheetApp.getUi() を呼ぶ。ウェブアプリ経由で第三者が呼んでも、そこで止まって何も起きない。
  * 仮パスワードは画面のダイアログにだけ出し、戻り値では返さない。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Setup.gs'] = '0.128.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Setup.gs'] = '0.136.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
@@ -29,6 +29,7 @@ function onOpen() {
     .addItem('毎日のバックアップをやめる', 'removeBackupTrigger')
     .addItem('古い変更履歴を別のシートへ移す', 'archiveOldAudit')
     .addItem('古い対応履歴を別のシートへ移す（1年より前の完了分）', 'archiveOldActivities')
+    .addItem('使っていないシートを片づける（バックアップを作ってから消す）', 'cleanupUnusedSheets')
     .addToUi();  // 前のシステムからの取り込み（Migrate.gs を入れてあるときだけ、メニューを出す）
   if (typeof migrationMenu_ === 'function') migrationMenu_(ui);
 }
@@ -771,4 +772,92 @@ function archiveOldAudit() {
     console.error('変更履歴を移せませんでした: ' + (e && e.stack ? e.stack : e));
     ui.alert('移せませんでした。\n' + String(e && e.message ? e.message : e));
   }
+}
+
+// ---------------------------------------------------------------------------
+// 使っていないシートを片づける（v0.136.0）
+// ---------------------------------------------------------------------------
+/**
+ * アプリが使っていないシートを、2つに分けて返す。
+ *   safe   … アプリが前に作って、いまは使わないもの（商談・移行レポート）と、空のシート
+ *   others … アプリは使っていないが、中身があるもの（自分で作ったシートかもしれない）
+ * 使っているシート（SHEET_ORDER）と、退避のシート（変更履歴_退避・対応履歴_退避。顧客の画面から読む）は入れない。
+ */
+function unusedSheets_() {
+  const ss = getSs_();
+  const keep = {};
+  SHEET_ORDER.forEach(function (n) { keep[n] = true; });
+  keep[SHEET_AUDIT_ARCHIVE] = true;
+  keep[SHEET_ACTIVITIES_ARCHIVE] = true;
+  const out = { safe: [], others: [], blocked: [] };
+  ss.getSheets().forEach(function (sh) {
+    const name = sh.getName();
+    if (keep[name]) return;
+    const rows = Math.max(0, sh.getLastRow() - 1);
+    const item = { name: name, rows: rows };
+    if (name === SHEET_DEALS) {
+      // v0.82.0 で開発案件にまとめた古いシート。全部が開発案件へ移っていれば消してよい
+      const moved = {};
+      if (ss.getSheetByName(SHEET_PROJECTS)) readTable_(SHEET_PROJECTS).rows.forEach(function (pj) { if (pj['商談ID']) moved[String(pj['商談ID'])] = true; });
+      const left = readTable_(SHEET_DEALS).rows.filter(function (d) { return d['商談ID'] && !moved[String(d['商談ID'])]; }).length;
+      if (left) { item.note = '開発案件へまだ移していない商談が ' + left + '件あります。先に「初期設定」を実行してください'; out.blocked.push(item); return; }
+      item.note = '開発案件にまとめた古いシート';
+      out.safe.push(item);
+      return;
+    }
+    if (typeof MIG_REPORT_SHEET !== 'undefined' && name === MIG_REPORT_SHEET) { item.note = '前のシステムから取り込んだときの記録'; out.safe.push(item); return; }
+    if (sh.getLastRow() <= 1 && sh.getLastColumn() <= 1 && !String(sh.getRange(1, 1).getValue()).trim()) { item.note = '空のシート'; out.safe.push(item); return; }
+    item.note = rows + '行';
+    out.others.push(item);
+  });
+  return out;
+}
+
+/** メニュー：使っていないシートを片づける。消す前に、スプレッドシートのバックアップを作る（作れなければ消さない） */
+function cleanupUnusedSheets() {
+  const ui = SpreadsheetApp.getUi();
+  if (!isSetupDone_()) { ui.alert('先に初期設定を実行してください。'); return; }
+  const found = unusedSheets_();
+  const line = function (it) { return '・' + it.name + '（' + it.note + '）'; };
+  const blockedNote = found.blocked.length ? '\n\n消せないもの：\n' + found.blocked.map(line).join('\n') : '';
+  if (!found.safe.length && !found.others.length) { ui.alert('使っていないシートはありません。' + blockedNote); return; }
+  let names = [];
+  if (found.safe.length) {
+    const a = ui.alert('使っていないシートを片づける',
+      'アプリが使っていないシートです。消す前に、スプレッドシートのバックアップを作ります。\n\n' + found.safe.map(line).join('\n') + blockedNote + '\n\n消しますか？',
+      ui.ButtonSet.YES_NO);
+    if (a === ui.Button.YES) names = names.concat(found.safe.map(function (it) { return it.name; }));
+  }
+  if (found.others.length) {
+    const b = ui.alert('ほかのシート',
+      'アプリは使っていませんが、中身があるシートです。自分で作ったシート・ほかの用事で使っているシートなら「いいえ」を押してください。\n\n' + found.others.map(line).join('\n') + '\n\nこれらも消しますか？',
+      ui.ButtonSet.YES_NO);
+    if (b === ui.Button.YES) names = names.concat(found.others.map(function (it) { return it.name; }));
+  }
+  if (!names.length) { ui.alert('何も消しませんでした。'); return; }
+  let backup;
+  try {
+    backup = backupCore_(true);
+    saveBackupStatus_({ at: nowStamp_(), ok: true, name: backup.created, message: 'シートを片づける前のバックアップ' });
+  } catch (e) {
+    ui.alert('バックアップを作れなかったので、シートは消していません。\n' + String(e && e.message ? e.message : e));
+    return;
+  }
+  const done = withLock_(function () {
+    const ss = getSs_();
+    const gone = [];
+    names.forEach(function (n) {
+      const sh = ss.getSheetByName(n);
+      if (!sh || ss.getSheets().length <= 1) return;
+      ss.deleteSheet(sh);
+      gone.push(n);
+    });
+    return gone;
+  });
+  cacheBumpAll_();
+  logAuditSafe_('シートの片づけ', done.join('、'));
+  ui.alert('消したシート：' + (done.length ? done.join('、') : 'なし') + '\n\n消す前のバックアップ：' + backup.created + '（' + backup.folder + '）\nまちがって消したときは、このバックアップから写してください。');
+}
+function logAuditSafe_(kind, text) {
+  try { withLock_(function () { logAudit_(kind, '', '', '', '', auditText_(text), 'メニュー'); }); } catch (e) { console.warn('変更履歴に残せませんでした: ' + e); }
 }

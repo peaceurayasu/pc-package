@@ -9,7 +9,7 @@
  * 公開関数：doGet / getBootstrap / listActivities
  * （収集ツールからの受信 doPost は Receiver.gs）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.132.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.136.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 /**
  * 初期設定が済んでいるか（シートが全部あるか）。
@@ -335,6 +335,13 @@ function liteActivities_(list) {
   return list.filter(function (a) { return a['ステータス'] !== ACTIVITY_DONE || String(a['受付日'] || '') >= from; });
 }
 
+/** v0.136.0：スマホに渡す修理も、終わっていないものと、直近 PHONE_ACT_DAYS 日に受け付けた・終わったものだけにする（全部の件数は repairTotal で渡す） */
+function liteRepairs_(list) {
+  const p = todayYmd_().split('-');
+  const from = Utilities.formatDate(new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) - PHONE_ACT_DAYS), scriptTz_(), 'yyyy-MM-dd');
+  return list.filter(function (r) { return r['ステータス'] !== REPAIR_DONE || String(r['受付日'] || '') >= from || String(r['完了日'] || '') >= from; });
+}
+
 function bootRest_(me, groups, lite) {
   const started = Date.now();
   const defs = bootGroupDefs_();
@@ -354,7 +361,7 @@ function bootRest_(me, groups, lite) {
   const out = { groups: want, restStamp: restStamp };
   if (has('diag')) out.diagnostics = parts.diagnostics;
   if (has('lic')) { out.licenses = parts.licenses; out.allocations = parts.allocations; out.rentals = parts.rentals; out.loans = parts.loans; }
-  if (has('rep')) out.repairs = parts.repairs;
+  if (has('rep')) { out.repairs = lite === true ? liteRepairs_(parts.repairs) : parts.repairs; out.repairTotal = parts.repairs.length; }
   if (has('act')) {
     out.activities = lite === true ? liteActivities_(parts.activities.activities) : parts.activities.activities;
     out.activityTotal = parts.activities.activityTotal;

@@ -6,7 +6,7 @@
  * - 書き込みは必ず withLock_() の中で行う
  * - 末尾がアンダースコアの関数は、画面（google.script.run）からは呼べない
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Db.gs'] = '0.126.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Db.gs'] = '0.136.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 let ss_ = null;
 let tableCache_ = {};
@@ -623,6 +623,30 @@ function nextId_(sheetName, idField, prefix, digits) {
     const m = re.exec(String(v));
     if (m) max = Math.max(max, Number(m[1]));
   };
+  const fmt = function (n) { let s = String(n); while (s.length < digits) s = '0' + s; return prefix + s; };
+  // v0.136.0：前に使った番号を覚えておき、ID の列を全部は読まない（対応が数千件あると、新しく記録するたびにここで時間を使っていた）
+  //   覚えた番号と、いちばん下の行の番号の大きいほうの次を使う。念のため、その番号がもう無いかを探して、あれば今までどおり全部読む
+  const memoKey = 'idnext_' + sheetName;
+  let props = null;
+  try { props = PropertiesService.getScriptProperties(); } catch (e) { props = null; }
+  const remember = function (id) { try { if (props) props.setProperty(memoKey, String(Number(re.exec(id)[1]))); } catch (e) { /* 覚えられなくても、次は全部読むだけ */ } };
+  const floorOf = function (key) { try { return props ? Number(props.getProperty(key)) || 0 : 0; } catch (e) { return 0; } };
+  if (!tableCache_[sheetName]) {
+    const memo = floorOf(memoKey);
+    const head = tableHead_(sheetName);
+    const col = head.headers.indexOf(idField);
+    const lastRow = head.sheet.getLastRow();
+    if (memo > 0 && col !== -1) {
+      if (lastRow >= 2) see(head.sheet.getRange(lastRow, col + 1).getValue());
+      max = Math.max(max, memo);
+      if (sheetName === SHEET_ACTIVITIES) max = Math.max(max, floorOf('idfloor_' + sheetName));
+      const want = fmt(max + 1);
+      let taken = null;
+      try { taken = lastRow >= 2 ? head.sheet.getRange(2, col + 1, lastRow - 1, 1).createTextFinder(want).matchCase(true).matchEntireCell(true).findNext() : null; } catch (e) { taken = 'unknown'; }
+      if (!taken) { remember(want); return want; }
+      max = 0;      // 覚えた番号より大きい番号が、手で足されている。下で全部読む
+    }
+  }
   if (tableCache_[sheetName]) {
     tableCache_[sheetName].rows.forEach(function (r) { see(r[idField]); });
   } else {
@@ -633,10 +657,10 @@ function nextId_(sheetName, idField, prefix, digits) {
     if (col !== -1 && lastRow >= 2) head.sheet.getRange(2, col + 1, lastRow - 1, 1).getValues().forEach(function (r) { see(r[0]); });
   }
   // 退避シートへ移した番号も、もう使わない（v0.112.0）
-  if (sheetName === SHEET_ACTIVITIES) { try { max = Math.max(max, Number(PropertiesService.getScriptProperties().getProperty('idfloor_' + sheetName)) || 0); } catch (e) { /* 読めなくても続ける */ } }
-  let s = String(max + 1);
-  while (s.length < digits) s = '0' + s;
-  return prefix + s;
+  if (sheetName === SHEET_ACTIVITIES) max = Math.max(max, floorOf('idfloor_' + sheetName));
+  const next = fmt(max + 1);
+  remember(next);
+  return next;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.135.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.136.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -159,7 +159,9 @@ var PHONE_VIEWS = {
       '<p class="note">' + (S.D.activityTotal > S.D.activities.length ? 'スマホでは、完了していない対応と、直近90日の対応だけを読んでいます（軽くするため）。それより前は、顧客の画面か、パソコンの「対応」で見られます。' : '') + '</p>';
   },
   repairs: function () {
-    return pHead('修理', 'repair', '修理を受け付け') + pBody('rep', '件名・顧客名・型番・預かり品で探す', [['open', '進行中'], ['all', 'すべて']]);
+    if (pState('rep').f === 'all') ensureFullRepairs();
+    return pHead('修理', 'repair', '修理を受け付け') + pBody('rep', '件名・顧客名・型番・預かり品で探す', [['open', '進行中'], ['all', 'すべて']]) +
+      (S.repLite ? '<p class="note">スマホでは、終わっていない修理と、直近90日の修理だけを読んでいます（軽くするため）。「すべて」を選ぶと、残りも読みます。</p>' : '');
   },
   licenses: function () {
     return pHead('ライセンス', 'license', 'ライセンスを追加') + pBody('lic', '製品名・顧客名で探す（ひらがな可）', [['soon', '期限が近い・切れた'], ['all', 'すべて']]);
