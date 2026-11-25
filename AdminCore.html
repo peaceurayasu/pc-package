@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.138.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.139.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -363,9 +363,13 @@ function call(fn, params, quiet) {
         if (r && r.error === 'unauthorized' && fn !== 'login' && fn !== 'loginWithRemember' && p.token === S.token) { sessionExpired(); }
         reject(r || { message: 'サーバーから返事がありませんでした。' });
       })
-      .withFailureHandler(function () {
+      .withFailureHandler(function (err) {
         if (quiet) busy(false); else busy(false, bname);
-        reject({ message: '通信に失敗しました。電波の状態を確かめて、もう一度試してください。', network: true });
+        // v0.139.0：サーバー側で止まったもの（時間切れ・使いすぎ・権限）は、電波のせいではないので送り直さない
+        var why = String((err && err.message) || err || '');
+        var server = /exceeded|maximum execution|too many times|quota|authorization|permission|権限|上限/i.test(why);
+        reject(server ? { message: 'サーバーで処理を続けられませんでした。少し待ってから、もう一度試してください。（' + why.slice(0, 80) + '）' }
+          : { message: '通信に失敗しました。電波の状態を確かめて、もう一度試してください。', network: true });
       })[fn](p);
   });
 }
