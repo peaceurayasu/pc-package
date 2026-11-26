@@ -19,7 +19,7 @@
  * 公開関数：getAlerts / resolveAlert / unresolveAlert / sendAlertMailNow
  *           runDailyAlerts（時間のトリガー用）/ setupDailyTrigger / removeDailyTrigger（メニュー用）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function settingInt_(settings, key, fallback, max) {
   const n = parseInt(settings[key], 10);
@@ -434,7 +434,7 @@ function buildAlertMail_(settings, fresh, openCount, isTest) {
   });
   if (fresh.length > used) lines.push('…ほか ' + (fresh.length - used) + ' 件は管理画面で確認してください。', '');
   if (!isTest && openCount > fresh.length) lines.push('このほかに、前からの要対応が ' + (openCount - fresh.length) + ' 件あります。', '');
-  const url = webAppUrl_();
+  const url = siteUrl_();
   if (url) lines.push('管理画面：' + url);
   lines.push('', 'このメールは ' + APP_NAME + ' から自動で送っています。');
   return { subject: subject, body: lines.join('\n') };

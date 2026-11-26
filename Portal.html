@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
-<meta name="file-version" content="@file-version 0.138.0">
+<meta name="file-version" content="@file-version 0.141.0">
 <head>
 <meta charset="utf-8">
 <base target="_top">
@@ -158,7 +158,30 @@ header .grow { flex: 1; min-width: 200px; }
 }
 </style>
 </head>
-<body data-logo="<?= logo ?>">
+<body data-logo="<?= logo ?>" data-site="<?= siteOrigin ?>">
+<script>
+// v0.141.0：埋め込んでよいのは、設定「公開サイトのURL」のサイトと Google のページだけ（ほかのサイトに埋め込んで、ログインの欄をだまして使わせないため）
+(function () {
+  try {
+    var a = window.location.ancestorOrigins;
+    if (!a || !a.length) return;
+    var site = String(document.body.getAttribute('data-site') || '').toLowerCase();
+    var ok = function (o) { o = String(o).toLowerCase(); return o === 'https://script.google.com' || /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o) || /^https:\/\/sites\.google\.com$/.test(o) || (!!site && o === site); };
+    var bad = '';
+    for (var i = 0; i < a.length; i++) if (!ok(a[i])) { bad = a[i]; break; }
+    if (!bad) return;
+    window.__frameBlocked = true;
+    var st = document.createElement('style');
+    st.textContent = 'body > *:not(#frameBlock){display:none !important}';
+    document.head.appendChild(st);
+    var box = document.createElement('div');
+    box.id = 'frameBlock';
+    box.style.cssText = 'padding:32px;font-family:sans-serif;line-height:1.7;color:#1f2933';
+    box.textContent = 'このページは、決められたサイトからだけ開けます。管理者の方は、設定「公開サイトのURL」に、いま埋め込んでいるサイト（' + bad + '）を入れてください。';
+    document.body.appendChild(box);
+  } catch (e) { /* 調べられない時は、止めない */ }
+})();
+</script>
 <div class="wrap">
   <div id="state" class="state">読み込んでいます…</div>
   <div id="page" hidden style="display:flex;flex-direction:column;gap:16px">

@@ -9,7 +9,7 @@
  * 公開関数：doGet / getBootstrap / listActivities
  * （収集ツールからの受信 doPost は Receiver.gs）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 /**
  * 初期設定が済んでいるか（シートが全部あるか）。
@@ -51,7 +51,8 @@ function messagePage_(title, message) {
     '<body style="font-family:sans-serif;padding:32px;color:#1f2933">' +
     '<h1 style="font-size:20px">' + title + '</h1><p>' + message + '</p></body></html>';
   return HtmlService.createHtmlOutput(html).setTitle(title)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
 function doGet(e) {
@@ -78,8 +79,11 @@ function doGet(e) {
     portal.portalToken = String(p.t);
     portal.appVersion = APP_VERSION;
     portal.logo = brand.logo;
+    portal.siteOrigin = siteOrigin_();
+    // v0.141.0：Netlify などのサイトに埋め込めるようにする（埋め込んだ時は、Google の「このアプリケーションは…」の帯が出ない）
     return portal.evaluate().setTitle((company ? company + ' ' : '') + 'お客様ページ')
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
 
   const admin = HtmlService.createTemplateFromFile('Admin');
@@ -88,8 +92,10 @@ function doGet(e) {
   admin.company = company;
   admin.logo = brand.logo;
   admin.rememberDays = REMEMBER_DAYS;
+  admin.siteOrigin = siteOrigin_();
   return admin.evaluate().setTitle((company ? company + ' ' : '') + APP_NAME)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);      // v0.141.0：公開サイトに埋め込めるように（ほかのサイトに埋め込まれた時は、画面の側で止める）
 }
 
 /** HTMLのテンプレートから、別のHTMLファイル（AdminCss など）の中身をそのまま差し込む（v0.97.0。画面を分けた部品用） */

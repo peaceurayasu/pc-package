@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -1055,10 +1055,19 @@ function webAppUrl_() {
   return getSettings_()['ウェブアプリURL'] || ScriptApp.getService().getUrl() || '';
 }
 
+/** v0.141.0：人が開くURL（Netlify などに埋め込んで公開している時は、そのサイト）。収集ツールの送り先は webAppUrl_ のまま */
+function siteUrl_() {
+  return getSettings_()['公開サイトのURL'] || webAppUrl_();
+}
+/** 埋め込んでよいサイトの origin（https://xxxx.netlify.app）。設定が無ければ空 */
+function siteOrigin_() {
+  const m = /^(https:\/\/[^/?#]+)/i.exec(String(getSettings_()['公開サイトのURL'] || '').trim());
+  return m ? m[1].toLowerCase() : '';
+}
 function portalUrl_(portalToken) {
   if (!portalToken) return '';
-  const base = webAppUrl_();
-  return base ? base + '?t=' + portalToken : '';
+  const base = siteUrl_();
+  return base ? base + (base.indexOf('?') === -1 ? '?' : '&') + 't=' + portalToken : '';
 }
 
 /**

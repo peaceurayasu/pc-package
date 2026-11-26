@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="ja">
-<meta name="file-version" content="@file-version 0.138.0">
+<meta name="file-version" content="@file-version 0.141.0">
 <head>
 <meta charset="utf-8">
 <base target="_top">
@@ -9,7 +9,30 @@
 <link rel="stylesheet" media="print" onload="this.media='all';this.onload=null;" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap">
 <?!= include_('AdminCss') ?>
 </head>
-<body data-logo="<?= logo ?>">
+<body data-logo="<?= logo ?>" data-site="<?= siteOrigin ?>">
+<script>
+// v0.141.0：埋め込んでよいのは、設定「公開サイトのURL」のサイトと Google のページだけ（ほかのサイトに埋め込んで、ログインの欄をだまして使わせないため）
+(function () {
+  try {
+    var a = window.location.ancestorOrigins;
+    if (!a || !a.length) return;
+    var site = String(document.body.getAttribute('data-site') || '').toLowerCase();
+    var ok = function (o) { o = String(o).toLowerCase(); return o === 'https://script.google.com' || /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o) || /^https:\/\/sites\.google\.com$/.test(o) || (!!site && o === site); };
+    var bad = '';
+    for (var i = 0; i < a.length; i++) if (!ok(a[i])) { bad = a[i]; break; }
+    if (!bad) return;
+    window.__frameBlocked = true;
+    var st = document.createElement('style');
+    st.textContent = 'body > *:not(#frameBlock){display:none !important}';
+    document.head.appendChild(st);
+    var box = document.createElement('div');
+    box.id = 'frameBlock';
+    box.style.cssText = 'padding:32px;font-family:sans-serif;line-height:1.7;color:#1f2933';
+    box.textContent = 'このページは、決められたサイトからだけ開けます。管理者の方は、設定「公開サイトのURL」に、いま埋め込んでいるサイト（' + bad + '）を入れてください。';
+    document.body.appendChild(box);
+  } catch (e) { /* 調べられない時は、止めない */ }
+})();
+</script>
 <div id="busy" hidden></div>
 <div id="blocker" hidden><span>最新のデータを読み込んでいます…</span></div>
 
