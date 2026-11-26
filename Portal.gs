@@ -6,7 +6,7 @@
  * - 何を見せるかは、顧客ごとの「ポータル表示」で選ぶ（お知らせだけは、公開していれば常に出す）
  * - 公開関数：getPortalData / getPortalLayout / getPortalReport
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Portal.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Portal.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function pick_(row, names) {
   const out = {};
@@ -111,7 +111,7 @@ function getPortalData(params) {
     if (tabs.indexOf('対応') !== -1) {
       out.activities = sortActivities_(readTable_(SHEET_ACTIVITIES).rows.filter(mine))
         .slice(0, PORTAL_ACTIVITY_LIMIT)
-        .map(function (a) { return pick_(a, ['受付日', '対応種別', 'インシデント種別', 'ステータス', '内容']); });
+        .map(function (a) { return forCustomer_(pick_(a, ['受付日', '対応種別', 'インシデント種別', 'ステータス', '内容'])); });      // 原文（韓国語）は見せない（v0.140.0）
     }
     if (tabs.indexOf('レイアウト') !== -1) {
       out.layouts = layoutsOf_(id).map(function (r) { return { id: r['レイアウトID'], name: r['名前'] }; });

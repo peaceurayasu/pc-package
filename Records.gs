@@ -278,6 +278,16 @@ function customerIdOf_(key, row) {
 const TRANSLATE_KEYS = { activity: true, repair: true, maintenance: true, memo: true };
 const HANGUL_RE = /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3]/;
 const TRANSLATE_MARK = '――― 原文（韓国語）―――';
+/** お客様に見せる文から、原文（韓国語）の所を外す（お客様ページ・月次レポート） */
+function withoutOriginal_(v) {
+  const s = String(v === null || v === undefined ? '' : v);
+  const at = s.indexOf(TRANSLATE_MARK);
+  return at === -1 ? s : s.slice(0, at).replace(/\s+$/, '');
+}
+function forCustomer_(rec) {
+  ['内容', '件名'].forEach(function (k) { if (rec && typeof rec[k] === 'string') rec[k] = withoutOriginal_(rec[k]); });
+  return rec;
+}
 function koToJa_(lines) {
   if (!lines.length) return [];
   const joined = LanguageApp.translate(lines.join('\n'), 'ko', 'ja');

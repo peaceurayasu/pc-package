@@ -403,3 +403,10 @@ test('韓国語の翻訳：ハングルの行だけを訳し、長い文の欄�
     assert.deepEqual(plain(G.translateKorean_('repair', { '内容': 'ふつうの日本語' }, {})), []);
   } finally { delete g.LanguageApp; }
 });
+
+test('お客様に見せる文：原文（韓国語）の所は外す', () => {
+  const mark = G.TRANSLATE_MARK;
+  assert.equal(G.withoutOriginal_('訳した文\n\n' + mark + '\n안녕'), '訳した文');
+  assert.equal(G.withoutOriginal_('ふつうの文'), 'ふつうの文');
+  assert.deepEqual(plain(G.forCustomer_({ '内容': 'a\n' + mark + '\nb', '受付日': '2026-01-01' })), { '内容': 'a', '受付日': '2026-01-01' });
+});

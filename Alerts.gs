@@ -19,7 +19,7 @@
  * 公開関数：getAlerts / resolveAlert / unresolveAlert / sendAlertMailNow
  *           runDailyAlerts（時間のトリガー用）/ setupDailyTrigger / removeDailyTrigger（メニュー用）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function settingInt_(settings, key, fallback, max) {
   const n = parseInt(settings[key], 10);
@@ -758,9 +758,9 @@ function buildReport_(customer, month) {
       maintenances: maintenances.length,
       devices: devices.length
     },
-    activities: activities.map(function (a) { return pick_(a, ['受付日', '対応種別', 'インシデント種別', '内容', 'ステータス']); }),
-    repairs: repairs.map(function (r) { return pick_(r, ['受付日', '完了日', '種別', '件名', 'ステータス']); }),
-    maintenances: maintenances.map(function (m) { return pick_(m, ['実施日', '種別', '内容']); }),
+    activities: activities.map(function (a) { return forCustomer_(pick_(a, ['受付日', '対応種別', 'インシデント種別', '内容', 'ステータス'])); }),      // 原文（韓国語）は載せない（v0.140.0）
+    repairs: repairs.map(function (r) { return forCustomer_(pick_(r, ['受付日', '完了日', '種別', '件名', 'ステータス'])); }),
+    maintenances: maintenances.map(function (m) { return forCustomer_(pick_(m, ['実施日', '種別', '内容'])); }),
     deviceKinds: Object.keys(byKind).sort(function (a, b) { return byKind[b] - byKind[a]; }).map(function (k) { return { name: k, count: byKind[k] }; }),
     deviceNotes: deviceNotes,
     licenses: licenses
