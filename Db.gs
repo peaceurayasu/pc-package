@@ -6,7 +6,7 @@
  * - 書き込みは必ず withLock_() の中で行う
  * - 末尾がアンダースコアの関数は、画面（google.script.run）からは呼べない
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Db.gs'] = '0.126.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Db.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 let ss_ = null;
 let tableCache_ = {};
@@ -81,7 +81,7 @@ function api_(fn) {
 }
 
 /**
- * 大きな返事を小さくして返す（v0.107.0）。画面が pack: true を付けたときだけ。
+ * 大きな返事を小さくして返す（v0.107.0）。画面が pack: true を付けた時だけ。
  *   同じ形の記録が並ぶ配列 [{顧客ID:…, 顧客名:…}, …] を {__c:[列名], __r:[[値…], …]} にする。
  *   列名（日本語）を1件ごとに繰り返さないので、送る量がおよそ半分以下になる（スマホの電波で効く）。画面の call() が元に戻す。
  */
@@ -119,7 +119,7 @@ function withLock_(fn) {
     try {
       lock.waitLock(20000);
     } catch (e2) {
-      throw appError_('busy', 'ほかの人の保存と重なりました。もう一度試してください。');
+      throw appError_('busy', '他の人の保存と重なりました。もう一度試してください。');
     }
   }
   const tBody = Date.now();
@@ -130,7 +130,7 @@ function withLock_(fn) {
     const result = fn();
     SpreadsheetApp.flush();
     flushedInLock_ = true;      // 直後の releaseDirty_ では、もう一度 flush しない（v0.88.0）
-    // 遅かったときだけログに残す（v0.110.0。毎回だと実行ログが埋まって、本当に見たいものが探しにくい）
+    // 遅かった時だけログに残す（v0.110.0。毎回だと実行ログが埋まって、本当に見たいものが探しにくい）
     if (tBody - tLock > 3000 || Date.now() - tBody > 3000) console.warn('保存に時間がかかりました(ms) ロック待ち=' + (tBody - tLock) + ' 処理=' + (Date.now() - tBody));
     return result;
   } finally {
@@ -238,7 +238,7 @@ function numberFormat_(type) {
 const HEAD_KEY = '#head:';     // tableCache_ の中で、見出しだけの控えに使うキーの頭
 const LEAN_KEY = '#lean:';     // 同じく、重い列を抜いて読んだ表の控えに使うキーの頭
 
-/** そのシートの行について覚えているものを忘れる（見出しは残す）。書いたあとに呼ぶ */
+/** そのシートの行について覚えているものを忘れる（見出しは残す）。書いた後に呼ぶ */
 function forgetRows_(sheetName) {
   delete tableCache_[sheetName];
   delete tableCache_[LEAN_KEY + sheetName];
@@ -263,7 +263,7 @@ function readSheetValues_(sheet, sheetName, types, lean) {
     const last = runs[runs.length - 1];
     if (last && last[0] + last[1] === j) last[1]++; else runs.push([j, 1]);
   });
-  // かたまりが多いと、読む回数のほうが高くつく。そのときは丸ごと読む
+  // かたまりが多いと、読む回数のほうが高くつく。その時は丸ごと読む
   if (!runs.length || runs.length > 4) return sheet.getRange(1, 1, lastRow, lastCol).getValues();
   const values = [head];
   for (let i = 1; i < lastRow; i++) values.push(new Array(lastCol).fill(''));
@@ -295,7 +295,7 @@ function tableHead_(sheetName) {
 
 /**
  * 画面で保存する前に、そのシートに足りない列を右端に足す（v0.103.0）。
- * 「初期設定」を実行する前でも、あとから増えた列（ひとこと など）の値が、黙って捨てられないように。
+ * 「初期設定」を実行する前でも、後から増えた列（ひとこと など）の値が、黙って捨てられないように。
  * 今ある列と値には触らない。withLock_ の中で呼ぶこと。
  */
 function ensureColumns_(sheetName) {
@@ -312,14 +312,14 @@ function ensureColumns_(sheetName) {
   forgetSheet_(sheetName);
 }
 
-/** そのシートについて覚えているもの（中身・見出し）を忘れる。列を動かしたあとに呼ぶ */
+/** そのシートについて覚えているもの（中身・見出し）を忘れる。列を動かした後に呼ぶ */
 function forgetSheet_(sheetName) {
   forgetRows_(sheetName);
   delete tableCache_[HEAD_KEY + sheetName];
 }
 
 /**
- * シートに書いた行を、読み戻したときと同じ形にする（書いたあとに表を読み直さないで、返事を作るため）。
+ * シートに書いた行を、読み戻したときと同じ形にする（書いた後に表を読み直さないで、返事を作るため）。
  * @param {Object} base 書く前の行（新しい行なら null）
  * @param {Object} changes 書いた値
  */
@@ -397,8 +397,8 @@ function findById_(sheetName, idField, id) {
 
 /**
  * IDの列を TextFinder で探して、見つかった1行だけを読む。readTable_ と同じ形の行を返す。
- * 同じ実行の中で同じシートを何度も探すときは、3回めから表を丸ごと読む（そのほうが速い）。
- * @return {Object|null|undefined} 見つからなければ null、この方法が使えないときは undefined（ふつうに探す）
+ * 同じ実行の中で同じシートを何度も探す時は、3回めから表を丸ごと読む（そのほうが速い）。
+ * @return {Object|null|undefined} 見つからなければ null、この方法が使えない時は undefined（ふつうに探す）
  */
 function findRowFast_(sheetName, idField, want) {
   fastCount_[sheetName] = (fastCount_[sheetName] || 0) + 1;
@@ -413,7 +413,7 @@ function findRowFast_(sheetName, idField, want) {
   try {
     cell = sheet.getRange(2, col + 1, lastRow - 1, 1).createTextFinder(want).matchCase(true).matchEntireCell(true).findNext();
   } catch (e) { return undefined; }
-  if (!cell) return undefined;      // 見つからないときは、念のためふつうに探す（表示の違う値も拾うため）
+  if (!cell) return undefined;      // 見つからない時は、念のためふつうに探す（表示の違う値も拾うため）
   const rowNumber = cell.getRow();
   const values = sheet.getRange(rowNumber, 1, 1, head.headers.length).getValues()[0];
   const types = typeMap_(sheetName);
@@ -429,7 +429,7 @@ function findRowFast_(sheetName, idField, want) {
 
 /**
  * v0.126.0：ある列が value の行だけを返す（readTable_ と同じ形）。表をまだ読んでいなければ、TextFinder でその列から探して、
- *   見つかった行だけを読む（対応履歴のような大きい表を、丸ごと読まない）。見つかった行が多いときや、使えないときは、表を読んで絞る。
+ *   見つかった行だけを読む（対応履歴のような大きい表を、丸ごと読まない）。見つかった行が多い時や、使えない時は、表を読んで絞る。
  */
 function rowsWhere_(sheetName, colName, value) {
   const want = String(value === null || value === undefined ? '' : value).trim();
@@ -447,7 +447,7 @@ function rowsWhere_(sheetName, colName, value) {
     cells = sheet.getRange(2, col + 1, lastRow - 1, 1).createTextFinder(want).matchCase(true).matchEntireCell(true).findAll();
   } catch (e) { return slow(); }
   if (!cells || !cells.length) return [];
-  if (cells.length > 40) return slow();          // 多いときは、1行ずつ読むより丸ごと読むほうが速い
+  if (cells.length > 40) return slow();          // 多い時は、1行ずつ読むより丸ごと読むほうが速い
   const types = typeMap_(sheetName), known = !!SCHEMA[sheetName], width = head.headers.length;
   const out = [];
   cells.forEach(function (cell) {
@@ -500,7 +500,7 @@ function appendRecords_(sheetName, objs) {
 
 /**
  * 空いている行（start から最後まで）に、列ごとの書式を付けておく。付けたら印（行数と見出しの形）を残し、
- * 次からは、印が同じなら何もしない。行が増えた・減った・見出しが変わったときは、印が合わなくなるので付け直す。
+ * 次からは、印が同じなら何もしない。行が増えた・減った・見出しが変わった時は、印が合わなくなるので付け直す。
  */
 function ensureBlankFormats_(sheetName, sheet, headers, types, start, max) {
   if (max < start) return;
@@ -519,7 +519,7 @@ function ensureBlankFormats_(sheetName, sheet, headers, types, start, max) {
 }
 
 /**
- * 末尾の limit 行だけを読む（変更履歴のように、長くなるシートの「最近のぶん」だけが要るとき）。
+ * 末尾の limit 行だけを読む（変更履歴のように、長くなるシートの「最近のぶん」だけが要る時）。
  * @return {{total:number, rows:Array<Object>}} total は全体の行数。rows は古い順
  */
 function readTailRows_(sheetName, limit) {
@@ -586,7 +586,7 @@ function colLetter_(n) {
 
 /**
  * 何行かに、同じ値をまとめて書く（v0.106.0）。列ごとに1回の書き込みで済む（行ごとに書くと、行の数だけ時間がかかる）。
- * 機器の顧客を移すときの「顧客ID」「更新日時」などに使う。触らない列には書かない。
+ * 機器の顧客を移す時の「顧客ID」「更新日時」などに使う。触らない列には書かない。
  * @param {string} sheetName
  * @param {number[]} rowNumbers シートの行番号
  * @param {Object} changes 列名 → 値（全部の行に同じ値）
@@ -623,6 +623,30 @@ function nextId_(sheetName, idField, prefix, digits) {
     const m = re.exec(String(v));
     if (m) max = Math.max(max, Number(m[1]));
   };
+  const fmt = function (n) { let s = String(n); while (s.length < digits) s = '0' + s; return prefix + s; };
+  // v0.136.0：前に使った番号を覚えておき、ID の列を全部は読まない（対応が数千件あると、新しく記録するたびにここで時間を使っていた）
+  //   覚えた番号と、一番下の行の番号の大きいほうの次を使う。念のため、その番号がもう無いかを探して、あれば今までどおり全部読む
+  const memoKey = 'idnext_' + sheetName;
+  let props = null;
+  try { props = PropertiesService.getScriptProperties(); } catch (e) { props = null; }
+  const remember = function (id) { try { if (props) props.setProperty(memoKey, String(Number(re.exec(id)[1]))); } catch (e) { /* 覚えられなくても、次は全部読むだけ */ } };
+  const floorOf = function (key) { try { return props ? Number(props.getProperty(key)) || 0 : 0; } catch (e) { return 0; } };
+  if (!tableCache_[sheetName]) {
+    const memo = floorOf(memoKey);
+    const head = tableHead_(sheetName);
+    const col = head.headers.indexOf(idField);
+    const lastRow = head.sheet.getLastRow();
+    if (memo > 0 && col !== -1) {
+      if (lastRow >= 2) see(head.sheet.getRange(lastRow, col + 1).getValue());
+      max = Math.max(max, memo);
+      if (sheetName === SHEET_ACTIVITIES) max = Math.max(max, floorOf('idfloor_' + sheetName));
+      const want = fmt(max + 1);
+      let taken = null;
+      try { taken = lastRow >= 2 ? head.sheet.getRange(2, col + 1, lastRow - 1, 1).createTextFinder(want).matchCase(true).matchEntireCell(true).findNext() : null; } catch (e) { taken = 'unknown'; }
+      if (!taken) { remember(want); return want; }
+      max = 0;      // 覚えた番号より大きい番号が、手で足されている。下で全部読む
+    }
+  }
   if (tableCache_[sheetName]) {
     tableCache_[sheetName].rows.forEach(function (r) { see(r[idField]); });
   } else {
@@ -633,16 +657,16 @@ function nextId_(sheetName, idField, prefix, digits) {
     if (col !== -1 && lastRow >= 2) head.sheet.getRange(2, col + 1, lastRow - 1, 1).getValues().forEach(function (r) { see(r[0]); });
   }
   // 退避シートへ移した番号も、もう使わない（v0.112.0）
-  if (sheetName === SHEET_ACTIVITIES) { try { max = Math.max(max, Number(PropertiesService.getScriptProperties().getProperty('idfloor_' + sheetName)) || 0); } catch (e) { /* 読めなくても続ける */ } }
-  let s = String(max + 1);
-  while (s.length < digits) s = '0' + s;
-  return prefix + s;
+  if (sheetName === SHEET_ACTIVITIES) max = Math.max(max, floorOf('idfloor_' + sheetName));
+  const next = fmt(max + 1);
+  remember(next);
+  return next;
 }
 
 // ---------------------------------------------------------------------------
 // 設定・選択肢
 // ---------------------------------------------------------------------------
-/** 設定シートを {キー: 値} にする。シートに無いキーは既定値（v0.18.0：ふだんは控えから。ロックの中はシートから） */
+/** 設定シートを {キー: 値} にする。シートに無いキーは既定値（v0.18.0：普段は控えから。ロックの中はシートから） */
 function getSettings_() {
   return refPart_('refSettings');
 }
@@ -661,7 +685,7 @@ function settingDays_(settings, key, fallback) {
   return isFinite(n) && n >= 0 && n <= 3650 ? n : fallback;
 }
 
-/** 選択肢シートを {区分: [{value, active}]} にする（表示順で並べる。v0.18.0：ふだんは控えから） */
+/** 選択肢シートを {区分: [{value, active}]} にする（表示順で並べる。v0.18.0：普段は控えから） */
 function getOptions_() {
   return refPart_('refOptions');
 }
@@ -709,20 +733,20 @@ function logAudit_(kind, target, customerId, field, before, after, actor) {
 // ここから：元 Cache.gs（v0.93.0 でファイルをまとめた。中身は同じ）
 // =============================================================================
 /**
- * Cache.gs … 画面を開くときに渡すデータの「控え」（サーバー側のキャッシュ）
+ * Cache.gs … 画面を開く時に渡すデータの「控え」（サーバー側のキャッシュ）
  *
  * 画面を開くたびにシートを全部読むと時間がかかるので、画面に渡す形にしたものを CacheService に控えておく。
  *
  * しくみ
  *   - 控えは「部品」ごと（顧客・機器・対応履歴・要対応…）。どの部品がどのシートから作られるかは Config.gs の CACHE_DEPS
  *   - シートごとに「版の印」を持つ。アプリがそのシートに書いたら、印を新しくする（Db.gs の withLock_ の終わり）
- *   - 部品の控えの頭には、作ったときの「もとのシートの印」を付けてある。読むときに、いまの印と違えば使わない
+ *   - 部品の控えの頭には、作った時の「元のシートの印」を付けてある。読む時に、今の印と違えば使わない
  *     （消し忘れが起きない。キーは部品ごとに決まっていて上書きになるので、古い控えが溜まらない）
- *   - スプレッドシートを手で直したときは onEdit が印を新しくする。行の削除などは onEdit が動かないので、
- *     そのときは最長で SERVER_CACHE_SECONDS のあいだ古いまま（画面の「最新を読み込む」で、すぐ読み直せる）
- *   - CacheService が使えない・値が大きすぎる、などのときは、何も言わずにシートを直接読む（遅くなるだけで、止まらない）
+ *   - スプレッドシートを手で直した時は onEdit が印を新しくする。行の削除などは onEdit が動かないので、
+ *     その時は最長で SERVER_CACHE_SECONDS のあいだ古いまま（画面の「最新を読み込む」で、すぐ読み直せる）
+ *   - CacheService が使えない・値が大きすぎる、などの時は、何も言わずにシートを直接読む（遅くなるだけで、止まらない）
  *
- * 公開関数：onEdit（スプレッドシートを手で直したときに、Google が呼ぶ）
+ * 公開関数：onEdit（スプレッドシートを手で直した時に、Google が呼ぶ）
  */
 
 const CACHE_GEN_ALL = 'gen_all';     // 全部の控えを使えなくするための印
@@ -758,9 +782,9 @@ function cacheNewGen_() {
 }
 
 /**
- * いまの印をまとめて読む（1回の実行で1回だけ）。シートを読む前に呼ぶこと。
- * 先にシートを読んでから印を読むと、その間にほかの人が保存したとき、古い中身を新しい印で控えてしまう。
- * @return {Object|null} {キー: 印}。キャッシュが使えないときは null
+ * 今の印をまとめて読む（1回の実行で1回だけ）。シートを読む前に呼ぶこと。
+ * 先にシートを読んでから印を読むと、その間に他の人が保存した時、古い中身を新しい印で控えてしまう。
+ * @return {Object|null} {キー: 印}。キャッシュが使えない時は null
  */
 function cachePrime_() {
   if (!cacheOn_()) return null;
@@ -786,7 +810,7 @@ function cachePrime_() {
 }
 
 /**
- * シートに書いたあとに呼ぶ。そのシートから作った控えを、使えなくする。
+ * シートに書いた後に呼ぶ。そのシートから作った控えを、使えなくする。
  * @param {Array<string>} sheetNames
  */
 function cacheBump_(sheetNames) {
@@ -836,7 +860,7 @@ function cachePartKey_(part, i) {
   return 'pc_' + part + '_' + i;
 }
 
-/** 部品の控えのキーに入れる印（版・全体の印・もとのシートの印・日付など） */
+/** 部品の控えのキーに入れる印（版・全体の印・元のシートの印・日付など） */
 function cachePartSig_(part, gens, extra) {
   const bits = [APP_VERSION, gens[CACHE_GEN_ALL]];
   CACHE_DEPS[part].forEach(function (name) { bits.push(gens[cacheGenKey_(name)]); });
@@ -847,7 +871,7 @@ function cachePartSig_(part, gens, extra) {
 /**
  * 長い文字を、CacheService に入る大きさに切る（1つ100KBまで。日本語は1文字3バイトなので、文字数で余裕を見る）。
  * 絵文字（2つで1文字）の真ん中では切らない。
- * @return {Array<string>|null} 多すぎるときは null（控えない）
+ * @return {Array<string>|null} 多すぎる時は null（控えない）
  */
 function cacheSplit_(text) {
   const chunks = [];
@@ -868,8 +892,8 @@ function cacheSplit_(text) {
 }
 
 /**
- * 読んだ控えを、もとの値に戻す。どの切れ端も、頭に「印:」が付いている。
- * 印がいまのものと違う（＝もとのシートが変わった・別の実行が途中まで上書きした）・そろっていない・壊れているときは undefined
+ * 読んだ控えを、元の値に戻す。どの切れ端も、頭に「印:」が付いている。
+ * 印が今のものと違う（＝元のシートが変わった・別の実行が途中まで上書きした）・そろっていない・壊れている時は undefined
  */
 function cacheJoin_(found, part, sig) {
   const head = sig + ':';
@@ -921,7 +945,7 @@ function cachedParts_(parts, builders, extras, allowLock) {
       sigs[part] = cachePartSig_(part, gens, extras && extras[part]);
       for (let i = 0; i < CACHE_MAX_CHUNKS; i++) keys.push(cachePartKey_(part, i));
     });
-    // 「最新を読み込む」のときは、控えを読まずに作って、上書きする（印を新しくできなかったときでも、必ず新しくなる）
+    // 「最新を読み込む」の時は、控えを読まずに作って、上書きする（印を新しくできなかったときでも、必ず新しくなる）
     found = cacheFresh_ ? {} : (cache.getAll(keys) || {});
   } catch (e) {
     console.warn('控えを読めませんでした: ' + e);
@@ -1028,8 +1052,8 @@ function staffRef_(staffId) {
 
 /**
  * 顧客・機器が「あるか」「どの顧客のものか」を、控えで確かめる（v0.18.0。保存のたびに顧客・機器のシートを丸ごと読まない）。
- * ロックの中でも使う。ロックを取ったあとに印を読み直すので、ほかの人が書き終えたものは見える。
- * この実行で書いたシートがあるときは、シートを読む。行番号（_row）は無い（書きかえには使わないこと）。
+ * ロックの中でも使う。ロックを取った後に印を読み直すので、他の人が書き終えたものは見える。
+ * この実行で書いたシートがある時は、シートを読む。行番号（_row）は無い（書きかえには使わないこと）。
  */
 function cachedFind_(part, sheetName, idField, id) {
   const want = String(id === null || id === undefined ? '' : id).trim();
@@ -1075,7 +1099,7 @@ function bootRestIfWarm_(me) {
 
 /**
  * メニュー：控えの状態を調べる（v0.41.0）。
- * 部品ごとに、中身の大きさ・何個に分けるか・いま控えに入っているかを出す。「読み込み：控え 0/20」が続くときの原因探し。
+ * 部品ごとに、中身の大きさ・何個に分けるか・今控えに入っているかを出す。「読み込み：控え 0/20」が続く時の原因探し。
  */
 function cacheReport() {
   const ui = SpreadsheetApp.getUi();

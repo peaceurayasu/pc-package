@@ -261,3 +261,152 @@ test('管理画面：Admin.html が読み込む部品は、どれも実在し、
     assert.ok(!readFileSync(name + '.html', 'utf8').includes('<?'), name + '.html の中に <? があると、そのまま画面に出てしまう');
   }
 });
+
+test('仮パスワード：出したパスワードのままなら「仮」、本人が変えたら「仮」でなくなる', () => {
+  const hash = G.makePasswordHash_('Temp12345x');
+  const staff = { 'スタッフID': 'Yamada', 'パスワードハッシュ': hash };
+  assert.equal(G.isTempPassword_(staff), false);                    // 印がまだ無い
+  G.markTempPassword_('yamada', hash);                              // ID の大文字・小文字は区別しない
+  assert.equal(G.isTempPassword_(staff), true);
+  assert.equal(G.isTempPassword_({ 'スタッフID': 'yamada', 'パスワードハッシュ': G.makePasswordHash_('MyOwnPass99') }), false);   // 本人が変えた
+  assert.equal(G.isTempPassword_({ 'スタッフID': 'suzuki', 'パスワードハッシュ': hash }), false);   // ほかの人
+  G.clearTempPassword_('yamada', G.makePasswordHash_('MyOwnPass99'));
+  assert.equal(G.isTempPassword_(staff), false);
+  assert.equal(G.isTempPassword_(null), false);
+  assert.equal(G.isTempPassword_({ 'スタッフID': 'x' }), false);
+});
+
+test('仮パスワード：印が無い人は、変更履歴のいちばん新しい記録で見分け、結果を印に残す', () => {
+  const g = G.$global, real = g.rowsWhere_;
+  const audit = [];
+  let reads = 0;
+  g.rowsWhere_ = (sheet, col, value) => { reads++; return audit.filter((r) => r['対象'] === value); };
+  const row = (n, at, kind, target) => ({ _row: n, '日時': at, '種別': kind, '対象': target });
+  try {
+    // 再設定のあと、本人が変えていない → 仮パスワードのまま
+    audit.push(row(2, '2026-10-01 09:00', 'スタッフ追加', 'tanaka'), row(3, '2026-10-02 09:00', 'パスワード変更', 'tanaka'), row(9, '2026-11-01 10:00', 'パスワード再設定', 'Tanaka'));
+    const tanaka = { 'スタッフID': 'Tanaka', 'パスワードハッシュ': G.makePasswordHash_('Temp9999aa') };
+    assert.equal(G.isTempPassword_(tanaka), true);
+    const before = reads;
+    assert.equal(G.isTempPassword_(tanaka), true);
+    assert.equal(reads, before);                       // 2回めは変更履歴を読まない（印から）
+    // 本人が変えたあと → 出ない
+    const tanakaOwn = G.makePasswordHash_('MyOwnPass99');
+    G.clearTempPassword_('tanaka', tanakaOwn);
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'Tanaka', 'パスワードハッシュ': tanakaOwn }), false);
+    // 最後が本人の変更 → 仮パスワードではない
+    audit.push(row(4, '2026-10-05 09:00', 'パスワード再設定', 'sato'), row(5, '2026-10-06 09:00', 'パスワード変更', 'sato'));
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'sato', 'パスワードハッシュ': G.makePasswordHash_('SatoPass123') }), false);
+    // 変更履歴に何も無い → 仮パスワードとは見なさない
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'nobody', 'パスワードハッシュ': G.makePasswordHash_('Whatever12') }), false);
+  } finally {
+    g.rowsWhere_ = real;
+  }
+});
+
+test('仮パスワード：「仮ではない」と覚えたあとに、印を付けない方法で再設定されても、変更履歴で見直して出す（admin の例）', () => {
+  const g = G.$global, real = g.rowsWhere_;
+  const audit = [];
+  g.rowsWhere_ = (sheet, col, value) => audit.filter((r) => r['対象'] === value);
+  try {
+    // 1. admin が自分のパスワードでログイン → 仮ではない、と覚える
+    audit.push({ _row: 2, '日時': '2026-11-01 09:00', '種別': 'パスワード変更', '対象': 'admin' });
+    const own = { 'スタッフID': 'admin', 'パスワードハッシュ': G.makePasswordHash_('AdminOwn123') };
+    assert.equal(G.isTempPassword_(own), false);
+    // 2. 古い Setup.gs のメニューで再設定（印は付かない）。変更履歴には残る
+    audit.push({ _row: 3, '日時': '2026-11-21 10:00', '種別': 'パスワード再設定', '対象': 'admin' });
+    const temp = { 'スタッフID': 'admin', 'パスワードハッシュ': G.makePasswordHash_('Temp7777zz') };
+    assert.equal(G.isTempPassword_(temp), true);        // パスワードが変わったので、見直して「仮」
+    // 3. 本人が変えたら出ない。同じパスワードのままなら、見直さずに「仮ではない」
+    const mine = G.makePasswordHash_('AdminNew456');
+    G.clearTempPassword_('admin', mine);
+    audit.push({ _row: 4, '日時': '2026-11-21 10:05', '種別': 'パスワード変更', '対象': 'admin' });
+    assert.equal(G.isTempPassword_({ 'スタッフID': 'admin', 'パスワードハッシュ': mine }), false);
+  } finally {
+    g.rowsWhere_ = real;
+  }
+});
+
+test('スマホに渡す対応履歴：完了していないものと、直近90日のものだけ', () => {
+  const today = G.todayYmd_();
+  const p = today.split('-').map(Number);
+  const ago = (n) => { const d = new Date(p[0], p[1] - 1, p[2] - n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const list = [
+    { '対応ID': 'A1', '受付日': ago(5), 'ステータス': '完了' },
+    { '対応ID': 'A2', '受付日': ago(90), 'ステータス': '完了' },
+    { '対応ID': 'A3', '受付日': ago(91), 'ステータス': '完了' },
+    { '対応ID': 'A4', '受付日': ago(400), 'ステータス': '対応中' }
+  ];
+  assert.deepEqual(plain(G.liteActivities_(list)).map((a) => a['対応ID']), ['A1', 'A2', 'A4']);
+});
+
+test('スマホに渡す修理：終わっていないものと、直近90日に受け付けた・終わったものだけ', () => {
+  const today = G.todayYmd_();
+  const p = today.split('-').map(Number);
+  const ago = (n) => { const d = new Date(p[0], p[1] - 1, p[2] - n); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  const list = [
+    { '修理ID': 'R1', '受付日': ago(5), '完了日': ago(1), 'ステータス': '完了' },
+    { '修理ID': 'R2', '受付日': ago(200), '完了日': ago(30), 'ステータス': '完了' },
+    { '修理ID': 'R3', '受付日': ago(200), '完了日': ago(150), 'ステータス': '完了' },
+    { '修理ID': 'R4', '受付日': ago(400), '完了日': '', 'ステータス': '対応中' }
+  ];
+  assert.deepEqual(plain(G.liteRepairs_(list)).map((r) => r['修理ID']), ['R1', 'R2', 'R4']);
+});
+
+test('新しい番号：覚えた番号の次を使い、手で足した大きい番号があれば列を全部読む', () => {
+  const g = G.$global, realHead = g.tableHead_;
+  const ids = ['X0001', 'X0002', 'X0003'];
+  let fullReads = 0;
+  const sheet = {
+    getLastRow: () => ids.length + 1,
+    getRange: (r, c, nr) => ({
+      getValue: () => ids[r - 2],
+      getValues: () => { fullReads++; return ids.slice(r - 2, r - 2 + (nr || 1)).map((v) => [v]); },
+      createTextFinder: (want) => ({ matchCase() { return this; }, matchEntireCell() { return this; }, findNext: () => (ids.indexOf(want) !== -1 ? { getRow: () => 0 } : null) })
+    })
+  };
+  g.tableHead_ = () => ({ sheet, headers: ['ID'] });
+  try {
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0004');       // 初めては、列を全部読む
+    assert.equal(fullReads, 1);
+    ids.push('X0004');
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0005');       // 2回めからは、覚えた番号の次（全部は読まない）
+    assert.equal(fullReads, 1);
+    ids.push('X0005', 'X0009');                                     // 手で大きい番号を足した
+    ids.splice(ids.indexOf('X0009'), 1); ids.splice(2, 0, 'X0009');  // しかも、いちばん下の行ではない
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0006');       // 空いている番号なので、そのまま使う（かぶらないことが大事）
+    ids.push('X0006', 'X0007', 'X0008');                           // ほかの方法で、まとめて足した（覚えた番号は 6 のまま）
+    assert.equal(G.nextId_('テスト', 'ID', 'X', 4), 'X0010');       // いちばん下の 8 の次は 9 だが、もうある → 全部読んで 10
+    assert.equal(fullReads, 2);
+  } finally { g.tableHead_ = realHead; }
+});
+
+test('韓国語の翻訳：ハングルの行だけを訳し、長い文の欄は原文を下に残す。訳したものを直した時は、新しい行だけ', () => {
+  const g = G.$global;
+  const calls = [];
+  g.LanguageApp = { translate: (t, from, to) => { calls.push([t, from, to]); return t.split('\n').map((l) => '訳:' + l).join('\n'); } };
+  try {
+    const data = { '内容': '日本語の行\n안녕하세요\nもう1行\n감사합니다', '件名': 'x' };
+    assert.deepEqual(plain(G.translateKorean_('activity', data, {})), ['内容']);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][1], 'ko');
+    const mark = G.TRANSLATE_MARK;
+    assert.equal(data['内容'], '日本語の行\n訳:안녕하세요\nもう1行\n訳:감사합니다\n\n' + mark + '\n안녕하세요\n감사합니다');
+    // 訳した文に、韓国語の行を足して直した
+    const again = { '内容': data['内容'].replace('もう1行', 'もう1行\n좋아요') };
+    G.translateKorean_('activity', again, {}, { '内容': data['内容'] });      // 前と同じ行（訳した後もハングルが残る行も）は訳し直さない
+    assert.equal(again['内容'], '日本語の行\n訳:안녕하세요\nもう1行\n訳:좋아요\n訳:감사합니다\n\n' + mark + '\n안녕하세요\n감사합니다\n좋아요');
+    // 設定で「いいえ」・対象外の記録・ハングルなし は何もしない
+    const off = { '内容': '안녕' };
+    assert.deepEqual(plain(G.translateKorean_('activity', off, { '韓国語を日本語に訳す': 'いいえ' })), []);
+    assert.deepEqual(plain(G.translateKorean_('customer', { '備考': '안녕' }, {})), []);
+    assert.deepEqual(plain(G.translateKorean_('repair', { '内容': 'ふつうの日本語' }, {})), []);
+  } finally { delete g.LanguageApp; }
+});
+
+test('お客様に見せる文：原文（韓国語）の所は外す', () => {
+  const mark = G.TRANSLATE_MARK;
+  assert.equal(G.withoutOriginal_('訳した文\n\n' + mark + '\n안녕'), '訳した文');
+  assert.equal(G.withoutOriginal_('ふつうの文'), 'ふつうの文');
+  assert.deepEqual(plain(G.forCustomer_({ '内容': 'a\n' + mark + '\nb', '受付日': '2026-01-01' })), { '内容': 'a', '受付日': '2026-01-01' });
+});

@@ -6,7 +6,7 @@
  * - 何を見せるかは、顧客ごとの「ポータル表示」で選ぶ（お知らせだけは、公開していれば常に出す）
  * - 公開関数：getPortalData / getPortalLayout / getPortalReport
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Portal.gs'] = '0.111.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Portal.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function pick_(row, names) {
   const out = {};
@@ -18,7 +18,7 @@ function portalFail_() {
   return appError_('portal', 'このURLは使えません。担当者に確認してください。');
 }
 
-/** トークンから顧客を引く。公開していない・停止している・トークンが違うときは例外 */
+/** トークンから顧客を引く。公開していない・停止している・トークンが違う時は例外 */
 function portalCustomer_(t) {
   if (typeof t !== 'string' || !/^[0-9a-f]{64}$/.test(t)) throw portalFail_();
   const customer = readTable_(SHEET_CUSTOMERS).rows.filter(function (r) { return r['ポータルトークン'] === t; })[0];
@@ -72,7 +72,7 @@ function getPortalData(params) {
       warrantyWarnDays: settingDays_(settings, '保証期限の手前日数', 60),
       tabs: tabs,
       canPrint: portalCanPrint_(customer),
-      // Tips と Windows情報は、公開しているお客様ページすべてのいちばん上に出す（Windows情報は「顧客に見せる」にしたものだけ）
+      // Tips と Windows情報は、公開しているお客様ページ全ての一番上に出す（Windows情報は「顧客に見せる」にしたものだけ）
       tips: tipsForClient_(settings),
       wininfo: recentWinInfo_(readTable_(SHEET_WININFO).rows, today, true).map(function (r) { return pick_(r, ['日付', '種類', '重要度', 'タイトル', '内容', 'リンク']); })
     };
@@ -111,7 +111,7 @@ function getPortalData(params) {
     if (tabs.indexOf('対応') !== -1) {
       out.activities = sortActivities_(readTable_(SHEET_ACTIVITIES).rows.filter(mine))
         .slice(0, PORTAL_ACTIVITY_LIMIT)
-        .map(function (a) { return pick_(a, ['受付日', '対応種別', 'インシデント種別', 'ステータス', '内容']); });
+        .map(function (a) { return forCustomer_(pick_(a, ['受付日', '対応種別', 'インシデント種別', 'ステータス', '内容'])); });      // 原文（韓国語）は見せない（v0.140.0）
     }
     if (tabs.indexOf('レイアウト') !== -1) {
       out.layouts = layoutsOf_(id).map(function (r) { return { id: r['レイアウトID'], name: r['名前'] }; });

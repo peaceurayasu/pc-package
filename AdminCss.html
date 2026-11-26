@@ -1,5 +1,5 @@
 <style>
-:root { --file-version: "@file-version 0.127.3"; }
+:root { --file-version: "@file-version 0.140.0"; }
 /* 配置の考え方：上に固定の帯（名前・画面の切り替え・利用者）、その下は1本の列。一覧は表、編集は重ねた窓。 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
@@ -333,7 +333,7 @@ td.clamp > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orien
 .checks label { display: flex; gap: 6px; align-items: center; }
 .msg { margin: 0; padding: 9px 12px; border-radius: 6px; background: var(--danger-soft); color: var(--danger); white-space: pre-wrap; }
 .note { margin: 0; color: var(--muted); font-size: 13px; }
-/* Tips（いちばん上の1行） */
+/* Tips（一番上の1行） */
 .tipsbar { display: flex; gap: 10px; align-items: center; background: var(--brand-soft); border: 1px solid #c9daf0; border-radius: var(--radius); padding: 4px 6px 4px 10px; font-size: 13px; }
 .tipsbar .tip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tipsbar .btn.small { padding: 2px 8px; }
@@ -686,6 +686,11 @@ details.rest[open] > summary { margin-bottom: 10px; }
 
 #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 9px 18px; border-radius: 999px; z-index: 80; max-width: calc(100% - 32px); }
 #toast.err { background: var(--danger); }
+#saveChip { position: fixed; right: 16px; bottom: 24px; z-index: 85; display: flex; align-items: center; gap: 8px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0,0,0,.15); padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; pointer-events: none; }
+#saveChip[hidden] { display: none; }
+#saveChip.wait { background: #fff7e0; border-color: #e7c15a; color: #6b4e00; }
+#saveChip .blspin { width: 14px !important; height: 14px !important; border-width: 2px !important; }
+@media (max-width: 760px) { #saveChip { left: 50%; right: auto; transform: translateX(-50%); top: calc(8px + env(safe-area-inset-top, 0px)); bottom: auto; } }
 #busy { position: fixed; top: 0; left: 0; right: 0; height: 3px; background: var(--brand); z-index: 90; animation: busy 1.1s ease-in-out infinite; transform-origin: left; }
 @keyframes busy { 0% { transform: scaleX(.05); } 50% { transform: scaleX(.7); } 100% { transform: scaleX(1); opacity: .2; } }
 @media (prefers-reduced-motion: reduce) { #busy { animation: none; } }
@@ -706,6 +711,101 @@ details.rest[open] > summary { margin-bottom: 10px; }
 .mmonth { border-color: #c9daf0; }
 .mmonth h2 { background: var(--brand-soft); }
 .mtile.warn b { color: var(--danger); }
+/* v0.130.0：顧客の画面のタブ。よく使うもの以外は「その他」の中 */
+.tabs.ctabs { overflow: visible; flex-wrap: wrap; }
+.tabmore { position: relative; }
+.tabmore > summary { list-style: none; cursor: pointer; padding: 10px 14px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabmore > summary::-webkit-details-marker { display: none; }
+.tabmore.on > summary { color: var(--brand); border-bottom-color: var(--brand); font-weight: 700; }
+.tabmore .tabpop { position: absolute; z-index: 20; top: 100%; left: 0; min-width: 180px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(20, 30, 42, .14); padding: 6px; display: flex; flex-direction: column; }
+.tabmore .tabpop button { text-align: left; border: 0; background: none; padding: 8px 12px; border-radius: 6px; white-space: nowrap; }
+.tabmore .tabpop button:hover { background: var(--brand-soft); }
+.tabmore .tabpop button[aria-selected="true"] { color: var(--brand); font-weight: 700; }
+/* v0.130.0：対応・修理の集計は、普段は1行（押すと開く） */
+.statfold > h2 { cursor: pointer; }
+.statfold > h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
+.statfold .sfbtn { font-size: 13px; font-weight: 700; color: var(--brand); white-space: nowrap; }
+.statfold .sfbody { padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 14px; }
+.statfold:not(.open) > h2 { border-bottom: 0; }
+/* v0.134.0：スマホの要対応（1行の帯 → 下から一覧） */
+.palertbar { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid #ecd5a6; border-left: 5px solid var(--warn); background: var(--warn-soft); border-radius: 12px; padding: 10px 14px; }
+.palertbar.hot { border-color: #f0c2bd; border-left-color: var(--danger); background: var(--danger-soft); }
+.palertbar .pab-ico { font-size: 20px; }
+.palertbar .pab-txt { flex: 1; display: flex; flex-direction: column; line-height: 1.35; }
+.palertbar .pab-txt b { font-size: 15px; color: var(--ink); }
+.palertbar .pab-txt span { font-size: 12px; color: var(--danger); font-weight: 700; }
+.palertbar .pab-go { font-size: 13px; font-weight: 700; color: var(--brand); white-space: nowrap; }
+.palertnone { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--ok-soft); color: var(--ok); font-size: 13px; font-weight: 700; }
+.pacats { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; flex: none; }
+.palist, .dialog.pasheet > .body > .empty { flex: none; }
+.pacats button { white-space: nowrap; }
+.palist { display: flex; flex-direction: column; gap: 10px; }
+/* シートは画面の86%まで。中身はシートの中でスクロール（上にはみ出さないように） */
+.dialog.pasheet { max-height: 86vh; max-height: 86dvh; min-height: 0 !important; display: flex; flex-direction: column; }
+.dialog.pasheet > header { flex: none; }
+.dialog.pasheet > .body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.paitem { border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; background: var(--panel); }
+.paitem.hot { border-left-color: var(--danger); }
+.paitem .pai-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.paitem .pai-cust { font-size: 12px; color: var(--muted); }
+.paitem b { font-size: 15px; }
+.paitem .pai-detail { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.paitem .pai-btns { display: flex; gap: 8px; margin-top: 4px; }
+.paitem .pai-btns .btn { flex: 1; min-height: 38px; justify-content: center; }
+/* v0.134.0：一覧の「完了」ボタン */
+.qdone { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 10px; border: 1px solid var(--ok); border-radius: 999px; background: var(--panel); color: var(--ok); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; line-height: 1.6; }
+.qdone:hover { background: var(--ok-soft); }
+/* v0.140.0：放置（未完了で、しばらく動きが無いもの） */
+.pill.stale { background: #fff1d6; color: #8a5a00; border: 1px solid #f0c674; font-weight: 600; }
+tr:has(.pill.stale) > td { background: #fffaf0; }
+tr:has(.pill.stale) > td:first-child { box-shadow: inset 4px 0 0 #e0a63a; }
+.plist button:has(.pill.stale) { box-shadow: inset 4px 0 0 #e0a63a; background: #fffaf0; }
+.workbtns { display: flex; gap: 8px; margin-top: 6px; }
+.workbtns .workbtn { flex: 1; }
+.recentline { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 10px 14px; margin: 0 0 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; font-size: 13px; }
+.recentline b { font-weight: 700; margin-right: 4px; color: var(--muted); }
+.recentline .rl-item { display: inline-flex; gap: 4px; align-items: baseline; min-width: 0; }
+.recentline .rl-text { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28em; }
+.recentline button.rl-item { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+.recentline button.rl-item:hover .rl-text { text-decoration: underline; }
+#printArea .pill.stale { display: none; }
+#printArea .qdone { display: none; }
+/* v0.133.0：PC の入力画面（① 顧客 → ② 記録するもの） */
+.hstep > h2 { display: flex; align-items: center; gap: 10px; }
+.hstep .hnum { width: 24px; height: 24px; border-radius: 50%; background: var(--brand); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; flex: none; }
+.hstep h2 .sub { font-weight: 400; color: var(--muted); font-size: 13px; }
+.hstep .hpad { display: flex; flex-direction: column; gap: 12px; }
+.hcustchips button { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 6px 14px; }
+.hcustchips button:hover { border-color: var(--brand); background: var(--brand-soft); }
+.hcustsel { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--brand); border-radius: 10px; background: var(--brand-soft); }
+.hcustsel .hcustname { font-weight: 700; font-size: 16px; }
+.hgrid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.hgrid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.hbtn.big { flex-direction: row; align-items: center; gap: 16px; min-height: 92px; padding: 16px 18px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-left: 5px solid var(--brand); }
+/* v0.134.0：塗りつぶしをやめて、白地に色のアクセント（目立ちすぎないように） */
+.hbtn.big .hico { width: 52px; height: 52px; border-radius: 12px; background: var(--brand-soft); display: inline-flex; align-items: center; justify-content: center; font-size: 26px; line-height: 1; flex: none; }
+.hbtn.big .htxt { display: flex; flex-direction: column; gap: 4px; }
+.hbtn.big b { font-size: 17px; color: var(--ink); }
+.hbtn.big .htxt span { color: var(--muted); }
+.hbtn.small { flex-direction: row; align-items: center; gap: 10px; min-height: 58px; padding: 12px 14px; }
+.hbtn.small .hico { font-size: 22px; line-height: 1; }
+.hbtn.small b { font-size: 15px; }
+.hbtn:not(.primary):hover { border-color: var(--brand); background: var(--brand-soft); }
+.hbtn.primary:hover { filter: brightness(1.08); }
+/* v0.130.0：日付・日時の欄（数字だけで打てる文字の欄＋カレンダーのボタン） */
+.datefield { position: relative; display: flex; gap: 6px; align-items: center; }
+.datefield input[data-datefmt] { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
+.datefield input.bad { border-color: var(--danger); background: var(--danger-soft); }
+.datefield .datepickwrap { position: relative; flex: none; display: inline-flex; }
+.datefield .datepick { flex: none; padding: 4px 8px; pointer-events: none; }
+/* 透明なカレンダーの欄を📅に重ね、カレンダーのボタンを欄いっぱいに広げる（押すとカレンダーが開く） */
+.datefield .datepicker { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; padding: 0; margin: 0; min-height: 0; font-size: 16px; }
+.datefield .datepicker::-webkit-calendar-picker-indicator { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; cursor: pointer; }
+.datefield .datepickwrap:hover .datepick { background: var(--brand-soft); }
+/* v0.129.0：未完了のタイルは押せる（一覧の窓が開く） */
+button.mtile-btn { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+button.mtile-btn:hover { border-color: var(--brand); background: var(--brand-soft); }
+.mtile .mgo { margin-top: 4px; font-size: 12px; font-weight: 700; color: var(--brand); }
 .mh3 { font-size: 14px; margin: 14px 0 6px; }
 .mh3 .sub { font-weight: 400; color: var(--muted); font-size: 12px; margin-left: 6px; }
 .mlast { border-left: 3px solid var(--brand); background: var(--panel); padding: 8px 12px; margin-bottom: 8px; cursor: pointer; line-height: 1.6; }
@@ -769,7 +869,7 @@ body.mtgfull main { max-width: none; font-size: 17px; }
 body.mtgfull .mtile b { font-size: 46px; }
 body.mtgfull .mtbl { font-size: 17px; }
 /* スマホ：ミーティングの表は、1行を1枚のカードにする（横に切れて読めなかった。v0.107.0）。
-   はじめの2つ（日付・顧客など）を1行目に並べ、残りは下に折り返す。ランキングと予定表は、表のまま */
+   初めの2つ（日付・顧客など）を1行目に並べ、残りは下に折り返す。ランキングと予定表は、表のまま */
 @media (max-width: 760px) {
   .mtbl:not(.mrank):not(.mcaltbl) { display: block; width: 100%; }
   .mtbl:not(.mrank):not(.mcaltbl) thead { display: none; }
@@ -924,6 +1024,10 @@ tbody tr:hover td { background: rgba(217,167,59,.10); }
 .panel > h2 .ico { margin-right: -2px; font-size: .95em; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
 .nav button[data-view]::before { margin-right: 5px; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; font-size: .95em; }
 .nav button[data-view="customers"]::before { content: "🖥"; }
+/* v0.134.0：「入力」は、アイコンと色で目立たせる */
+.nav button[data-view="home"]::before { content: "✏️"; }
+.top .nav button[data-view="home"] { background: rgba(217, 167, 59, .22); border-radius: 8px; color: #fff; font-weight: 700; margin-right: 6px; }
+.top .nav button[data-view="home"]:hover { background: rgba(217, 167, 59, .34); }
 .nav button[data-view="activities"]::before { content: "🛠"; }
 .nav button[data-view="repairs"]::before { content: "🔧"; }
 .nav button[data-view="meeting"]::before { content: "👥"; }
@@ -950,13 +1054,13 @@ tbody tr:hover td { background: rgba(217,167,59,.10); }
 .panel.fold > .fsum.static, .panel > .fsum.static { display: flex; }
 .panel > .fsum { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 16px 12px; }
 .panel > .fsum:empty, .panel > .fsum > .fchips:empty { display: none; }
-/* v0.115.0：待ちが長いときの鍵（保存中…など） */
+/* v0.115.0：待ちが長い時の鍵（保存中…など） */
 #busyLock { position: fixed; inset: 0; z-index: 1000; background: rgba(15, 23, 42, .28); display: flex; align-items: center; justify-content: center; cursor: progress; }
 #busyLock[hidden] { display: none; }
 #busyLock .blbox { display: flex; align-items: center; gap: 12px; background: var(--card, #fff); color: var(--text, #111); padding: 14px 22px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.25); font-weight: 600; }
-#busyLock .blspin { width: 20px; height: 20px; border: 3px solid rgba(127,127,127,.3); border-top-color: var(--brand); border-radius: 50%; animation: blspin .8s linear infinite; }
+#busyLock .blspin, #saveChip .blspin { width: 20px; height: 20px; border: 3px solid rgba(127,127,127,.3); border-top-color: var(--brand); border-radius: 50%; animation: blspin .8s linear infinite; }
 @keyframes blspin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { #busyLock .blspin { animation: none; } }
+@media (prefers-reduced-motion: reduce) { #busyLock .blspin, #saveChip .blspin { animation: none; } }
 .voicebtn { margin-top: 4px; }
 .voicebtn.on { background: var(--danger); color: #fff; border-color: var(--danger); }
 #licBulk textarea { width: 100%; font-family: ui-monospace, Consolas, monospace; }
@@ -1047,4 +1151,70 @@ table.pbare > thead > tr > td, table.pbare > tfoot > tr > td, table.pbare > tbod
   #printArea .yr-report .yr-sec h2 { break-after: avoid; page-break-after: avoid; }
   #printArea .yr-report .yr-tbl thead { display: table-header-group; }
 }
+/* ===========================================================================
+   v0.131.0 見た目の調整（PC・スマホ）
+   業務アプリでよくある作り（上の帯は1段・タブは横に流す・見出しの操作は小さく・一覧は表でも見られる）に寄せた
+   =========================================================================== */
+/* ---- 上の帯：1段（更新と、名前のメニューだけ） ---- */
+.topact { display: flex; align-items: center; gap: 8px; flex: none; }
+.top .topact .btn { background: rgba(255,255,255,.14); border-color: transparent; color: #fff; }
+.top .topact .btn:hover { background: rgba(255,255,255,.24); }
+.acct-btn { display: inline-flex; align-items: center; gap: 8px; padding: 3px 12px 3px 4px; border-radius: 999px; }
+.acct-btn .w-msg { color: #fff; font-weight: 600; font-size: 13px; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-btn .caret { font-size: 11px; opacity: .8; }
+.avatar { width: 26px; height: 26px; border-radius: 50%; background: var(--gold); color: var(--forest-dark); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; }
+.top .acct-menu { right: 0; left: auto; min-width: 250px; }
+.top .acct-menu .btn { color: var(--ink); background: transparent; }
+.top .acct-menu .btn:hover { background: var(--brand-soft); }
+.acct-info { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line-soft); font-size: 12px; line-height: 1.5; color: var(--muted); }
+.acct-info:empty, .acct-info span:empty { display: none; }
+.acct-info #timingSlot { font-size: 11px; opacity: 1; }
+#welcomeLogout { color: var(--danger) !important; }
+.welcome[hidden] { display: none !important; }
+/* 「＋ 記録」は、上のメニューの「入力」と同じなので、帯からは外す（メニューが重ならないように） */
+.top .user { display: none; }
+.top .nav { overflow: visible; }
+
+/* ---- 表：見出しを少しはっきり・行の高さをそろえる ---- */
+.panel table th { letter-spacing: .02em; }
+.panel table tbody tr { transition: background .12s; }
+
+/* ---- 一覧の切り替え（カード／表） ---- */
+.viewswitch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.viewswitch button { border: 0; background: var(--panel); padding: 5px 12px; font-size: 13px; color: var(--muted); }
+.viewswitch button + button { border-left: 1px solid var(--line); }
+.viewswitch button[aria-pressed="true"] { background: var(--brand); color: #fff; font-weight: 700; }
+.ctable td.cname b { display: block; }
+.ctable td .minor { display: block; }
+.ctable td.num { text-align: left; }
+
+/* ---- スマホ ---- */
+@media (max-width: 760px) {
+  /* 上の帯：会社名・更新・名前（丸）・メニュー の1段 */
+  .top-row { flex-wrap: nowrap; gap: 8px; min-height: 52px; }
+  .top .brand { flex: 1; font-size: 16px; padding-top: 0; }
+  .topact { order: 2; gap: 6px; }
+  #topMenu { order: 3; }
+  .topact .lbl, .acct-btn .w-msg, .acct-btn .caret, #topMenu .lbl { display: none; }
+  #topMenu { font-size: 18px; padding: 4px 12px; min-height: 34px; }
+  .acct-btn { padding: 3px; }
+  .top .topact .btn { min-height: 34px; }
+  .acct-info #lastLogin { display: block !important; }
+  .top .acct-menu { position: fixed; top: 58px; right: 8px; left: 8px; min-width: 0; }
+  /* 見出し：マニュアルは📖だけにして、見出しと同じ行に */
+  .head { gap: 8px; }
+  .head h1 { flex: 1 1 160px; font-size: 21px; }
+  .head [data-act="help"] { padding: 6px 9px; min-height: 34px; }
+  .head [data-act="help"] .lbl { display: none; }
+  .head .btn { min-height: 36px; }
+  /* 顧客の画面のタブ：折り返さず、横に流す。「その他」は下から出す */
+  .tabs.ctabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs.ctabs::-webkit-scrollbar { display: none; }
+  .tabmore .tabpop { position: fixed; top: auto; bottom: 86px; left: 12px; right: 12px; z-index: 60; padding: 8px; }
+  .tabmore .tabpop button { padding: 12px 14px; font-size: 15px; }
+  .viewswitch { display: none; }
+}
+/* 期間・予定の表の中の日付の欄は、幅を決める */
+.period .per-nav .datefield { width: 175px; flex: none; }
+td > .datefield { min-width: 160px; }
 </style>

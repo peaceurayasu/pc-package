@@ -5,7 +5,7 @@
  * 最初に SpreadsheetApp.getUi() を呼ぶ。ウェブアプリ経由で第三者が呼んでも、そこで止まって何も起きない。
  * 仮パスワードは画面のダイアログにだけ出し、戻り値では返さない。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Setup.gs'] = '0.125.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Setup.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
@@ -18,18 +18,19 @@ function onOpen() {
     .addSeparator()
     .addItem('起こしておく（始業時間のあいだ30分ごと）を設定', 'setupWarmTrigger')
     .addItem('起こしておくのをやめる', 'removeWarmTrigger')
-    .addItem('控えの状態を調べる（遅いとき）', 'cacheReport')
+    .addItem('控えの状態を調べる（遅い時）', 'cacheReport')
     .addItem('カレンダーを使えるようにする（承認）', 'authorizeCalendar')
     .addItem('RSSを使えるようにする（外部接続の承認）', 'authorizeRss')
     .addSeparator()
     .addItem('スタッフのパスワードを再設定', 'resetPasswordFromMenu')
     .addSeparator()
-    .addItem('バックアップをいま作る', 'backupNow')
+    .addItem('バックアップを今作る', 'backupNow')
     .addItem('毎日のバックアップを設定（夜中の3時台）', 'setupBackupTrigger')
     .addItem('毎日のバックアップをやめる', 'removeBackupTrigger')
     .addItem('古い変更履歴を別のシートへ移す', 'archiveOldAudit')
     .addItem('古い対応履歴を別のシートへ移す（1年より前の完了分）', 'archiveOldActivities')
-    .addToUi();  // 前のシステムからの取り込み（Migrate.gs を入れてあるときだけ、メニューを出す）
+    .addItem('使っていないシートを片づける（バックアップを作ってから消す）', 'cleanupUnusedSheets')
+    .addToUi();  // 前のシステムからの取り込み（Migrate.gs を入れてある時だけ、メニューを出す）
   if (typeof migrationMenu_ === 'function') migrationMenu_(ui);
 }
 
@@ -86,7 +87,7 @@ function setupCore_() {
     } else {
       const lastCol = sheet.getLastColumn();
       const have = lastCol ? sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); }) : [];
-      // v0.125.0：名前を変えた列は、見出しを書き換える（新しい名前の列がまだ無いときだけ）
+      // v0.125.0：名前を変えた列は、見出しを書き換える（新しい名前の列がまだ無い時だけ）
       const ren = HEADER_RENAMES[name] || {};
       Object.keys(ren).forEach(function (from) {
         const i = have.indexOf(from);
@@ -117,7 +118,7 @@ function setupCore_() {
   // v0.81.0 の「商談」シートがあれば、開発案件へ移す（1回だけ。商談シートは消さずに残す）
   migrateDealsToProjects_(ss, report);
 
-  // 選択肢：その区分に1件も無いときだけ、最初の値を入れる
+  // 選択肢：その区分に1件も無い時だけ、最初の値を入れる
   const optionRows = readTable_(SHEET_OPTIONS).rows;
   const seeds = [];
   OPTION_CATEGORIES.forEach(function (cat) {
@@ -129,7 +130,7 @@ function setupCore_() {
   });
   appendRecords_(SHEET_OPTIONS, seeds);
 
-  // Tips：1件も無いときだけ、最初の文を入れる（そのあとは、RSS と新しい文の追加で足される。シートで直してもよい）
+  // Tips：1件も無い時だけ、最初の文を入れる（そのあとは、RSS と新しい文の追加で足される。シートで直してもよい）
   if (!readTable_(SHEET_TIPS).rows.length) {
     const tipNow = nowStamp_();
     appendRecords_(SHEET_TIPS, WINDOWS_TIPS.map(function (t, i) {
@@ -140,14 +141,16 @@ function setupCore_() {
     CacheService.getScriptCache().remove(TIPS_CACHE_KEY);
   }
 
-  // スタッフ：1人もいないときだけ、最初の管理者を作る
+  // スタッフ：1人もいない時だけ、最初の管理者を作る
   if (!readTable_(SHEET_STAFF).rows.length) {
     const password = randomPassword_(10);
+    const hash = makePasswordHash_(password);
     const now = nowStamp_();
     appendRecord_(SHEET_STAFF, {
-      'スタッフID': 'admin', '表示名': '管理者', 'パスワードハッシュ': makePasswordHash_(password),
+      'スタッフID': 'admin', '表示名': '管理者', 'パスワードハッシュ': hash,
       '権限': ROLE_ADMIN, '有効': YES, '登録日時': now, '更新日時': now
     });
+    markTempPassword_('admin', hash);
     report.adminPassword = password;
   }
 
@@ -178,7 +181,7 @@ function formatSheet_(sheet, name) {
     for (let i = 0; i < rows; i++) formats.push(formatRow);
     sheet.getRange(2, 1, rows, lastCol).setNumberFormats(formats);
   } else {
-    // お客さんが足した列があるときは、その列の書式には触らない
+    // お客さんが足した列がある時は、その列の書式には触らない
     headers.forEach(function (h, j) {
       if (types[h]) sheet.getRange(2, j + 1, rows, 1).setNumberFormat(numberFormat_(types[h]));
     });
@@ -199,7 +202,9 @@ function resetPasswordFromMenu() {
     const staff = findStaff_(id);
     if (!staff) return;
     password = randomPassword_(10);
-    updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': makePasswordHash_(password), '有効': YES, '更新日時': nowStamp_() });
+    const hash = makePasswordHash_(password);
+    updateRecord_(SHEET_STAFF, staff._row, { 'パスワードハッシュ': hash, '有効': YES, '更新日時': nowStamp_() });
+    markTempPassword_(staff['スタッフID'], hash);
     logAudit_('パスワード再設定', staff['スタッフID'], '', 'パスワード', '', '（スプレッドシートのメニューから）', 'メニュー操作');
   });
   if (!password) { ui.alert('そのスタッフIDは見つかりませんでした。'); return; }
@@ -210,7 +215,7 @@ function resetPasswordFromMenu() {
 // ---------------------------------------------------------------------------
 // サンプルデータ
 // ---------------------------------------------------------------------------
-/** メニュー：サンプルデータ。顧客が1件でもあるときは入れない（既存のデータに混ぜない） */
+/** メニュー：サンプルデータ。顧客が1件でもある時は入れない（既存のデータに混ぜない） */
 function insertSampleData() {
   const ui = SpreadsheetApp.getUi();
   if (!isSetupDone_()) { ui.alert('先に初期設定を実行してください。'); return; }
@@ -465,13 +470,13 @@ function migrateDealsToProjects_(ss, report) {
 // ---------------------------------------------------------------------------
 // バックアップ（v0.97.0）
 // ---------------------------------------------------------------------------
-/** いまの時刻（バックアップの名前用。テストで差し替えられるよう、関数にしてある） */
+/** 今の時刻（バックアップの名前用。テストで差し替えられるよう、関数にしてある） */
 function backupNowDate_() { return new Date(); }
 
 /**
  * このスプレッドシートのコピーを、同じ場所の「○○_バックアップ」フォルダーに作る。
  * 新しい順に BACKUP_KEEP 件を残し、それより古いものはごみ箱へ移す（ごみ箱からは戻せる）。
- * @param {boolean} manual true … いま作る（同じ日でも作る）。false … 毎日の自動（その日のぶんがあれば作らない）
+ * @param {boolean} manual true … 今作る（同じ日でも作る）。false … 毎日の自動（その日のぶんがあれば作らない）
  * @return {{folder:string, created:string, kept:number, trashed:Array<string>}}
  */
 function backupCore_(manual) {
@@ -495,7 +500,7 @@ function backupCore_(manual) {
   let created = '';
   if (manual || !files.some(function (x) { return x.name.indexOf(prefix + today) === 0; })) {
     created = prefix + Utilities.formatDate(now, tz, manual ? 'yyyyMMdd_HHmm' : 'yyyyMMdd');
-    // 同じ名前（同じ分に2回）があるときは、秒を足して区別する
+    // 同じ名前（同じ分に2回）がある時は、秒を足して区別する
     if (files.some(function (x) { return x.name === created; })) created += Utilities.formatDate(now, tz, 'ss');
     files.push({ file: ssFile.makeCopy(created, folder), name: created });
   }
@@ -505,14 +510,14 @@ function backupCore_(manual) {
   return { folder: folderName, created: created, kept: Math.min(files.length, BACKUP_KEEP), trashed: old.map(function (x) { return x.name; }) };
 }
 
-/** バックアップの結果を覚える（失敗したときに気づけるように） */
+/** バックアップの結果を覚える（失敗した時に気づけるように） */
 function saveBackupStatus_(status) {
   try { PropertiesService.getScriptProperties().setProperty(BACKUP_STATUS_PROPERTY, JSON.stringify(status)); } catch (e) { console.warn('バックアップの結果を覚えられませんでした: ' + e); }
 }
 
 /** トリガーから毎日呼ばれる。失敗したら、通知先のメールへ知らせる */
 function runDailyBackup(e) {
-  // 本物のトリガーから呼ばれたときだけ動く（ウェブアプリ経由で第三者が呼んでも、何もしない。runDailyAlerts と同じ）
+  // 本物のトリガーから呼ばれた時だけ動く（ウェブアプリ経由で第三者が呼んでも、何もしない。runDailyAlerts と同じ）
   const uid = e && typeof e.triggerUid === 'string' ? e.triggerUid : '';
   const real = !!uid && ScriptApp.getProjectTriggers().some(function (t) {
     return t.getHandlerFunction() === BACKUP_TRIGGER_FUNCTION && String(t.getUniqueId()) === uid;
@@ -528,12 +533,12 @@ function runDailyBackup(e) {
     saveBackupStatus_({ at: nowStamp_(), ok: false, name: '', message: String(e && e.message ? e.message : e) });
     try {
       const to = alertRecipients_(getSettings_());
-      if (to.length) MailApp.sendEmail(to.join(','), '【' + APP_NAME + '】バックアップに失敗しました', '毎日のバックアップが失敗しました。\n' + String(e && e.message ? e.message : e) + '\n\nスプレッドシートのメニュー「' + APP_NAME + '」→「バックアップをいま作る」を試してください。');
+      if (to.length) MailApp.sendEmail(to.join(','), '【' + APP_NAME + '】バックアップに失敗しました', '毎日のバックアップが失敗しました。\n' + String(e && e.message ? e.message : e) + '\n\nスプレッドシートのメニュー「' + APP_NAME + '」→「バックアップを今作る」を試してください。');
     } catch (e2) { console.warn('失敗の知らせを送れませんでした: ' + e2); }
   }
 }
 
-/** メニュー：バックアップをいま作る */
+/** メニュー：バックアップを今作る */
 function backupNow() {
   const ui = SpreadsheetApp.getUi();
   const answer = ui.alert('バックアップ', 'このスプレッドシートのコピーを、同じ場所の「○○_バックアップ」フォルダーに作ります。\n新しい' + BACKUP_KEEP + '件を残し、それより古いものはごみ箱へ移します。\n\n作りますか？', ui.ButtonSet.YES_NO);
@@ -562,14 +567,14 @@ function setupBackupTrigger() {
   if (!isSetupDone_()) { ui.alert('先に初期設定を実行してください。'); return; }
   deleteBackupTriggers_();
   ScriptApp.newTrigger(BACKUP_TRIGGER_FUNCTION).timeBased().everyDays(1).atHour(BACKUP_HOUR).create();
-  ui.alert('毎日 ' + BACKUP_HOUR + ' 時台に、バックアップを作るようにしました。\n新しい' + BACKUP_KEEP + '日ぶんを残します。\n\n（Googleドライブへの許可を求められたときは、許可してください。失敗したときは、通知先のメールに知らせます）');
+  ui.alert('毎日 ' + BACKUP_HOUR + ' 時台に、バックアップを作るようにしました。\n新しい' + BACKUP_KEEP + '日ぶんを残します。\n\n（Googleドライブへの許可を求められた時は、許可してください。失敗した時は、通知先のメールに知らせます）');
 }
 
 /** メニュー：毎日のバックアップをやめる */
 function removeBackupTrigger() {
   const ui = SpreadsheetApp.getUi();
   const n = deleteBackupTriggers_();
-  ui.alert(n ? '毎日のバックアップをやめました。（いままでのバックアップは、そのまま残ります）' : '毎日のバックアップは設定されていません。');
+  ui.alert(n ? '毎日のバックアップをやめました。（今までのバックアップは、そのまま残ります）' : '毎日のバックアップは設定されていません。');
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +632,7 @@ function archiveAuditCore_(cutoff) {
 // 古い対応履歴を「対応履歴_退避」へ移す（v0.112.0）
 //   対象：受付日が ACTIVITY_KEEP_DAYS 日より前で、完了したもの（未完了は、古くても移さない）。
 //   移したものも、顧客ページの「対応」と、期間を指定した対応の一覧には出る（listActivities が退避シートも読む）。
-//   移したものを直すと、自動で元のシートに戻してから保存する。ふだんの読み込み（最初の画面・要対応・更新）は、元のシートだけ読むので軽くなる。
+//   移したものを直すと、自動で元のシートに戻してから保存する。普段の読み込み（最初の画面・要対応・更新）は、元のシートだけ読むので軽くなる。
 // ---------------------------------------------------------------------------
 function activityArchiveTargets_(cutoff) {
   return readTable_(SHEET_ACTIVITIES).rows.filter(function (r) {
@@ -688,7 +693,7 @@ function archiveOldActivities() {
   const cutoff = addDays_(todayYmd_(), -ACTIVITY_KEEP_DAYS);
   const n = activityArchiveTargets_(cutoff).length;
   if (!n) { ui.alert('移す対応履歴はありません。（受付日が ' + cutoff + ' より前の、完了したものが対象です）'); return; }
-  const answer = ui.alert('古い対応履歴を移す', '受付日が ' + cutoff + ' より前の、完了した対応履歴 ' + n + '件を、「' + SHEET_ACTIVITIES_ARCHIVE + '」シートへ移します。\n消えるわけではありません。顧客ページの「対応」には、これまでどおり出ます。\nふだんの読み込みが軽くなります。\n\n移しますか？', ui.ButtonSet.YES_NO);
+  const answer = ui.alert('古い対応履歴を移す', '受付日が ' + cutoff + ' より前の、完了した対応履歴 ' + n + '件を、「' + SHEET_ACTIVITIES_ARCHIVE + '」シートへ移します。\n消えるわけではありません。顧客ページの「対応」には、これまでどおり出ます。\n普段の読み込みが軽くなります。\n\n移しますか？', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return;
   try {
     const moved = withLock_(function () { return archiveActivitiesCore_(cutoff); });
@@ -722,7 +727,7 @@ function archivedActivities_() {
   return out;
 }
 
-/** 退避した対応を、元のシートに戻す（直す・消すときに呼ぶ。withLock_ の中）。戻せたら true */
+/** 退避した対応を、元のシートに戻す（直す・消す時に呼ぶ。withLock_ の中）。戻せたら true */
 function restoreArchivedActivity_(id) {
   const arch = getSs_().getSheetByName(SHEET_ACTIVITIES_ARCHIVE);
   if (!arch || arch.getLastRow() < 2) return false;
@@ -767,4 +772,92 @@ function archiveOldAudit() {
     console.error('変更履歴を移せませんでした: ' + (e && e.stack ? e.stack : e));
     ui.alert('移せませんでした。\n' + String(e && e.message ? e.message : e));
   }
+}
+
+// ---------------------------------------------------------------------------
+// 使っていないシートを片づける（v0.136.0）
+// ---------------------------------------------------------------------------
+/**
+ * アプリが使っていないシートを、2つに分けて返す。
+ *   safe   … アプリが前に作って、今は使わないもの（商談・移行レポート）と、空のシート
+ *   others … アプリは使っていないが、中身があるもの（自分で作ったシートかもしれない）
+ * 使っているシート（SHEET_ORDER）と、退避のシート（変更履歴_退避・対応履歴_退避。顧客の画面から読む）は入れない。
+ */
+function unusedSheets_() {
+  const ss = getSs_();
+  const keep = {};
+  SHEET_ORDER.forEach(function (n) { keep[n] = true; });
+  keep[SHEET_AUDIT_ARCHIVE] = true;
+  keep[SHEET_ACTIVITIES_ARCHIVE] = true;
+  const out = { safe: [], others: [], blocked: [] };
+  ss.getSheets().forEach(function (sh) {
+    const name = sh.getName();
+    if (keep[name]) return;
+    const rows = Math.max(0, sh.getLastRow() - 1);
+    const item = { name: name, rows: rows };
+    if (name === SHEET_DEALS) {
+      // v0.82.0 で開発案件にまとめた古いシート。全部が開発案件へ移っていれば消してよい
+      const moved = {};
+      if (ss.getSheetByName(SHEET_PROJECTS)) readTable_(SHEET_PROJECTS).rows.forEach(function (pj) { if (pj['商談ID']) moved[String(pj['商談ID'])] = true; });
+      const left = readTable_(SHEET_DEALS).rows.filter(function (d) { return d['商談ID'] && !moved[String(d['商談ID'])]; }).length;
+      if (left) { item.note = '開発案件へまだ移していない商談が ' + left + '件あります。先に「初期設定」を実行してください'; out.blocked.push(item); return; }
+      item.note = '開発案件にまとめた古いシート';
+      out.safe.push(item);
+      return;
+    }
+    if (typeof MIG_REPORT_SHEET !== 'undefined' && name === MIG_REPORT_SHEET) { item.note = '前のシステムから取り込んだ時の記録'; out.safe.push(item); return; }
+    if (sh.getLastRow() <= 1 && sh.getLastColumn() <= 1 && !String(sh.getRange(1, 1).getValue()).trim()) { item.note = '空のシート'; out.safe.push(item); return; }
+    item.note = rows + '行';
+    out.others.push(item);
+  });
+  return out;
+}
+
+/** メニュー：使っていないシートを片づける。消す前に、スプレッドシートのバックアップを作る（作れなければ消さない） */
+function cleanupUnusedSheets() {
+  const ui = SpreadsheetApp.getUi();
+  if (!isSetupDone_()) { ui.alert('先に初期設定を実行してください。'); return; }
+  const found = unusedSheets_();
+  const line = function (it) { return '・' + it.name + '（' + it.note + '）'; };
+  const blockedNote = found.blocked.length ? '\n\n消せないもの：\n' + found.blocked.map(line).join('\n') : '';
+  if (!found.safe.length && !found.others.length) { ui.alert('使っていないシートはありません。' + blockedNote); return; }
+  let names = [];
+  if (found.safe.length) {
+    const a = ui.alert('使っていないシートを片づける',
+      'アプリが使っていないシートです。消す前に、スプレッドシートのバックアップを作ります。\n\n' + found.safe.map(line).join('\n') + blockedNote + '\n\n消しますか？',
+      ui.ButtonSet.YES_NO);
+    if (a === ui.Button.YES) names = names.concat(found.safe.map(function (it) { return it.name; }));
+  }
+  if (found.others.length) {
+    const b = ui.alert('他のシート',
+      'アプリは使っていませんが、中身があるシートです。自分で作ったシート・他の用事で使っているシートなら「いいえ」を押してください。\n\n' + found.others.map(line).join('\n') + '\n\nこれらも消しますか？',
+      ui.ButtonSet.YES_NO);
+    if (b === ui.Button.YES) names = names.concat(found.others.map(function (it) { return it.name; }));
+  }
+  if (!names.length) { ui.alert('何も消しませんでした。'); return; }
+  let backup;
+  try {
+    backup = backupCore_(true);
+    saveBackupStatus_({ at: nowStamp_(), ok: true, name: backup.created, message: 'シートを片づける前のバックアップ' });
+  } catch (e) {
+    ui.alert('バックアップを作れなかったので、シートは消していません。\n' + String(e && e.message ? e.message : e));
+    return;
+  }
+  const done = withLock_(function () {
+    const ss = getSs_();
+    const gone = [];
+    names.forEach(function (n) {
+      const sh = ss.getSheetByName(n);
+      if (!sh || ss.getSheets().length <= 1) return;
+      ss.deleteSheet(sh);
+      gone.push(n);
+    });
+    return gone;
+  });
+  cacheBumpAll_();
+  logAuditSafe_('シートの片づけ', done.join('、'));
+  ui.alert('消したシート：' + (done.length ? done.join('、') : 'なし') + '\n\n消す前のバックアップ：' + backup.created + '（' + backup.folder + '）\n間違って消した時は、このバックアップから写してください。');
+}
+function logAuditSafe_(kind, text) {
+  try { withLock_(function () { logAudit_(kind, '', '', '', '', auditText_(text), 'メニュー'); }); } catch (e) { console.warn('変更履歴に残せませんでした: ' + e); }
 }

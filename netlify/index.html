@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#1F4D3D">
+<title>EN・GROW 管理システム</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<!--
+  管理画面（GAS のウェブアプリ）を、このサイトの中に埋め込んで出す。
+  ・URL に ?t=…（お客様ページの合言葉）が付いていたら、お客様ページを出す
+  ・GAS のURLは config.js の GAS_URL に入れる
+-->
+<iframe id="app" title="EN・GROW 管理システム" allow="clipboard-read; clipboard-write; microphone; camera; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+<div id="msg" class="msg" hidden></div>
+<noscript><div class="msg">この画面を使うには、ブラウザの JavaScript を有効にしてください。</div></noscript>
+<script src="config.js"></script>
+<script src="site.js"></script>
+</body>
+</html>

@@ -1,17 +1,17 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.124.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
-//   カメラを直接使えない端末もある。そのときは端末のカメラアプリで撮って、同じ補正をかける）。
+//   カメラを直接使えない端末もある。その時は端末のカメラアプリで撮って、同じ補正をかける）。
 //   撮ったあとは、四隅を指で直せる。用紙をまっすぐにして、白黒くっきり／カラー／そのまま を選んで、写真として付ける。
-//   画像の処理はすべてこの端末の中で行う（外のサービスには送らない）。
+//   画像の処理は全てこの端末の中で行う（外のサービスには送らない）。
 // ===========================================================================
 var SCAN = null;
 var SCAN_SRC_MAX = 2400;        // 補正に使う元の画像の長辺（スマホのメモリに収める）
-var SCAN_OUT_MAX = 1800;        // 補正したあとの長辺
-var SCAN_DETECT_W = 320;        // 用紙を探すときの幅（小さくして速く）
+var SCAN_OUT_MAX = 1800;        // 補正した後の長辺
+var SCAN_DETECT_W = 320;        // 用紙を探す時の幅（小さくして速く）
 var SCAN_STEADY_MS = 1200;      // この時間、四隅が止まっていたら自動で撮る
 var SCAN_MODES = [['bw', '白黒くっきり'], ['color', 'カラー'], ['raw', 'そのまま']];
 
@@ -45,7 +45,7 @@ function scanDetect(data, w, h) {
   var th = scanOtsu(g);
   var mask = new Uint8Array(n), i;
   for (i = 0; i < n; i++) mask[i] = g[i] > th ? 1 : 0;
-  // いちばん大きい、明るいかたまり
+  // 一番大きい、明るいかたまり
   var label = new Int32Array(n), stack = new Int32Array(n), best = null, cur = 0;
   for (i = 0; i < n; i++) {
     if (!mask[i] || label[i]) continue;
@@ -198,15 +198,15 @@ function closeScanner() {
 }
 function scanCountText() {
   if (!SCAN) return '';
-  if (SCAN.pdf) return SCAN.pages.length ? SCAN.pages.length + '枚（あとでPDFにまとめます）' : '';
+  if (SCAN.pdf) return SCAN.pages.length ? SCAN.pages.length + '枚（後でPDFにまとめます）' : '';
   return SCAN.added ? SCAN.added + '枚付けました' : '';
 }
-/** 撮ったページを PDF にして付けるボタン（PDF にまとめるとき） */
+/** 撮ったページを PDF にして付けるボタン（PDF にまとめる時） */
 function scanPdfButton() {
   return SCAN && SCAN.pdf && SCAN.pages.length ? '<button type="button" class="btn primary" data-act="scanPdfMake">PDFにして付ける（' + SCAN.pages.length + '枚）</button>' : '';
 }
 function scanCloseLabel() { return SCAN && (SCAN.added || SCAN.pages.length) ? '終わる' : 'やめる'; }
-/** 端末のカメラアプリで撮る（カメラを直接使えないとき・自分で撮りたいとき） */
+/** 端末のカメラアプリで撮る（カメラを直接使えないとき・自分で撮りたい時） */
 function scanFileButtons(primary) {
   return '<label class="btn' + (primary ? ' primary' : '') + ' scanfile">カメラアプリで撮る<input type="file" accept="image/*" capture="environment" hidden data-scanfile="1"></label>' +
     '<label class="btn scanfile">写真から選ぶ<input type="file" accept="image/*" hidden data-scanfile="1"></label>';
@@ -220,7 +220,7 @@ function scanStartLive() {
   var fallback = function (why) {
     if (!SCAN || !$('scanBody')) return;
     SCAN.live = false;
-    body.innerHTML = '<p class="note" id="scanMsg">' + esc(why) + '</p><p class="note">撮ったあとに、用紙の四隅を見つけて、まっすぐ・くっきりに直します。</p>';
+    body.innerHTML = '<p class="note" id="scanMsg">' + esc(why) + '</p><p class="note">撮った後に、用紙の四隅を見つけて、まっすぐ・くっきりに直します。</p>';
     foot.innerHTML = scanFileButtons(true) + scanPdfButton() + '<span class="grow"></span><button type="button" class="btn" data-act="scanClose">' + scanCloseLabel() + '</button>';
   };
   if (!md || !md.getUserMedia) { fallback('この画面では、カメラを直接使えません。端末のカメラアプリで撮ってください。'); return; }
@@ -276,12 +276,12 @@ function scanLoop() {
       if (steady >= SCAN_STEADY_MS) { scanCaptureLive(); return; }
     } else {
       SCAN.quad = null; SCAN.steadySince = now;
-      if (msg) msg.textContent = '用紙を画面に入れてください（暗めの机の上だと見つけやすい）。見つからないときは「撮る」を押します。';
+      if (msg) msg.textContent = '用紙を画面に入れてください（暗めの机の上だと見つけやすい）。見つからない時は「撮る」を押します。';
     }
   }
   SCAN.timer = setTimeout(scanLoop, 250);
 }
-/** いまの映像を撮る */
+/** 今の映像を撮る */
 function scanCaptureLive() {
   var video = $('scanVideo');
   if (!SCAN || !video || !video.videoWidth) return;
@@ -305,7 +305,7 @@ function scanEdit(src, quad) {
   if (!SCAN) return;
   if (SCAN.timer) clearTimeout(SCAN.timer);
   SCAN.live = false;
-  // 四隅を直している間は、カメラを止める（電池のため。撮り直すときに開き直す）
+  // 四隅を直している間は、カメラを止める（電池のため。撮り直す時に開き直す）
   if (SCAN.stream) { SCAN.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* そのまま */ } }); SCAN.stream = null; }
   SCAN.src = src;
   var found = !!quad;
@@ -375,7 +375,7 @@ function scanFinish() {
       var form = SCAN.form, box = form && form.querySelector('.photos');
       if (!form || !form.isConnected || !box) { toast('記録の窓が閉じられたので、付けられませんでした。', true); resolve(false); return; }
       if (SCAN.pdf) {
-        // PDF にまとめるときは、ここではためておくだけ（「PDFにして付ける」でまとめる）
+        // PDF にまとめる時は、ここではためておくだけ（「PDFにして付ける」でまとめる）
         var roomP = S.D.photoMax - form._saved.length - form._photos.length - form._sending - (form._preparing || 0);
         if (!SCAN.pages.length && roomP < 1) { toast('この記録には、もう付けられません（' + S.D.photoMax + '枚まで）。', true); resolve(false); return; }
         if (SCAN.pages.length >= S.D.scanPdfMaxPages) { toast('1つのPDFにまとめられるのは' + S.D.scanPdfMaxPages + '枚までです。「PDFにして付ける」を押してください。', true); resolve(false); return; }
@@ -466,7 +466,7 @@ function makeScanPdf(pages) {
   parts.forEach(function (u) { out.set(u, at); at += u.length; });
   return out;
 }
-/** できあがった1つ（PDF など）を、写真の欄に足す。記録がまだ無ければ保存のあとに送る */
+/** できあがった1つ（PDF など）を、写真の欄に足す。記録がまだ無ければ保存の後に送る */
 function addPreparedItem(form, box, p) {
   if (!form || !box || form._saved === null) return false;
   var key = box.dataset.photokey, id = box.dataset.photoid;
@@ -512,7 +512,79 @@ function provisionalRecord(key, before, data) {
   rec._pending = true;
   return rec;
 }
-/** 窓が開いていたら、閉じたときに描き直す。開いていなければ、すぐ描き直す */
+// ---- v0.136.0：自動の更新（他の人が入れた記録を、押さなくても入れる）
+//   5分ごと・タブに戻ってきたとき（1分以上離れていたら）に、今見ている画面の差分だけを受ける。
+//   入力の窓が開いている・文字を打っている・保存の返事を待っている・画面が隠れている時は、何もしない（打っている途中のものを消さない）
+var AUTO_REFRESH_MS = 5 * 60 * 1000, AUTO_AWAY_MS = 60 * 1000;
+function typingNow() { var a = document.activeElement; return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName); }
+function autoRefreshOk() {
+  return !!(S.D && S.ready && S.token && !refreshBusy && document.visibilityState === 'visible' && !$('modals').children.length && !typingNow() &&
+    !Object.keys(S.sending || {}).length && (document.getElementById('busyLock') || { hidden: true }).hidden && !window.__noAutoRefresh);
+}
+function autoRefresh(force) {
+  if (!autoRefreshOk()) return;
+  if (!force && Date.now() - (S.lastRefreshAt || S.loadedAt || 0) < AUTO_REFRESH_MS) return;
+  ACT.refreshAll(null, { auto: true });
+}
+/** 自動の更新で届いたものを描く（打っている途中なら、欄を離れてから） */
+function autoRenderSoon() {
+  if ($('modals').children.length) { S.renderPending = true; return; }
+  if (!typingNow()) { render(); return; }
+  document.activeElement.addEventListener('blur', function () { setTimeout(function () { if (S.D && !$('modals').children.length && !typingNow()) render(); }, 0); }, { once: true });
+}
+// ---- v0.137.0：保存したら、そのところ（対応なら対応だけ）を、裏で最新にする
+//   自分の保存はもう画面に入っているので、ここで入るのは、他の人がその間に入れた・直したものだけ。画面は止めず、知らせも出さない。
+//   続けて保存した時は、まとめて1回（最後の保存から2秒後）。保存の返事を待っている間は、待ってから
+var partG = {}, partCore = false, partTimer = null;
+function refreshPartSoon(key) {
+  var g = RECORD_GROUP[key];
+  if (g) partG[g] = true;
+  else if (key === 'customer' || key === 'device') partCore = true;
+  else return;
+  clearTimeout(partTimer);
+  partTimer = setTimeout(refreshPartNow, window.__partDelay || 2000);
+}
+function refreshPartNow() {
+  partTimer = null;
+  if (!S.D || !S.ready) { partG = {}; partCore = false; return; }
+  if (refreshBusy || saveChipCount > 0) { partTimer = setTimeout(refreshPartNow, 2000); return; }
+  var groups = Object.keys(partG).filter(function (g) { return S.have[g]; });
+  var core = partCore;
+  partG = {}; partCore = false;
+  if (!groups.length && !core) return;
+  S.lastRefreshAt = Date.now();
+  ACT.refreshAll(null, { auto: true, silent: true, groups: groups });
+}
+// ---- v0.140.0：PC のショートカットキー（文字を打っている時・窓が開いている時は効かない。Esc で窓を閉じるのは前から）
+//   N … 対応を記録（顧客の画面なら、その顧客で）　／ … その画面の検索欄へ
+document.addEventListener('keydown', function (e) {
+  if (!S.D || !S.ready || isPhone() || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  var a = document.activeElement;
+  if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return;
+  if ($('modals').children.length || (S.view === 'customer' && S.sub === 'layout') || $('acct').open) return;
+  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); ACT.quickNew({ dataset: { key: 'activity' }, closest: function () { return null; } }); return; }
+  if (e.key === '/') {
+    var box = Array.prototype.filter.call(document.querySelectorAll('#main input[type="search"]'), function (x) { return x.offsetParent !== null && !x.disabled; })[0];
+    if (box) { e.preventDefault(); box.focus(); if (box.select) box.select(); }
+  }
+});
+setInterval(function () { autoRefresh(false); }, 60 * 1000);
+var hiddenAt = 0;
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+  if (hiddenAt && Date.now() - hiddenAt >= AUTO_AWAY_MS && Date.now() - (S.lastRefreshAt || S.loadedAt || 0) >= AUTO_AWAY_MS) setTimeout(function () { autoRefresh(true); }, 800);
+  hiddenAt = 0;
+});
+/** 窓の選ぶ欄（ボタンの並び・プルダウン）に値を入れる（v0.140.0） */
+function setFormChoice(form, name, value) {
+  var el = form.elements[name];
+  if (!el) return;
+  el.value = value;
+  var set = form.querySelector('[data-chips="' + name + '"]');
+  if (set) Array.prototype.forEach.call(set.querySelectorAll('[data-chip]'), function (b) { b.setAttribute('aria-pressed', String(b.dataset.chip === value)); });
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+/** 窓が開いていたら、閉じた時に描き直す。開いていなければ、すぐ描き直す */
 function softRender() {
   if ($('modals').children.length) S.renderPending = true; else render();
 }
@@ -556,7 +628,7 @@ function openStaffForm(staff) {
   var s = staff || { 'スタッフID': '', '表示名': '', '権限': 'スタッフ', '有効': 'はい' };
   openModal('<header><h2>スタッフを' + (isNew ? '追加' : '編集') + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
     '<form data-form="staff" data-new="' + (isNew ? '1' : '') + '" novalidate><div class="body"><p class="msg" hidden></p>' +
-    '<div class="field"><label for="st_id">スタッフID<span class="req">必須</span></label><input type="text" id="st_id" name="スタッフID" value="' + esc(s['スタッフID']) + '"' + (isNew ? '' : ' disabled') + ' autocapitalize="off" maxlength="64"><span class="note">半角の英数字と . _ - @ + で、3〜64文字（メールアドレスも使えます）。あとから変えられません。</span></div>' +
+    '<div class="field"><label for="st_id">スタッフID<span class="req">必須</span></label><input type="text" id="st_id" name="スタッフID" value="' + esc(s['スタッフID']) + '"' + (isNew ? '' : ' disabled') + ' autocapitalize="off" maxlength="64"><span class="note">半角の英数字と . _ - @ + で、3〜64文字（メールアドレスも使えます）。後から変えられません。</span></div>' +
     '<div class="field"><label for="st_name">表示名<span class="req">必須</span></label><input type="text" id="st_name" name="表示名" value="' + esc(s['表示名']) + '" maxlength="60"><span class="note">対応履歴の「受付スタッフ」に出る名前です。</span></div>' +
     '<div class="grid2"><div class="field"><label for="st_role">権限</label><select id="st_role" name="権限">' + optionsHtml(S.D.roles, s['権限']) + '</select></div>' +
     '<div class="field"><label for="st_active">有効</label><select id="st_active" name="有効">' + optionsHtml(['はい', 'いいえ'], s['有効']) + '</select></div></div>' +
@@ -567,9 +639,12 @@ function tempPasswordDialog(staffId, password) {
     '<div><button type="button" class="btn small" data-act="copyTempPw">コピー</button></div>' +
     '<p class="note">この画面を閉じると二度と表示されません。本人に伝えて、ログイン後すぐに「パスワード変更」をしてもらってください。</p>');
 }
-function openPasswordForm() {
+/** temp が true なら、仮パスワードのままなので変えてほしい、と添える（v0.128.0） */
+function openPasswordForm(temp) {
   openModal('<header><h2>パスワード変更</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
-    '<form data-form="password" novalidate><div class="body"><p class="msg" hidden></p>' +
+    '<form data-form="password" novalidate><div class="body">' +
+    (temp ? '<p class="note" id="pwTempNote" style="margin:0 0 12px;padding:10px 12px;border-radius:6px;background:var(--warn-soft);color:var(--warn);font-weight:600">仮パスワードでログインしています。自分だけが知っているパスワードに変えてください。<br><span style="font-weight:400">「今のパスワード」には、受け取った仮パスワードを入れます。変えるまで、ログインのたびにこの画面が出ます。</span></p>' : '') +
+    '<p class="msg" hidden></p>' +
     '<div class="field"><label for="pw_cur">今のパスワード</label><input type="password" id="pw_cur" autocomplete="current-password"></div>' +
     '<div class="field"><label for="pw_new">新しいパスワード（8文字以上）</label><input type="password" id="pw_new" autocomplete="new-password"></div>' +
     '<div class="field"><label for="pw_new2">新しいパスワード（もう一度）</label><input type="password" id="pw_new2" autocomplete="new-password"></div>' +
@@ -597,7 +672,7 @@ var ACT = {
   /** ログアウトの前に、確かめる（「ログインしたまま」も解除されることを知らせる。v0.94.0） */
   logout: function () {
     if (document.querySelector('.overlay.logoutconfirm')) return;
-    var msg = 'ログアウトします。' + (rememberNow() ? '\nこの端末の「ログインしたまま」も解除されるので、次に開くときは、パスワードの入力が必要です。\n（画面を閉じるだけなら、次もそのまま入れます）' : '');
+    var msg = 'ログアウトします。' + (rememberNow() ? '\nこの端末の「ログインしたまま」も解除されるので、次に開く時は、パスワードの入力が必要です。\n（画面を閉じるだけなら、次もそのまま入れます）' : '');
     confirmDialog('ログアウトしますか？', msg, 'ログアウトする', false, 'やめる').then(function (yes) { if (yes) ACT.logoutNow(); });
     var w = $('modals').lastElementChild; if (w) w.classList.add('logoutconfirm');
   },
@@ -615,22 +690,26 @@ var ACT = {
     saved.then(bye, bye);
   },
   /**
-   * 控えを使わずに、シートから読み直す（いま見ている画面のまま）。
+   * 控えを使わずに、シートから読み直す（今見ている画面のまま）。
    * 読み直している間は、画面を覆って操作を止める（途中で保存や移動をすると、古い返事で上書きしてしまうため）。
    */
   /**
-   * 「更新」：いま見ている画面のぶんだけ、新しく届いた・直したぶんを読み足す（v0.95.0）。
+   * 「更新」：今見ている画面のぶんだけ、新しく届いた・直したぶんを読み足す（v0.95.0）。
    * その画面に要るグループは getViewChanges（差分）で、顧客・機器・収集ツールは getChanges（差分）で読む。まだ読んでいないグループだけ、まるごと読む。
-   * 差分で読めなかったとき（時刻のずれなど）は、その画面のぶんを読み直す。全部を読み直すのは、メニューの「すべて読み直す」（refreshFull）
+   * 差分で読めなかったとき（時刻のずれなど）は、その画面のぶんを読み直す。全部を読み直すのは、メニューの「全て読み直す」（refreshFull）
    */
-  refreshAll: function () {
+  refreshAll: function (el, opt) {
     if (!S.D || refreshBusy) return;
+    var auto = !!(opt && opt.auto);      // v0.136.0：自動の更新（画面を止めない・新着が無ければ何も出さない・差分で受けられる時だけ）
+    var only = opt && Array.isArray(opt.groups) ? opt.groups : null;      // v0.137.0：保存したところのグループだけ（対応を保存したら、対応だけ）
+    var silent = !!(opt && opt.silent);
     refreshBusy = true;
-    $('blocker').hidden = false;
+    S.lastRefreshAt = Date.now();
+    if (!auto) $('blocker').hidden = false;
     var token = S.token, epoch = S.epoch;
     var groups = [];
-    viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).forEach(function (g) { if (groups.indexOf(g) === -1 && g !== 'diag') groups.push(g); });
-    var useDiag = viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).indexOf('diag') !== -1 && !!S.have.diag;
+    (only || viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub))).forEach(function (g) { if (groups.indexOf(g) === -1 && g !== 'diag') groups.push(g); });
+    var useDiag = !only && viewNeed(S.view, S.sub).concat(viewSoft(S.view, S.sub)).indexOf('diag') !== -1 && !!S.have.diag;
     var pending = viewTimer ? sendView() : Promise.resolve();
     var done = function () { refreshBusy = false; $('blocker').hidden = true; };
     var alive = function () { return S.D && S.token === token && S.epoch === epoch; };
@@ -642,8 +721,9 @@ var ACT = {
       var stamps = {};
       haveG.forEach(function (g) { stamps[g] = (S.gStamp && S.gStamp[g]) || S.baseStamp; });
       var canDelta = haveG.length && haveG.every(function (g) { return !!stamps[g]; });
+      if (auto && !canDelta && (haveG.length || !only)) return null;      // 差分で受けられない時は、自動ではしない（顧客・機器だけの時は、下の getChanges で受ける）
       var n = 0;
-      // まるごと読み直す（差分にできないとき）：その画面のグループを、控えを捨てて読む
+      // まるごと読み直す（差分にできない時）：その画面のグループを、控えを捨てて読む
       var fullLoad = function (list) {
         if (!list.length) return Promise.resolve();
         var asked = Date.now();
@@ -668,8 +748,15 @@ var ACT = {
         n += applyChanges(r, true);
         S.syncStamp = r.stamp || S.syncStamp;
       }) : Promise.resolve();
-      return Promise.all([deltaCall, coreCall, fullLoad(missG)]).then(function () {
+      return Promise.all([deltaCall, coreCall, auto ? Promise.resolve() : fullLoad(missG)]).then(function () {
         if (!alive()) return;
+        if (auto) {
+          if (!n) return;
+          S.cal = null; S.release = undefined; S.audit = null; S.report = null;
+          autoRenderSoon();
+          if (!silent) toast('他の人の新しい記録 ' + n + '件を入れました');
+          return;
+        }
         // 画面ごとにあとから読むもの（カレンダー・変更履歴・設定など）は、読み直す
         //   顧客ごと・期間ごとの対応の一覧（custActs・actRange）は、上で差分を入れたので捨てない（捨てると、全部を読み直して遅くなる。v0.106.0）
         S.cal = null; S.creds = null; S.staff = null; S.release = undefined; S.audit = null; S.files = null; S.report = null;
@@ -679,7 +766,7 @@ var ACT = {
         toast(n ? 'この画面の新着 ' + n + '件を読み込みました（' + sec + '秒）' : '新しいデータはありませんでした（' + sec + '秒）');
       });
     };
-    pending.then(run, run).then(function () { done(); }, function (e) { done(); failToast(e); });
+    pending.then(run, run).then(function () { done(); }, function (e) { done(); if (!auto) failToast(e); });
   },
   /** 全部（対応・修理・ライセンスなども）をシートから読み直す。スプレッドシートを手で直したあとは、こちら */
   refreshFull: function () {
@@ -693,7 +780,7 @@ var ACT = {
       if (!S.D || S.token !== token) return null;
       S.timing = { t0: Date.now() };
       return call('getBootstrap', { part: 'core', fresh: true }).then(function (core) {
-        // 待っている間にログアウトした・ログインし直したときは、何もしない
+        // 待っている間にログアウトした・ログインし直した時は、何もしない
         if (!S.D || S.token !== token) return null;
         S.cal = null; S.custActs = {}; S.actRange = {}; S.creds = null; S.staff = null; S.release = undefined; S.audit = null; S.files = null; S.report = null;
         Object.keys(REST_EMPTY).forEach(function (k) { core[k] = Array.isArray(REST_EMPTY[k]) ? [] : REST_EMPTY[k] && typeof REST_EMPTY[k] === 'object' ? {} : REST_EMPTY[k]; });
@@ -748,7 +835,7 @@ var ACT = {
         box('info', '会社の情報', true) + box('devices', '機器の一覧', true) + box('licenses', 'ライセンス', true) + box('layouts', 'レイアウト図', true, '1枚ずつ、ページを分けます') +
       '</div></div>' +
       '<div class="field"><span class="lab">細かい指定</span><div class="checks">' +
-        box('gone', '廃棄した機器も入れる', false) + box('notes', '備考も入れる', false, '社内用。お客様に渡すときは外したままに') +
+        box('gone', '廃棄した機器も入れる', false) + box('notes', '備考も入れる', false, '社内用。お客様に渡す時は外したままに') +
       '</div><span class="note">ID・パスワードなどの認証情報は、印刷に入りません。</span></div>' +
       '</div><footer><span class="grow"></span><button type="button" class="btn" data-act="closeModal">やめる</button><button type="submit" class="btn primary">印刷する</button></footer></form>', true);
   },
@@ -758,16 +845,16 @@ var ACT = {
     openModal('<header><h2>自分の設定</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
       '<form data-form="myprefs" novalidate><div class="body"><p class="msg" hidden></p>' +
       '<div class="field"><label for="my_start">開いた直後の画面</label><select id="my_start">' +
-        optionsHtml([['', '全体の設定に合わせる（いまは「' + common + '」）']].concat(D.startViews.filter(function (n) { return navVisible(START_KEY[n]); })), D.me.startView || '') + '</select>' +
+        optionsHtml([['', '全体の設定に合わせる（今は「' + startLabel(common) + '」）']].concat(D.startViews.filter(function (n) { return navVisible(START_KEY[n]); }).map(function (n) { return [n, startLabel(n)]; })), D.me.startView || '') + '</select>' +
         '<span class="note">ログインした直後に開く画面です。自分のぶんだけ変わります。スマホでは、いつも「入力」の画面から始まります。</span></div>' +
       '<div class="field"><label>絞り込み・並び替え</label>' +
-        '<span class="note">各画面の絞り込み・検索の文字・並び替え・期間の種類（週ごと／月ごと など）は、自動で覚えます。次に開いたとき、パソコンでもスマホでも同じ状態で始まります。</span>' +
+        '<span class="note">各画面の絞り込み・検索の文字・並び替え・期間の種類（週ごと／月ごと など）は、自動で覚えます。次に開いた時、パソコンでもスマホでも同じ状態で始まります。</span>' +
         '<div><button type="button" class="btn small" data-act="forgetView">覚えた絞り込み・並び替えを消す</button></div></div>' +
-      '<div class="field"><label for="my_confirm">直して保存するときの確認</label><select id="my_confirm">' +
-        optionsHtml([['auto', 'おすすめ：直す項目が少ないときは聞かない'], ['always', '毎回、変えた内容を見せて確かめる'], ['never', '聞かずに保存する']], q('pref.confirm', 'auto')) + '</select>' +
-        '<span class="note">「おすすめ」は、直した項目が3つ以上・認証情報・機器の顧客の移動のときだけ確かめます。</span></div>' +
+      '<div class="field"><label for="my_confirm">直して保存する時の確認</label><select id="my_confirm">' +
+        optionsHtml([['auto', 'おすすめ：直す項目が少ない時は聞かない'], ['always', '毎回、変えた内容を見せて確かめる'], ['never', '聞かずに保存する']], q('pref.confirm', 'auto')) + '</select>' +
+        '<span class="note">「おすすめ」は、直した項目が3つ以上・認証情報・機器の顧客の移動の時だけ確かめます。</span></div>' +
       '<div class="field"><label for="my_intro">画面の説明（見出しの下の一行）</label><select id="my_intro">' +
-        optionsHtml([['hide', 'ふだんは隠す（見出しの「？」で出す）'], ['show', 'いつも出す']], q('pref.intro', 'hide')) + '</select></div>' +
+        optionsHtml([['hide', '普段は隠す（見出しの「？」で出す）'], ['show', 'いつも出す']], q('pref.intro', 'hide')) + '</select></div>' +
       '<div class="field"><label>スマホの下のメニュー</label><div class="bnavpick">' + [0, 1, 2, 3].map(function (i) {
         var cur = bnavList()[i];
         return '<select id="my_b' + i + '" aria-label="下のメニューの' + (i + 1) + 'つめ">' + optionsHtml(bnavOptions(), cur ? cur[0] : '') + '</select>';
@@ -790,9 +877,48 @@ var ACT = {
       item('customer', '顧客を追加', '新しい取引先') +
       '</div></div>', true, true);
   },
+  // 一覧から、開かずに完了にする（v0.134.0）。完了日時（対応）・完了日（修理）が空なら、今を入れる
+  quickDone: function (el) {
+    var key = el.dataset.key, id = el.dataset.id, schema = S.D.schema[key], rec = findRecord(key, id);
+    if (!schema || !rec || rec._pending || el.dataset.busy) return;
+    var data = {}; data[schema.idField] = id;
+    data['ステータス'] = key === 'activity' ? S.D.activityDone : S.D.repairDone;
+    if (key === 'activity' && !rec['完了日時']) data['完了日時'] = nowYmdHm();
+    if (key === 'repair' && !rec['完了日']) data['完了日'] = todayLocal();
+    el.dataset.busy = '1'; el.textContent = '保存中…';
+    callSave(SAVE_FN[key], { data: data }).then(function (r) {
+      var list = S.D[COLLECTION[key]];
+      if (list.some(function (x) { return x[schema.idField] === id; })) upsert(list, schema.idField, r.record);
+      if (key === 'activity') Object.keys(S.custActs).forEach(function (c) { var l = S.custActs[c]; for (var i = 0; i < l.length; i++) if (l[i]['対応ID'] === id) l[i] = r.record; });
+      S.savedAt[key + ':' + id] = Date.now();
+      reindex(); S.alertsStale = true;
+      toast((key === 'activity' ? '対応' : '修理') + 'を完了にしました');
+      refreshPartSoon(key); softRender();
+    }).catch(function (e) { delete el.dataset.busy; el.textContent = '✓ 完了'; failToast(e); });
+  },
+  // v0.140.0：作業開始・終了（対応の窓）
+  workStart: function (el) {
+    var form = el.closest('form'), inp = form && form.elements['開始日時'];
+    if (!inp) return;
+    inp.value = nowYmdHm(); inp.classList.remove('bad'); inp.dispatchEvent(new Event('input', { bubbles: true }));
+    toast('開始日時に ' + inp.value + ' を入れました');
+  },
+  workEnd: function (el) {
+    var form = el.closest('form'), inp = form && form.elements['完了日時'];
+    if (!inp) return;
+    inp.value = nowYmdHm(); inp.classList.remove('bad'); inp.dispatchEvent(new Event('input', { bubbles: true }));
+    setFormChoice(form, 'ステータス', S.D.activityDone);
+    var st = form.elements['開始日時'];
+    var mins = st && st.value ? Math.round((new Date(inp.value.replace(' ', 'T')) - new Date(st.value.replace(' ', 'T'))) / 60000) : NaN;
+    toast('完了日時に ' + inp.value + ' を入れ、ステータスを完了にしました' + (isFinite(mins) && mins >= 0 ? '（作業 ' + (mins >= 60 ? Math.floor(mins / 60) + '時間' : '') + (mins % 60) + '分）' : '') + '。「保存」で記録します');
+  },
+  // PC の入力画面：顧客を先に選ぶ（v0.133.0）
+  homeCustPick: function (el) { S.homeCust = el.dataset.id; S.homeCustQ = ''; noteRecentCust(el.dataset.id); render(); },
+  homeCustClear: function () { S.homeCust = ''; S.homeCustQ = ''; render(); var i = $('homeCustQ'); if (i) i.focus(); },
   quickNew: function (el) {
     if (el.closest('.overlay')) closeModal(el);
     var preset = S.view === 'customer' && el.dataset.key !== 'customer' ? { '顧客ID': S.customerId, lockCustomer: true } : null;
+    if (!preset && S.view === 'home' && !isPhone() && S.homeCust && IDX.cust[S.homeCust] && el.dataset.key !== 'customer') preset = { '顧客ID': S.homeCust };
     openForm(el.dataset.key, null, preset);
   },
   draftOpen: function (el) {
@@ -806,21 +932,16 @@ var ACT = {
     var offer = el.closest('.draft-offer');
     if (offer) offer.remove(); else render();
   },
-  /** 下のメニューのまん中。顧客の画面では、その顧客の記録を選ぶ窓。ほかでは「入力」の画面へ */
+  /** 下のメニューのまん中。顧客の画面では、その顧客の記録を選ぶ窓。他では「入力」の画面へ */
   plusInput: function () { if (S.view === 'customer') ACT.quickAdd(); else go('home'); },
   homeClear: function () { S.homeQ = ''; var i = $('homeQ'); if (i) i.value = ''; drawHomeHits(); },
   openMenu: function () {
     var go2 = function (view, title) { return '<button type="button" class="btn" data-act="menuGo" data-view="' + view + '">' + title + '</button>'; };
     openModal('<header><h2>メニュー <span class="sub">' + esc(S.D.me.name) + '（' + esc(S.D.me.role) + '）</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
-      '<div class="body"><div class="sheet-list">' + go2('meeting', 'ミーティング') + go2('licenses', 'ライセンス') +
-      (S.D.rentalOn ? go2('rentals', 'レンタル') : '') + (S.D.bizOn ? go2('projects', '案件・営業（テスト版）') : '') + go2('notices', 'お知らせ') +
-      (S.D.me.isAdmin ? go2('settings', '設定') + go2('audit', '変更履歴') : '') +
-      '<button type="button" class="btn" data-act="openMyPrefs">自分の設定（下のメニュー・説明など）</button>' +
-      '<button type="button" class="btn" data-act="openPassword">パスワード変更</button>' +
-      '<button type="button" class="btn" data-act="menuRefreshFull">すべて読み直す（手で直したあと）</button>' +
-      '<button type="button" class="btn" data-act="logout">ログアウト</button></div></div>', true, true);
+      // v0.136.0：下のメニューにある画面と、名前のメニュー（自分の設定・パスワード変更・ログアウト）にあるものは、ここに出さない（同じボタンを2か所に置かない）
+      '<div class="body"><div class="sheet-list">' + menuScreens().map(function (n) { return go2(n[0], n[1]); }).join('') +
+      '</div><p class="note" style="margin:12px 0 0">自分の設定・パスワード変更・ログアウトは、右上の名前のボタンから。</p></div>', true, true);
   },
-  menuRefreshFull: function (el) { closeModal(el); ACT.refreshFull(); },
   cinfoToggle: function () { S.cinfoOpen = !S.cinfoOpen; render(); },
   introToggle: function () { S.introOpen = S.introOpen === S.view ? '' : S.view; render(); },
   showMore: function (el) { S.more = S.more || {}; var t = el.dataset.table; S.more[t] = (S.more[t] || TABLE_PAGE) + TABLE_PAGE; render(); },
@@ -843,13 +964,19 @@ var ACT = {
     var st = mtgState(), w = mtgWeek(st.off), t = ($('mtgMemo') || {}).value || '';
     if (!t.trim()) { toast('メモを書いてください。', true); return; }
     el.disabled = true;
-    call('saveMemo', { data: { '顧客ID': '', '本文': '【ミーティング ' + w.from + '〜' + w.to + '】\n' + t } }).then(function (r) {
-      el.disabled = false; upsert(S.D.memos, 'メモID', r.record); delete st.memos[w.from]; toast('社内メモに残しました'); render();
+    callSave('saveMemo', { data: { '顧客ID': '', '本文': '【ミーティング ' + w.from + '〜' + w.to + '】\n' + t } }).then(function (r) {
+      el.disabled = false; upsert(S.D.memos, 'メモID', r.record); delete st.memos[w.from]; toast('社内メモに残しました'); refreshPartSoon('memo'); softRender();
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   pFilter: function (el) { var st = pState(el.dataset.key); st.f = el.dataset.f; st.n = P_STEP; render(); },
   pMore: function (el) { var st = pState(el.dataset.key); st.n += P_STEP; pDraw(el.dataset.key); },
-  pAlerts: function () { S.pAlertsOpen = !S.pAlertsOpen; render(); },
+  // スマホの要対応：下から一覧を出す（v0.134.0）
+  pAlerts: function () {
+    openModal('<header><h2>要対応 <span class="sub">' + pcAlerts().length + '件</span></h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
+      '<div class="body" id="pAlertSheetBody">' + pAlertSheetInner() + '</div>', true, true).querySelector('.dialog').classList.add('pasheet');
+  },
+  pAlertCat: function (el) { S.pAlertCat = el.dataset.cat || ''; var b = $('pAlertSheetBody'); if (b) b.innerHTML = pAlertSheetInner(); },
+  pAlertOpen: function (el) { closeModal(el); ACT.openAlert(el); },
   mmCust: function (el) {
     var id = el.dataset.id || '';
     S.mm.cust = id; S.mm.dev = ''; S.mm.diag = null; S.mm.diagFor = '';
@@ -891,8 +1018,8 @@ var ACT = {
       if (before && !list.some(function (m) { return m['実施ID'] === before['実施ID']; })) list.unshift(before);    // 待っている間に読み直していたら、入れ直さない
     };
     var redraw = function () { if (S.view === 'mmaint' && !$('modals').children.length) mmRedraw(); else S.renderPending = true; };
-    call('saveMaintenance', { data: data }).then(function (r) {
-      if (!S.D || S.token !== token) return;     // ログインし直したあとに届いた返事は捨てる
+    callSave('saveMaintenance', { data: data }).then(function (r) {
+      if (!S.D || S.token !== token) return;     // ログインし直した後に届いた返事は捨てる
       delete S.mm.saving[id];
       putBack();
       if (before) { for (var i = 0; i < S.D.maintenances.length; i++) if (S.D.maintenances[i]['実施ID'] === before['実施ID']) { S.D.maintenances.splice(i, 1); break; } }
@@ -931,8 +1058,8 @@ var ACT = {
     var loan = findRecord('loan', el.dataset.id);
     if (!loan) return;
     el.disabled = true;
-    call('saveLoan', { data: { '貸出ID': loan['貸出ID'], '返却日': S.D.today } }).then(function (r) {
-      upsert(S.D.loans, '貸出ID', r.record); reindex(); S.alertsStale = true; toast('今日の日付で返却を記録しました'); render();
+    callSave('saveLoan', { data: { '貸出ID': loan['貸出ID'], '返却日': S.D.today } }).then(function (r) {
+      upsert(S.D.loans, '貸出ID', r.record); reindex(); S.alertsStale = true; toast('今日の日付で返却を記録しました'); refreshPartSoon('loan'); softRender();
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   salesFromProject: function (el) {
@@ -961,7 +1088,7 @@ var ACT = {
     if (!loan) return;
     var base = loan['返却予定日'] && loan['返却予定日'] > S.D.today ? loan['返却予定日'] : S.D.today;
     var plus = function (n) { var d = new Date(base + 'T00:00:00'); d.setDate(d.getDate() + n); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
-    loanDateAsk(el.dataset.id, { title: '返却予定を変える', label: '新しい返却予定日', field: '返却予定日', ok: '変える', note: 'いまの返却予定：' + (loan['返却予定日'] || 'なし'), value: plus(7),
+    loanDateAsk(el.dataset.id, { title: '返却予定を変える', label: '新しい返却予定日', field: '返却予定日', ok: '変える', note: '今の返却予定：' + (loan['返却予定日'] || 'なし'), value: plus(7),
       chips: [['+1日', plus(1)], ['+1週間', plus(7)], ['+2週間', plus(14)], ['+1か月', plus(30)]] });
   },
   extPick: function (el) { var i = $('ld_date'); if (i) i.value = el.dataset.d; },
@@ -970,9 +1097,10 @@ var ACT = {
   salesDone: function (el) {
     var r = findRecord('saleslog', el.dataset.id);
     if (!r) return;
-    call('saveSalesLog', { data: { '営業ID': r['営業ID'], 'アクション完了': 'はい' } }).then(function (res) {
-      upsert(S.D.saleslogs, '営業ID', res.record); reindex(); S.alertsStale = true; toast('完了にしました'); render();
-    }).catch(failToast);
+    el.disabled = true;
+    callSave('saveSalesLog', { data: { '営業ID': r['営業ID'], 'アクション完了': 'はい' } }).then(function (res) {
+      upsert(S.D.saleslogs, '営業ID', res.record); reindex(); S.alertsStale = true; toast('完了にしました'); refreshPartSoon('saleslog'); softRender();
+    }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   convertProject: function (el) {
     var d = findRecord('project', el.dataset.id), to = el.dataset.to;
@@ -1073,7 +1201,7 @@ var ACT = {
     layoutChanged();
   },
   layoutNetPick: function () {
-    openModal('<header><h2>ネットワーク機器を置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body"><p class="note" style="margin:0 0 8px">置いたあと、名前・IPアドレス・メモを入れられます。機器台帳の機器と結びつけることもできます。</p><div class="tpl-grid">' +
+    openModal('<header><h2>ネットワーク機器を置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body"><p class="note" style="margin:0 0 8px">置いた後、名前・IPアドレス・メモを入れられます。機器台帳の機器と結びつけることもできます。</p><div class="tpl-grid">' +
       NET_ORDER.map(function (k) {
         return '<button type="button" class="btn" data-act="layoutNetAdd" data-k="' + k + '"><b style="display:inline-block;min-width:44px;text-align:center;color:#fff;border-radius:5px;padding:1px 6px;margin-right:8px;background:' + NET_KINDS[k][2] + '">' + esc(NET_KINDS[k][0]) + '</b>' + esc(NET_KINDS[k][1]) + '</button>';
       }).join('') + '</div></div>', true, true);
@@ -1103,7 +1231,7 @@ var ACT = {
   layoutShowIp: function () { L.showIp = !L.showIp; drawLayoutBox(); },
   layoutLegend: function () { L.legend = !L.legend; drawLayoutBox(); },
   layoutNetInfo: function (el) {
-    // 見るだけのとき、記号を押すと出る情報カード（IP・メモ・結びつけた機器・つながっている先）
+    // 見るだけの時、記号を押すと出る情報カード（IP・メモ・結びつけた機器・つながっている先）
     var n = L.data.elements[Number(el.dataset.i)];
     if (!n || n.type !== 'net') return;
     var nk = NET_KINDS[n.kind] || NET_KINDS.port, dev = n.deviceId ? IDX.dev[n.deviceId] : null, g = dev ? (IDX.diag[n.deviceId] || {}) : {};
@@ -1135,7 +1263,7 @@ var ACT = {
     var rec = findRecord('device', id); if (rec) openForm('device', rec, null);
   },
   layoutNetTplPick: function () {
-    openModal('<header><h2>幹線図テンプレートを置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body"><p class="note" style="margin:0 0 8px">ネットワーク機器の記号と回線を、まとめて置きます。置いたあと、名前・IPアドレス・位置を1つずつ直せます（回線は、機器を動かすとついてきます）。間取り図の上に重ねて置くこともできます。</p><div class="tpl-grid">' +
+    openModal('<header><h2>幹線図テンプレートを置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body"><p class="note" style="margin:0 0 8px">ネットワーク機器の記号と回線を、まとめて置きます。置いた後、名前・IPアドレス・位置を1つずつ直せます（回線は、機器を動かすとついてきます）。間取り図の上に重ねて置くこともできます。</p><div class="tpl-grid">' +
       LAY_NET_TEMPLATES.map(function (tp) { return '<button type="button" class="btn" data-act="layoutNetTplAdd" data-key="' + tp.key + '">' + esc(tp.name) + '<span>' + esc(tp.sub) + '</span></button>'; }).join('') + '</div></div>', true, true);
   },
   layoutNetTplAdd: function (el) {
@@ -1160,7 +1288,7 @@ var ACT = {
     var free = S.D.devices.filter(function (dev) { return dev['顧客ID'] === L.customerId && dev['状況'] !== '廃棄' && !placed[dev['機器ID']]; });
     if (!layoutRoom(free.length)) return;
     layoutPushUndo();
-    // いま置いてあるピンより下から、横6つずつ並べる（置いてあるものに重ねない）
+    // 今置いてあるピンより下から、横6つずつ並べる（置いてあるものに重ねない）
     var top = Math.min(92, bottom + 8);
     free.forEach(function (dev, i) { L.data.elements.push({ type: 'pin', x: 12 + (i % 6) * 15, y: Math.min(98, top + Math.floor(i / 6) * 8), deviceId: dev['機器ID'] }); });
     L.sel = -1;
@@ -1268,7 +1396,7 @@ var ACT = {
     var n = 1; while (used['g' + n]) n++;
     ids.forEach(function (i) { list[i].grp = 'g' + n; });
     layoutChanged();
-    toast('グループにしました。どれか1つを動かすと、全部いっしょに動きます');
+    toast('グループにしました。どれか1つを動かすと、全部一緒に動きます');
   },
   layoutUngroup: function () {
     var list = L.data.elements, ids = L.sels.filter(function (i) { return list[i] && list[i].grp; });
@@ -1310,7 +1438,7 @@ var ACT = {
   layoutTemplatePick: function () {
     var cap = function (t) { return '<p class="note" style="margin:14px 0 6px">' + t + '</p>'; };
     openModal('<header><h2>テンプレート・セットを置く</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header><div class="body" style="gap:0">' +
-      '<p class="note" style="margin:0 0 6px">部屋まるごとの下書き（置いたあと、机や名前を1つずつ直せます）</p><div class="tpl-grid">' +
+      '<p class="note" style="margin:0 0 6px">部屋まるごとの下書き（置いた後、机や名前を1つずつ直せます）</p><div class="tpl-grid">' +
       LAY_ROOMS.map(function (t) { return '<button type="button" class="btn" data-act="layoutRoomAdd" data-key="' + t.key + '">' + esc(t.name) + '<span>' + esc(t.sub) + '</span></button>'; }).join('') + '</div>' +
       cap('席数を入れて並べる') +
       '<div class="tpl-gen" id="layGen">' +
@@ -1319,7 +1447,7 @@ var ACT = {
         '<div class="field"><label for="layGenRows">列の数</label><input type="number" id="layGenRows" min="1" max="4" value="1" inputmode="numeric"></div>' +
         '<button type="button" class="btn primary" data-act="layoutGenAdd">この席数で置く</button></div>' +
       '<p class="note" style="margin:6px 0 0">例：横3・向かい合わせ・列1 → 6席の島。横4・向かい合わせ・列2 → 8席の島が2つ（16席）。</p>' +
-      cap('セット（置いたあと、まとめて動かせます）') + '<div class="chipset">' +
+      cap('セット（置いた後、まとめて動かせます）') + '<div class="chipset">' +
       LAY_TEMPLATES.map(function (t) { return '<button type="button" data-act="layoutTemplateAdd" data-key="' + t.key + '" aria-pressed="false">' + esc(t.name) + '</button>'; }).join('') + '</div>' +
       cap('什器（1つずつ）') + '<div class="chipset">' +
       LAY_FURNITURE.map(function (f) { return '<button type="button" data-act="layoutAdd" data-type="' + f[0] + '" aria-pressed="false">' + f[1] + '</button>'; }).join('') + '</div>' +
@@ -1328,7 +1456,7 @@ var ACT = {
   layoutTemplateAdd: function (el) {
     var t = LAY_TEMPLATES.filter(function (x) { return x.key === el.dataset.key; })[0];
     closeModal(el);
-    if (t && layoutPlace(t.items, true)) toast('置きました。どれか1つを引っぱると、まとめて動かせます');
+    if (t && layoutPlace(t.items, true)) toast('置きました。どれか1つを引っ張ると、まとめて動かせます');
   },
   layoutRoomAdd: function (el) {
     var t = LAY_ROOMS.filter(function (x) { return x.key === el.dataset.key; })[0];
@@ -1347,7 +1475,7 @@ var ACT = {
     var one = island ? layIsland(cols) : layWallRow(cols), step = island ? 266 + 70 : 133 + 60, items = [];
     for (var r = 0; r < rows; r++) items = items.concat(layAt(one, 0, r * step));
     closeModal(el);
-    if (layoutPlace(items, true)) toast((cols * (island ? 2 : 1) * rows) + '席を置きました。どれか1つを引っぱると、まとめて動かせます');
+    if (layoutPlace(items, true)) toast((cols * (island ? 2 : 1) * rows) + '席を置きました。どれか1つを引っ張ると、まとめて動かせます');
   },
   layoutUndo: function () { if (!L.undo.length) return; L.redo.push(layoutSnapshot()); layoutRestore(L.undo.pop()); drawLayoutBox(); },
   layoutRedo: function () { if (!L.redo.length) return; L.undo.push(layoutSnapshot()); layoutRestore(L.redo.pop()); drawLayoutBox(); },
@@ -1436,7 +1564,7 @@ var ACT = {
     if (SCAN.pages.length) { toast('撮りためたページがあります。先に「PDFにして付ける」を押してください。', true); return; }
     SCAN.pdf = !SCAN.pdf; el.setAttribute('aria-pressed', String(SCAN.pdf));
     $('scanCount').textContent = scanCountText();
-    toast(SCAN.pdf ? '撮ったページを、あとで1つのPDFにまとめます' : '1枚ずつ写真として付けます');
+    toast(SCAN.pdf ? '撮ったページを、後で1つのPDFにまとめます' : '1枚ずつ写真として付けます');
   },
   scanPdfMake: function (el) {
     el.disabled = true; el.textContent = 'PDFを作っています…';
@@ -1551,7 +1679,7 @@ var ACT = {
       }).catch(failToast);
     };
     if (el.dataset.again) {
-      confirmDialog('トークンを作り直す', '作り直すと、いまのトークンを入れてある収集ツールからは届かなくなります。\nこの顧客のPCすべてで、ツールの設定を入れ直す必要があります。', '作り直す', true).then(function (yes) { if (yes) run(); });
+      confirmDialog('トークンを作り直す', '作り直すと、今のトークンを入れてある収集ツールからは届かなくなります。\nこの顧客のPC全てで、ツールの設定を入れ直す必要があります。', '作り直す', true).then(function (yes) { if (yes) run(); });
     } else run();
   },
   showReceive: function () { call('getReceiveInfo', { customerId: S.customerId }).then(showReceiveInfo).catch(failToast); },
@@ -1569,11 +1697,17 @@ var ACT = {
     box.focus();
   },
 
-  tileOpenActs: function () {
+  // 顧客の一覧：カード／表（スタッフごとに覚える。v0.131.0）
+  custView: function (el) { S.q['pref.custview'] = el.dataset.v === 'table' ? 'table' : ''; sendView(); render(); },
+  // 対応・修理の「集計」を開く・たたむ（スタッフごとに覚える。v0.130.0）
+  toggleStats: function () { S.q['pref.stats'] = statsOpen() ? '' : '1'; sendView(); render(); },
+  mtgOpenList: function (el) { var w = openModal(mtgOpenListHtml(el.dataset.kind === 'repair' ? 'repair' : 'activity')); var dlg = w.querySelector('.dialog'); if (dlg) dlg.classList.add('wide'); },
+  tileOpenActs: function (el) {
+    if (el && el.closest && el.closest('.overlay')) closeModal(el);
     ['act.kind', 'act.inc', 'act.cust', 'act.staff', 'act.text'].forEach(function (k) { S.q[k] = ''; });
     S.q['act.status'] = 'open'; perState('act').mode = 'all'; go('activities');
   },
-  tileOpenReps: function () { S.q['rep.status'] = 'open'; S.q['rep.cust'] = ''; S.q['rep.text'] = ''; go('repairs'); },
+  tileOpenReps: function (el) { if (el && el.closest && el.closest('.overlay')) closeModal(el); S.q['rep.status'] = 'open'; S.q['rep.cust'] = ''; S.q['rep.text'] = ''; go('repairs'); },
   clearFind: function () { S.q['home.find'] = ''; var i = $('q_home_find'); if (i) i.value = ''; refreshList(); },
   actOpenTile: function () { S.q['act.status'] = q('act.status') === 'open' ? '' : 'open'; render(); },
   qChip: function (el) { S.q[el.dataset.q] = el.dataset.v; refreshList(); },
@@ -1588,7 +1722,7 @@ var ACT = {
     var h = helpFor(el.dataset.view);
     if (!h) return;
     openModal('<header><h2>使い方：' + esc(h[0]) + '</h2><button type="button" class="x" data-act="closeModal" aria-label="閉じる">×</button></header>' +
-      '<div class="body">' + manualHtml(el.dataset.view) + '<h3 style="font-size:14px;margin:14px 0 6px">ポイント</h3><ul class="help-list">' + h[1].map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
+      '<div class="body">' + (PAGE_INTRO[el.dataset.view] ? '<p class="page-intro" style="margin:0">' + esc(PAGE_INTRO[el.dataset.view]) + '</p>' : '') + manualHtml(el.dataset.view) + '<h3 style="font-size:14px;margin:14px 0 6px">ポイント</h3><ul class="help-list">' + h[1].map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></div>' +
       '<footer><span class="grow"></span><button type="button" class="btn primary" data-act="closeModal">閉じる</button></footer>', true, true);
   },
   phrase: function (el) {
@@ -1618,7 +1752,7 @@ var ACT = {
     el.disabled = true;
     call('pinWinInfo', { id: id, pin: pin }, true).then(function (r) {
       S.D.wininfoPins = r.pins || [];
-      toast(pin ? 'ピン留めしました（いちばん上に出しつづけます）' : 'ピンを外しました');
+      toast(pin ? 'ピン留めしました（一番上に出しつづけます）' : 'ピンを外しました');
       render();
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
@@ -1668,7 +1802,7 @@ var ACT = {
   alertAll: function () { S.q['alert.all'] = q('alert.all') === '1' ? '' : '1'; render(); },
   toggleFold: function (el, _p, e) {
     var name = el.dataset.fold, panel = el.closest('.panel');
-    // 開いているときは、見出しを押したときだけ閉じる（一覧の余白を押しても閉じない）。閉じているときは、カードのどこを押しても開く（v0.47.0）
+    // 開いている時は、見出しを押した時だけ閉じる（一覧の余白を押しても閉じない）。閉じている時は、カードのどこを押しても開く（v0.47.0）
     if (panel && panel.classList.contains('open') && e && e.target && !e.target.closest('h2')) return;
     var now = !foldOpen(name);
     S.fold = S.fold || {}; S.fold[name] = now;
@@ -1681,7 +1815,7 @@ var ACT = {
   alertDone: function () { S.q['alert.done'] = q('alert.done') === '1' ? '' : '1'; render(); },
   resolveAlert: function (el) {
     el.disabled = true;
-    call('resolveAlert', { key: el.dataset.key }).then(function (r) { setAlerts(r.alerts); toast('対応済みにしました'); })
+    call('resolveAlert', { key: el.dataset.key }).then(function (r) { setAlerts(r.alerts); toast('対応済みにしました'); var sb = $('pAlertSheetBody'); if (sb) sb.innerHTML = pAlertSheetInner(); })
       .catch(function (e) { el.disabled = false; failToast(e); if (e && e.error === 'notfound') { S.alertsStale = true; render(); } });
   },
   unresolveAlert: function (el) {
@@ -1788,6 +1922,7 @@ var ACT = {
         S.alertsStale = true;
         if (PHOTO_LABEL[key]) { if (photoCount(key, id)) S.files = null; delete S.D.photoCounts[photoCountKey(key, id)]; }
         toast('削除しました');
+        refreshPartSoon(key);
         softRender();
       }).catch(function (e) {
         if (!S.D) return;
@@ -1810,13 +1945,13 @@ var ACT = {
   addAlloc: function (el) {
     el.disabled = true;
     call('addAllocation', { licenseId: $('allocBody').dataset.license, deviceId: el.dataset.device }).then(function (r) {
-      S.D.allocations.push(r.allocation); reindex(); refreshAlloc();
+      S.D.allocations.push(r.allocation); reindex(); refreshAlloc(); refreshPartSoon('license');
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
   removeAlloc: function (el) {
     el.disabled = true;
     call('removeAllocation', { allocationId: el.dataset.id }).then(function (r) {
-      S.D.allocations = S.D.allocations.filter(function (a) { return a['割当ID'] !== r.id; }); reindex(); refreshAlloc();
+      S.D.allocations = S.D.allocations.filter(function (a) { return a['割当ID'] !== r.id; }); reindex(); refreshAlloc(); refreshPartSoon('license');
     }).catch(function (e) { el.disabled = false; failToast(e); });
   },
 
@@ -1857,7 +1992,7 @@ var ACT = {
       }).catch(failToast);
     };
     if (el.dataset.again) {
-      confirmDialog('URLを作り直す', '作り直すと、いまお客様に渡しているURLは使えなくなります。', '作り直す', true).then(function (yes) { if (yes) run(); });
+      confirmDialog('URLを作り直す', '作り直すと、今お客様に渡しているURLは使えなくなります。', '作り直す', true).then(function (yes) { if (yes) run(); });
     } else run();
   },
   showPortalUrl: function () { call('getPortalUrl', { customerId: S.customerId }).then(showPortalUrl).catch(failToast); },
@@ -1872,7 +2007,7 @@ var ACT = {
   editStaff: function (el) { openStaffForm((S.staff || []).filter(function (s) { return s['スタッフID'] === el.dataset.id; })[0]); },
   resetStaff: function (el) {
     var id = el.dataset.id;
-    confirmDialog('パスワード再設定', id + ' のパスワードを仮パスワードに戻します。\nこの人がいまログイン中なら、ログアウトされます。', '再設定する', false).then(function (yes) {
+    confirmDialog('パスワード再設定', id + ' のパスワードを仮パスワードに戻します。\nこの人が今ログイン中なら、ログアウトされます。', '再設定する', false).then(function (yes) {
       if (!yes) return;
       call('resetStaffPassword', { staffId: id, remember: rememberNow() }).then(function (r) { tempPasswordDialog(id, r.tempPassword); }).catch(failToast);
     });
@@ -1909,7 +2044,7 @@ var ACT = {
     clearTimeout(timer);
     if (el !== cur) show(el, e.clientX, e.clientY);
   });
-  // スクロールで消えたあと、カーソルが動いたら、また出す
+  // スクロールで消えた後、カーソルが動いたら、また出す
   document.addEventListener('mousemove', function (e) {
     if (tip) { if (!tip.classList.contains('haslink')) place(e.clientX, e.clientY); return; }
     var el = e.target.closest ? e.target.closest('[data-memo]') : null;
@@ -1941,6 +2076,7 @@ document.addEventListener('click', function (e) {
       Array.prototype.forEach.call(cform.querySelectorAll('select[data-dep]'), function (sel) { sel.dataset.touched = '1'; });
       refreshDependents(cform);
     }
+    if (set.dataset.chips === 'ステータス' && !on) autoDoneStamp(cform, chip.dataset.chip);
     return;
   }
   var pick = e.target.closest('[data-pick]');
@@ -1967,7 +2103,7 @@ document.addEventListener('click', function (e) {
     tok.setAttribute('aria-pressed', String(at === -1));
     return;
   }
-  // 行の中のリンク（「開く」など）を押したときは、行を押した扱いにしない
+  // 行の中のリンク（「開く」など）を押した時は、行を押した扱いにしない
   var anchor = e.target.closest('a[href]');
   if (anchor && !anchor.dataset.act) return;
   var el = e.target.closest('[data-act]');
@@ -2024,7 +2160,7 @@ function clearFormMsg(form) {
 function onFilter(e) {
   var t = e.target;
   if (t.dataset && t.dataset.q) {
-    // 同じ値なら作り直さない。入力欄からカーソルが外れたときの change で一覧を作り直すと、
+    // 同じ値なら作り直さない。入力欄からカーソルが外れた時の change で一覧を作り直すと、
     // そのとき押していた行が差し替わって、1回目のクリックが効かなくなる
     if (q(t.dataset.q, null) === t.value) return;
     S.q[t.dataset.q] = t.value;
@@ -2075,19 +2211,20 @@ document.addEventListener('input', function (e) {
   if (e.target && e.target.id === 'setFind') { filterSettings(e.target.value); return; }
   var t = e.target;
   if (t && t.dataset && t.dataset.homeq) { S.homeQ = t.value; drawHomeHits(); }
+  if (t && t.dataset && t.dataset.homecust) { S.homeCustQ = t.value; var hb = $('homeCustHits'); if (hb) hb.innerHTML = homeCustHitsHtml(); }
   if (t && t.dataset && t.dataset.pq) { var pst = pState(t.dataset.pq); pst.q = t.value; pst.n = P_STEP; pDraw(t.dataset.pq); }
   if (t && t.dataset && t.dataset.mtgmemo) mtgState().memos[mtgMemoKey()] = t.value;
   if (t && t.dataset && t.dataset.mmq) { S.mm.q = t.value; var box = $('mmCustList'); if (box) box.innerHTML = mmCustListHtml(); }
   if (t && t.dataset && t.dataset.mmnote) S.mm.notes[t.dataset.mmnote] = t.value;
 });
-// 入力の途中の内容を、端末に下書きとして残す（打つ・選ぶ・押すのあと、少し待ってから）
+// 入力の途中の内容を、端末に下書きとして残す（打つ・選ぶ・押すの後、少し待ってから）
 ['input', 'change', 'click'].forEach(function (type) {
   document.addEventListener(type, function (e) {
     var form = e.target && e.target.closest ? e.target.closest('form[data-form]') : null;
     if (form) draftLater(form);
   });
 });
-// ページが隠れる・閉じられる前に、待っている下書きをすぐ書く（スマホは、ほかのアプリに切り替えるとページが捨てられることがある）
+// ページが隠れる・閉じられる前に、待っている下書きをすぐ書く（スマホは、他のアプリに切り替えるとページが捨てられることがある）
 document.addEventListener('toggle', function (e) {
   var d = e.target;
   if (d && d.matches && d.matches('details.setgrp') && d.dataset.g) S.setOpen[d.dataset.g] = d.open;
@@ -2144,6 +2281,22 @@ document.addEventListener('change', function (e) {
   }
 });
 
+/**
+ * ステータスを「完了」にした時、空いていれば完了日時（対応）・完了日（修理）に今を入れる（v0.133.0）。
+ * 入れた欄が「詳しい項目」の中なら、入れたことを知らせる。
+ */
+function autoDoneStamp(form, status) {
+  var key = form && form.dataset.form;
+  var target = key === 'activity' && status === S.D.activityDone ? ['完了日時', nowYmdHm()] : key === 'repair' && status === S.D.repairDone ? ['完了日', todayLocal()] : null;
+  if (!target) return;
+  var el = form.elements[target[0]];
+  if (!el || String(el.value).trim()) return;
+  el.value = target[1];
+  el.classList.remove('bad');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  toast(target[0] + 'に ' + target[1] + ' を入れました（「詳しい項目」で直せます）');
+}
+
 document.addEventListener('submit', function (e) {
   var form = e.target;
   if (form.id === 'loginForm') return;
@@ -2163,9 +2316,10 @@ document.addEventListener('submit', function (e) {
       D.rentalOn = r.settings['レンタル機器を使う'] !== 'いいえ';
       D.bizOn = r.settings['営業・案件ツール（テスト版）を使う'] !== 'いいえ';
       D.repairLongDays = Number(r.settings['修理の長期化の日数']) || 0;
+      D.staleDays = r.settings['放置の目安の日数'] === undefined ? 3 : Number(r.settings['放置の目安の日数']) || 0;
       if (!D.me.startView) D.startView = START_KEY[r.settings['開いた直後の画面']] ? r.settings['開いた直後の画面'] : D.startViews[0];
       S.alertsStale = true; S.files = null; S.cal = null;
-      // RSS の設定を保存したときの表示（読みにいくのは、毎朝の処理か「いますぐ更新」）
+      // RSS の設定を保存した時の表示（読みにいくのは、毎朝の処理か「いますぐ更新」）
       D.feed = { rss: { on: r.settings['RSSで自動取得する'] !== 'いいえ' && r.settings['Windows情報を取り込む'] !== 'いいえ', status: D.feed && D.feed.rss ? D.feed.rss.status : null }, hours: (function (h) { h = parseInt(h, 10); return h >= 1 && h <= 6 ? h : 6; })(r.settings['配信を確かめる間隔（時間）']) };
       toast(form.dataset.done); render();
     }).catch(failToast);
@@ -2248,7 +2402,7 @@ document.addEventListener('submit', function (e) {
       var picked = []; [0, 1, 2, 3].forEach(function (i) { var v = $('my_b' + i).value; if (v && picked.indexOf(v) === -1) picked.push(v); });
       S.q['pref.bnav'] = picked.join(','); sendView(); render();
       D.startView = r.startView || (START_KEY[D.settings['開いた直後の画面']] ? D.settings['開いた直後の画面'] : D.startViews[0]);
-      closeModal(form); toast('保存しました。次に開いたときは「' + D.startView + '」から始まります');
+      closeModal(form); toast('保存しました。次に開いた時は「' + startLabel(D.startView) + '」から始まります');
     }).catch(showErr);
     return;
   }
@@ -2256,6 +2410,7 @@ document.addEventListener('submit', function (e) {
     if ($('pw_new').value !== $('pw_new2').value) { showErr({ message: '新しいパスワードが2回で違っています。' }); return; }
     call('changeMyPassword', { current: $('pw_cur').value, next: $('pw_new').value, remember: rememberNow(), ticket: S.ticket || '', keep: keepGet(KEEP_CHOICE_KEY) === '1' }).then(function (r) {
       if (r && r.resume) { urlTicketWrite(r.resume); ticketAt = Date.now(); }
+      if (S.D) S.D.mustChangePassword = false;
       closeModal(form); toast('パスワードを変更しました');
     }).catch(showErr);
     return;

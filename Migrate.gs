@@ -1,18 +1,18 @@
 /**
  * Migrate.gs … 前のシステム（AppSheet で使っていた「Company」スプレッドシート）からの取り込み
  *
- * ・このファイルは、移行のときだけ使う。パッケージ本体には要らないので、移行が終わったら消してよい
+ * ・このファイルは、移行の時だけ使う。パッケージ本体には要らないので、移行が終わったら消してよい
  *   （消すと、スプレッドシートのメニュー「データ移行」も出なくなる）。
  * ・元のスプレッドシートは読むだけ。書き換えない。
  * ・元のIDをそのまま使う（会社ID→顧客ID、PC管理番号→機器ID、対応ID、ライセンスID…）。
  *   そのため、何回実行しても同じものを二重には入れない。まだ入っていない行だけを足す。
- *   AppSheet を使い続けながら、あとでもう一度実行して差分を取り込むこともできる。
+ *   AppSheet を使い続けながら、後でもう一度実行して差分を取り込むこともできる。
  * ・すでにこちらに入っている行は、書き換えない（こちらで直した内容を守る）。
  * ・列は、元のシートに合わせる。
  *     - 元にある列は、1つも落とさずに持ってくる（アプリが使わない列も、そのままの見出しで入れる）。
  *     - 並びも、元のシートの順にそろえる。元に無い列（地域・状態・登録日時など）は右端に置く。
  *     - 見出しの名前だけは、アプリが使う名前にする（会社ID→顧客ID、電話番号→電話 など。MIG_COLUMNS を見る）。
- *     - アプリが使わない列は、シートに入るだけで、画面には出ない。要らなければ、あとで列ごと消してよい。
+ *     - アプリが使わない列は、シートに入るだけで、画面には出ない。要らなければ、後で列ごと消してよい。
  *     - 前に取り込んだ行で、持ってきた列が空のところは、元の値で埋める（アプリが使う列は書き換えない）。
  *
  * メニュー（スプレッドシートを開き直すと「データ移行」が出る）
@@ -75,7 +75,7 @@ const MIG_COLUMNS = [
   { sheet: SHEET_LAYOUTS, idField: 'レイアウトID', source: 'LayoutData', rename: { '会社ID': '顧客ID', '図形要素情報(JSON)': '図形' } }
 ];
 
-/** Setup.gs の onOpen から呼ばれる（このファイルがあるときだけ、メニューが出る） */
+/** Setup.gs の onOpen から呼ばれる（このファイルがある時だけ、メニューが出る） */
 function migrationMenu_(ui) {
   ui.createMenu('データ移行')
     .addItem('1. 元のスプレッドシートを指定する', 'migrateSetSource')
@@ -192,9 +192,9 @@ function migHeaders_(src, name) {
 /**
  * 1つのシートの、列の並べ方を決める。
  * @return {{sheet, idField, desired:Array<string>, extras:Array<Array<string>>, added:Array<string>}}
- *   desired … そろえたあとの見出しの並び（元の順 → こちらにしか無い列）
+ *   desired … そろえた後の見出しの並び（元の順 → こちらにしか無い列）
  *   extras  … アプリが使わない列 [元の見出し, こちらの見出し]
- *   added   … いまのシートに無くて、足すことになる見出し
+ *   added   … 今のシートに無くて、足すことになる見出し
  */
 function migColumnPlan_(src, def) {
   const types = typeMap_(def.sheet);
@@ -203,7 +203,7 @@ function migColumnPlan_(src, def) {
   const extras = [];
   migHeaders_(src, def.source).forEach(function (h) {
     const to = def.rename[h] || h;
-    if (desired.indexOf(to) !== -1) return;          // 同じ見出しが2つあるときは、左の1つだけ
+    if (desired.indexOf(to) !== -1) return;          // 同じ見出しが2つある時は、左の1つだけ
     desired.push(to);
     if (types[to] === undefined) extras.push([h, to]);
   });
@@ -298,7 +298,7 @@ function migYesNo_(v) {
 function migPlan_(src, everything) {
   const now = nowStamp_();
   const plan = { adds: {}, options: {}, layouts: [], lines: [], notes: [], columns: [], fill: {}, fillCells: 0, everything: !!everything, sourceName: src.getName() };
-  // 列の並べ方（顧客だけのときは、顧客のシートだけ）
+  // 列の並べ方（顧客だけの時は、顧客のシートだけ）
   const columnOf = {};
   MIG_COLUMNS.forEach(function (def) {
     if (!everything && def.sheet !== SHEET_CUSTOMERS) return;
@@ -348,7 +348,7 @@ function migPlan_(src, everything) {
   // ---- 顧客 ← Company
   const companies = migRead_(src, 'Company');
   const custHave = have(SHEET_CUSTOMERS, '顧客ID');
-  const custAll = {};                       // 元にある顧客ID → {name, contract}（ほかのシートの突き合わせ用）
+  const custAll = {};                       // 元にある顧客ID → {name, contract}（他のシートの突き合わせ用）
   const custNames = {};
   const sCust = section('顧客', SHEET_CUSTOMERS, companies.length);
   const dupName = {};
@@ -520,8 +520,8 @@ function migPlan_(src, everything) {
       'ステータス': status, '内容': migText_(r['内容'], 4800) + (reason ? '\n【ピン留めの理由】' + reason : ''), 'ピン留め': pinned[id] ? YES : NO
     })));
   });
-  if (actNoKind) note('対応履歴', '注意', '', '対応種別が空のもの ' + actNoKind + '件は、空のまま入れる（あとで編集するときに種別を選ぶ）');
-  if (actTimeOdd) note('対応履歴', '注意', '', '完了日時が開始日時より前のもの ' + actTimeOdd + '件は、そのまま入れる（対応時間には数えない。編集するときに直す）');
+  if (actNoKind) note('対応履歴', '注意', '', '対応種別が空のもの ' + actNoKind + '件は、空のまま入れる（後で編集する時に種別を選ぶ）');
+  if (actTimeOdd) note('対応履歴', '注意', '', '完了日時が開始日時より前のもの ' + actTimeOdd + '件は、そのまま入れる（対応時間には数えない。編集する時に直す）');
   if (actImages) note('対応履歴', '注意', '', '「画像」が付いた対応 ' + actImages + '件は、セルの文字（ファイルの場所）だけを持ってくる。画像そのものは写さない');
 
   // ---- 修理案件 ← repairlist
@@ -559,8 +559,8 @@ function migPlan_(src, everything) {
       '件名': migLine_(r['タイトル'], 100) || '（件名なし）', '内容': migText_(r['内容'], 5000)
     })));
   });
-  if (sRep.add) note('修理案件', '注意', '', 'シリアルから機器につなげたもの ' + repLinked + '件（ほかは、機器を選ばないまま入れる）');
-  if (repNoDoneDate) note('修理案件', '注意', '', '完了になっているが完了日が空のもの ' + repNoDoneDate + '件は、完了日を空のまま入れる（「この期間に完了」には数えない。あとで編集して保存すると、その日が完了日に入る）');
+  if (sRep.add) note('修理案件', '注意', '', 'シリアルから機器につなげたもの ' + repLinked + '件（他は、機器を選ばないまま入れる）');
+  if (repNoDoneDate) note('修理案件', '注意', '', '完了になっているが完了日が空のもの ' + repNoDoneDate + '件は、完了日を空のまま入れる（「この期間に完了」には数えない。後で編集して保存すると、その日が完了日に入る）');
   if (repMedia) note('修理案件', '注意', '', 'サイン・写真が付いた修理 ' + repMedia + '件は、セルの文字（ファイルの場所）だけを持ってくる。画像そのものは写さない');
 
   // ---- ライセンス・認証情報 ← license
@@ -711,7 +711,7 @@ function migPlan_(src, everything) {
     })));
   });
 
-  // ---- レイアウト ← LayoutData（図形は、機器を入れたあとで検査して入れる）
+  // ---- レイアウト ← LayoutData（図形は、機器を入れた後で検査して入れる）
   const layouts = migRead_(src, 'LayoutData');
   const layoutHave = have(SHEET_LAYOUTS, 'レイアウトID');
   const sLayout = { area: 'レイアウト', total: layouts.length, add: 0, exists: 0, skip: 0 };
@@ -837,7 +837,7 @@ function migFill_(c, fill, write) {
   let count = 0;
   c.extras.forEach(function (x) {
     const col = headers.indexOf(x[1]);
-    // まだ列が無いとき（確認だけのとき）は、全部が空として数える
+    // まだ列が無いとき（確認だけの時）は、全部が空として数える
     const range = col === -1 ? null : sheet.getRange(2, col + 1, lastRow - 1, 1);
     const current = range ? range.getValues() : ids.map(function () { return ['']; });
     const hit = [];
@@ -847,7 +847,7 @@ function migFill_(c, fill, write) {
     });
     count += hit.length;
     if (!write || !hit.length || !range) return;
-    // 列をまとめて書く（1セルずつ書くと遅い）。空だったセルだけを変え、ほかは読んだ値をそのまま戻す
+    // 列をまとめて書く（1セルずつ書くと遅い）。空だったセルだけを変え、他は読んだ値をそのまま戻す
     const formats = range.getNumberFormats();
     const next = current.map(function (cell) { return [typeof cell[0] === 'string' ? toCell_('text', cell[0]) : cell[0]]; });
     hit.forEach(function (h) { formats[h[0]] = ['@']; next[h[0]] = [toCell_('text', h[1])]; });
@@ -881,7 +881,7 @@ function migApply_(plan) {
     appendRecords_(sheetName, plan.adds[sheetName] || []);
   });
 
-  // レイアウト（機器が入ったあとで、図形を検査する。ほかの顧客の機器を指すピン・知らない図形は落ちる）
+  // レイアウト（機器が入った後で、図形を検査する。他の顧客の機器を指すピン・知らない図形は落ちる）
   const now = nowStamp_();
   const layoutRows = [];
   plan.layouts.forEach(function (l) {
@@ -900,7 +900,7 @@ function migApply_(plan) {
   });
   appendRecords_(SHEET_LAYOUTS, layoutRows);
 
-  // すでに入っていた行の、持ってきた列が空のところを埋める（いま足した行は、もう入っている）
+  // すでに入っていた行の、持ってきた列が空のところを埋める（今足した行は、もう入っている）
   plan.fillCells = 0;
   plan.columns.forEach(function (c) { plan.fillCells += migFill_(c, plan.fill[c.sheet], true); });
 
@@ -908,7 +908,7 @@ function migApply_(plan) {
   logAudit_('データ移行', plan.sourceName, '', plan.everything ? '全部' : '顧客だけ', '', total + '件を取り込み', 'データ移行');
 }
 
-/** 取り込んだあとに、要対応が何件出るか（多いときに、先に知らせる） */
+/** 取り込んだ後に、要対応が何件出るか（多い時に、先に知らせる） */
 function migAlertNote_() {
   let list;
   try { list = withLock_(function () { return alertsForClient_(); }); } catch (e) { return ''; }
@@ -916,8 +916,8 @@ function migAlertNote_() {
   if (!open.length) return '';
   const counts = {};
   open.forEach(function (a) { counts[a.label] = (counts[a.label] || 0) + 1; });
-  return 'いま、要対応が ' + open.length + '件 出ています（' + Object.keys(counts).map(function (k) { return k + ' ' + counts[k]; }).join('、') + '）。' +
-    '毎朝の通知を入れてあると、次の朝にまとめて届きます。多すぎるときは、管理画面の「設定」→「要対応と通知」で日数やしきい値を変えてください（0 にすると、その種類は出ません）。';
+  return '今、要対応が ' + open.length + '件 出ています（' + Object.keys(counts).map(function (k) { return k + ' ' + counts[k]; }).join('、') + '）。' +
+    '毎朝の通知を入れてあると、次の朝にまとめて届きます。多すぎる時は、管理画面の「設定」→「要対応と通知」で日数やしきい値を変えてください（0 にすると、その種類は出ません）。';
 }
 
 function migSummary_(plan, done) {

@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.126.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -36,7 +36,7 @@ function activeStaffNames_() {
  * 1項目を検証して、シートに入れる形（文字か数値）にそろえる。
  * @param {Object} f       ENTITIES の項目定義
  * @param {*} raw          画面から来た値
- * @param {*} current      編集のときの今の値（新規なら ''）
+ * @param {*} current      編集の時の今の値（新規なら ''）
  * @param {Object} ctx     {options, staffNames}
  */
 function normalizeField_(f, raw, current, ctx) {
@@ -83,7 +83,7 @@ function normalizeField_(f, raw, current, ctx) {
       return s;
     }
     case 'yesno': {
-      const s = cleanText_(raw) || NO;      // 空は「いいえ」（あとから足した列は、前からある行では空のため。v0.99.0）
+      const s = cleanText_(raw) || NO;      // 空は「いいえ」（後から足した列は、前からある行では空のため。v0.99.0）
       if (s !== YES && s !== NO) throw bad('は「はい」か「いいえ」です。');
       return s;
     }
@@ -178,6 +178,10 @@ function validateEntity_(key, data, existing, me, ctx0) {
     }
   }
   if (key === 'activity') {
+    // v0.133.0：完了にしたのに完了日時が空なら、今の日時を入れる（修理の完了日と同じ）
+    if (merged['ステータス'] === ACTIVITY_DONE && !merged['完了日時'] && ent.fields.some(function (f) { return f.name === '完了日時'; })) {
+      values['完了日時'] = merged['完了日時'] = nowStamp_();
+    }
     if (merged['開始日時'] && merged['完了日時'] && merged['完了日時'] < merged['開始日時']) {
       throw appError_('invalid', '完了日時が開始日時より前になっています。');
     }
@@ -267,6 +271,63 @@ function customerIdOf_(key, row) {
 }
 
 // ---------------------------------------------------------------------------
+// v0.140.0：韓国語（ハングル）の文を、保存の時に日本語に訳す（設定「韓国語を日本語に訳す」）
+//   ハングルのある行だけを訳す（日本語の行はそのまま）。長い文の欄は、下に原文も残す。
+//   すでに訳した文（原文の印がある）を直した時は、印より上の新しいハングルの行だけを訳し、原文の所に足す
+// ---------------------------------------------------------------------------
+const TRANSLATE_KEYS = { activity: true, repair: true, maintenance: true, memo: true };
+const HANGUL_RE = /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3]/;
+const TRANSLATE_MARK = '――― 原文（韓国語）―――';
+/** お客様に見せる文から、原文（韓国語）の所を外す（お客様ページ・月次レポート） */
+function withoutOriginal_(v) {
+  const s = String(v === null || v === undefined ? '' : v);
+  const at = s.indexOf(TRANSLATE_MARK);
+  return at === -1 ? s : s.slice(0, at).replace(/\s+$/, '');
+}
+function forCustomer_(rec) {
+  ['内容', '件名'].forEach(function (k) { if (rec && typeof rec[k] === 'string') rec[k] = withoutOriginal_(rec[k]); });
+  return rec;
+}
+function koToJa_(lines) {
+  if (!lines.length) return [];
+  const joined = LanguageApp.translate(lines.join('\n'), 'ko', 'ja');
+  const out = String(joined || '').split('\n');
+  if (out.length === lines.length) return out;
+  return lines.map(function (l) { return String(LanguageApp.translate(l, 'ko', 'ja') || l); });      // 行の数が合わない時は、1行ずつ
+}
+/** @param {Object=} prev 直す前の記録（あれば、前と同じ行は訳し直さない。訳した後もハングルが残る行（名前など）を、直すたびに訳さないため） */
+function translateKorean_(key, data, settings, prev) {
+  if (!TRANSLATE_KEYS[key] || !data || (settings && settings['韓国語を日本語に訳す'] === NO)) return [];
+  const done = [];
+  ENTITIES[key].fields.forEach(function (f) {
+    if (f.type !== 'longtext' && f.name !== '件名') return;
+    const v = data[f.name];
+    if (typeof v !== 'string' || !HANGUL_RE.test(v)) return;
+    const at = v.indexOf(TRANSLATE_MARK);
+    const head = at === -1 ? v : v.slice(0, at);
+    const tail = at === -1 ? '' : v.slice(at + TRANSLATE_MARK.length).replace(/^\n+/, '').replace(/\s+$/, '');
+    const lines = head.replace(/\s+$/, '').split('\n');
+    const same = {};
+    if (prev && typeof prev[f.name] === 'string') String(prev[f.name]).split(TRANSLATE_MARK)[0].split('\n').forEach(function (l) { same[l] = true; });
+    const idx = [];
+    lines.forEach(function (l, i) { if (HANGUL_RE.test(l) && !same[l]) idx.push(i); });
+    if (!idx.length) return;
+    let ja;
+    try { ja = koToJa_(idx.map(function (i) { return lines[i]; })); } catch (e) { console.warn('翻訳できませんでした（そのまま保存します）: ' + e); return; }
+    const orig = idx.map(function (i) { return lines[i]; });
+    idx.forEach(function (i, n) { lines[i] = ja[n] || lines[i]; });
+    let out = lines.join('\n');
+    if (f.type === 'longtext') {
+      const full = out + '\n\n' + TRANSLATE_MARK + '\n' + (tail ? tail + '\n' : '') + orig.join('\n');
+      if (full.length <= (f.max || 5000)) out = full;
+    }
+    data[f.name] = out;
+    done.push(f.name);
+  });
+  return done;
+}
+
+// ---------------------------------------------------------------------------
 // 登録・編集の共通処理
 // ---------------------------------------------------------------------------
 function saveEntity_(key, params, after) {
@@ -279,13 +340,32 @@ function saveEntity_(key, params, after) {
   // 選択肢とスタッフの名前は、ロックの前に控えから読んでおく（v0.18.0。ロックの中でシートを読まない）
   const ctx0 = { options: getOptions_(), staffNames: activeStaffNames_() };
   const tStart = Date.now();
+  let translated = [];      // ロックの前に訳す（v0.140.0）
+  if (TRANSLATE_KEYS[key] && Object.keys(data).some(function (k) { return typeof data[k] === 'string' && HANGUL_RE.test(data[k]); })) {
+    let prev = null;
+    try { prev = id ? findById_(ent.sheet, ent.idField, id) : null; } catch (e) { prev = null; }
+    translated = translateKorean_(key, data, getSettings_(), prev);
+  }
+  // v0.136.0：同じ保存を2回受けても、2件にしない。画面は電波が切れた時、同じ reqId でもう一度送る
+  //   （1回目がサーバーに届いていて、返事だけが届かなかったこともある）。1回目の返事を6時間覚えておき、2回目はそれを返す
+  const reqKey = typeof p.reqId === 'string' && /^r[0-9a-z]{6,40}$/.test(p.reqId) ? 'req_' + me.id + '_' + p.reqId : '';
   const res = withLock_(function () {
+    if (reqKey) {
+      let seen = null;
+      try { seen = CacheService.getScriptCache().get(reqKey); } catch (e) { seen = null; }
+      if (seen) { try { const again = JSON.parse(seen); again.repeated = true; return again; } catch (e) { /* 読めなければ、ふつうに保存する */ } }
+    }
+    const out = saveBody_();
+    if (reqKey) { try { const txt = JSON.stringify(out); if (txt.length < 90000) CacheService.getScriptCache().put(reqKey, txt, 21600); } catch (e) { /* 覚えられなくても、保存はできている */ } }
+    return out;
+  });
+  function saveBody_() {
     ensureColumns_(ent.sheet);
     let existing = id ? findById_(ent.sheet, ent.idField, id) : null;
-    // 退避した古い対応を直すときは、元のシートに戻してから（v0.112.0）
+    // 退避した古い対応を直す時は、元のシートに戻してから（v0.112.0）
     if (id && !existing && key === 'activity' && restoreArchivedActivity_(id)) existing = findById_(ent.sheet, ent.idField, id);
-    if (id && !existing) throw appError_('notfound', 'その' + ent.label + 'が見つかりません。ほかの人が消した可能性があります。');
-    // 認証情報を見せない設定のとき、スタッフは「新しく登録」だけできる（見る・直すは管理者だけ。v0.21.0 で v0.19.0 の動きに戻した）
+    if (id && !existing) throw appError_('notfound', 'その' + ent.label + 'が見つかりません。他の人が消した可能性があります。');
+    // 認証情報を見せない設定の時、スタッフは「新しく登録」だけできる（見る・直すは管理者だけ。v0.21.0 で v0.19.0 の動きに戻した）
     if (key === 'credential' && existing && !canSeeSecrets_(me, getSettings_())) {
       throw appError_('forbidden', '認証情報の編集は管理者だけができます。');
     }
@@ -308,7 +388,7 @@ function saveEntity_(key, params, after) {
     const names = [], befores = [], afters = [];
     Object.keys(values).forEach(function (k) {
       if (String(values[k]) === String(existing[k] === undefined ? '' : existing[k])) return;
-      // あとから足した「はい／いいえ」の列は、前からある行では空。空→「いいえ」は、変えたことにしない（v0.99.0）
+      // 後から足した「はい／いいえ」の列は、前からある行では空。空→「いいえ」は、変えたことにしない（v0.99.0）
       if (values[k] === NO && (existing[k] === '' || existing[k] === undefined) && ent.fields.some(function (f) { return f.name === k && f.type === 'yesno'; })) return;
       changes[k] = values[k];
       names.push(k);
@@ -324,7 +404,8 @@ function saveEntity_(key, params, after) {
     }
     const saved = { record: toClient_(key, echoRow_(ent.sheet, existing, changes)), created: false };
     return after ? Object.assign(saved, after(Object.assign({}, existing, changes), me)) : saved;
-  });
+  }
+  if (translated.length) res.translated = translated;
   res.srvMs = Date.now() - tStart;      // サーバーで使った時間（画面の下の「読み込み：…」に出す。v0.88.0）
   // 控えの作り直しは、画面がこのあと別に呼ぶ warmAfterSave で（v0.112.0。保存の返事を待たせない）
   if (key !== 'credential') res.warm = ent.sheet;
@@ -332,12 +413,12 @@ function saveEntity_(key, params, after) {
 }
 
 /**
- * 保存のあとで、そのシートから作る控え（一覧・要対応）を作り直しておく（v0.108.0）。
+ * 保存の後で、そのシートから作る控え（一覧・要対応）を作り直しておく（v0.108.0）。
  *   画面は保存の返事を待たずに先へ進むので、ここで少し時間を使っても待たせない。
- *   次の「更新」や、ほかの人の読み込みは、シートを読まずに控えから返せる（保存の直後の「更新」が遅かった）。
+ *   次の「更新」や、他の人の読み込みは、シートを読まずに控えから返せる（保存の直後の「更新」が遅かった）。
  */
 /**
- * 保存のあとで、画面が裏で呼ぶ（v0.112.0）。保存そのものとは別の実行なので、保存の返事は待たない。
+ * 保存の後で、画面が裏で呼ぶ（v0.112.0）。保存そのものとは別の実行なので、保存の返事は待たない。
  * @param {{token:string, sheets:string[]}} params
  */
 function warmAfterSave(params) {
@@ -355,10 +436,10 @@ function warmAfterSave_(sheetName) {
   try {
     if (!cacheOn_()) return;
     const parts = Object.keys(CACHE_DEPS).filter(function (p) { return p.indexOf('ref') !== 0 && CACHE_DEPS[p].indexOf(sheetName) !== -1; });
-    if (!parts.length || parts.length > 8) return;       // 設定のように、ほとんど全部に効くシートは、作り直さない（読むときに作る）
+    if (!parts.length || parts.length > 8) return;       // 設定のように、ほとんど全部に効くシートは、作り直さない（読む時に作る）
     bootParts_(parts);
   } catch (e) {
-    console.warn('保存のあとの控えの作り直しに失敗しました（読むときに作り直します）: ' + e);
+    console.warn('保存の後の控えの作り直しに失敗しました（読む時に作り直します）: ' + e);
   }
 }
 
@@ -443,8 +524,8 @@ function saveDevice(params) {
   });
 }
 /**
- * v0.122.0：購入元が自社（EN・GROW）で、保証期限が空のときは、キッティング日（購入日）から1年（1年後の前日）を入れる。
- *   延長保証などで保証期限を入れたときは、そのまま使う。保証期限を送ってこない更新（一部だけの更新）では何もしない。
+ * v0.122.0：購入元が自社（EN・GROW）で、保証期限が空の時は、キッティング日（購入日）から1年（1年後の前日）を入れる。
+ *   延長保証などで保証期限を入れた時は、そのまま使う。保証期限を送ってこない更新（一部だけの更新）では何もしない。
  */
 function isOwnSource_(v, settings) {
   const s = String(v || '').trim();
@@ -548,7 +629,7 @@ function convertProject(params) {
     const ctx0 = { options: getOptions_(), staffNames: activeStaffNames_() };
     return withLock_(function () {
       const pj = findById_(SHEET_PROJECTS, '案件ID', cleanText_(p.id));
-      if (!pj) throw appError_('notfound', 'その案件が見つかりません。ほかの人が消した可能性があります。');
+      if (!pj) throw appError_('notfound', 'その案件が見つかりません。他の人が消した可能性があります。');
       if (pj['状態'] === PROJECT_LOST) throw appError_('invalid', '失注の案件は、顧客にできません。先に状態を直してください。');
       if (to === 'order' && PROJECT_SALES.indexOf(pj['状態']) === -1) throw appError_('invalid', 'この案件は、もう受注の後の状態（' + pj['状態'] + '）です。');
       const now = nowStamp_();
@@ -672,7 +753,7 @@ function listCredentials(params) {
     // 管理者には、パスワードとシリアルキーも最初から渡す（v0.20.0。「表示」を押さなくても見える）。見たことは1行だけ変更履歴に残す
     const withSecrets = me.isAdmin && p.secrets !== false;
     if (withSecrets && p.audit !== false && rows.some(function (r) { return r['パスワード'] || r['シリアルキー']; })) {
-      // 変更履歴に書けなくても（ほかの保存と重なった）、一覧は返す
+      // 変更履歴に書けなくても（他の保存と重なった）、一覧は返す
       try { withLock_(function () { logAudit_('認証情報の表示（一覧）', customerId, customerId, '', '', rows.length + '件', me.name); }); }
       catch (e) { console.warn('認証情報の表示を変更履歴に書けませんでした: ' + e); }
     }
@@ -872,7 +953,7 @@ function winInfoPins_() {
   return Array.isArray(a) ? a.filter(function (x) { return typeof x === 'string' && /^[A-Za-z0-9_-]{1,30}$/.test(x); }).slice(0, WININFO_PIN_MAX) : [];
 }
 
-/** いちばん上に出すぶん。ピン留めしたものを先に（日付が古くても出す）、残りは日付が新しいものから */
+/** 一番上に出すぶん。ピン留めしたものを先に（日付が古くても出す）、残りは日付が新しいものから */
 function recentWinInfo_(rows, today, forCustomer) {
   const p = today.split('-');
   const from = Utilities.formatDate(new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) - WININFO_SHOW_DAYS), scriptTz_(), 'yyyy-MM-dd');
@@ -892,7 +973,7 @@ function recentWinInfo_(rows, today, forCustomer) {
  * @return {number} 消した件数
  */
 function tidyWinInfo_() {
-  // 読めない値（文字・マイナス）のときは消さない。大きすぎる値は上限（100年）にする
+  // 読めない値（文字・マイナス）の時は消さない。大きすぎる値は上限（100年）にする
   const n = parseInt(getSettings_()['Windows情報を残す日数'], 10);
   if (!isFinite(n) || n <= 0) return 0;
   const days = Math.min(n, 36500);
@@ -911,7 +992,7 @@ function tidyWinInfo_() {
 }
 
 /**
- * Windows情報をピン留めする・外す（v0.33.0）。ピン留めしたものは、期限（日数）にかかわらず、いちばん上に出しつづける。
+ * Windows情報をピン留めする・外す（v0.33.0）。ピン留めしたものは、期限（日数）にかかわらず、一番上に出しつづける。
  * @param {{token:string, id:string, pin:boolean}} params
  */
 function pinWinInfo(params) {
@@ -974,10 +1055,19 @@ function webAppUrl_() {
   return getSettings_()['ウェブアプリURL'] || ScriptApp.getService().getUrl() || '';
 }
 
+/** v0.141.0：人が開くURL（Netlify などに埋め込んで公開している時は、そのサイト）。収集ツールの送り先は webAppUrl_ のまま */
+function siteUrl_() {
+  return getSettings_()['公開サイトのURL'] || webAppUrl_();
+}
+/** 埋め込んでよいサイトの origin（https://xxxx.netlify.app）。設定が無ければ空 */
+function siteOrigin_() {
+  const m = /^(https:\/\/[^/?#]+)/i.exec(String(getSettings_()['公開サイトのURL'] || '').trim());
+  return m ? m[1].toLowerCase() : '';
+}
 function portalUrl_(portalToken) {
   if (!portalToken) return '';
-  const base = webAppUrl_();
-  return base ? base + '?t=' + portalToken : '';
+  const base = siteUrl_();
+  return base ? base + (base.indexOf('?') === -1 ? '?' : '&') + 't=' + portalToken : '';
 }
 
 /**
@@ -1035,7 +1125,7 @@ function licenseCredInput_(raw) {
   return { loginId: one('ログインID', 'loginId'), password: one('パスワード', 'password'), serialKey: one('シリアルキー', 'serialKey'), clear: raw.clear === true };
 }
 
-/** ライセンスに紐づく認証情報（いちばん上の1件）。withLock_ の中で呼ぶ */
+/** ライセンスに紐づく認証情報（一番上の1件）。withLock_ の中で呼ぶ */
 function licenseCredRow_(licenseId) {
   return readTable_(SHEET_CREDENTIALS).rows.filter(function (c) {
     return c['対象区分'] === 'ライセンス' && String(c['対象ID']) === String(licenseId);
@@ -1062,7 +1152,7 @@ function saveLicenseCred_(lic, cred, me) {
   const changes = {};
   const names = [];
   if (cred.loginId !== String(row['ログインID'] || '')) { changes['ログインID'] = cred.loginId; names.push('ログインID'); }
-  // パスワード・シリアルキーは、入れたときだけ変える。「消す」を選んだときは空にする
+  // パスワード・シリアルキーは、入れた時だけ変える。「消す」を選んだ時は空にする
   if (cred.password || cred.clear) { if (cred.password !== String(row['パスワード'] || '')) { changes['パスワード'] = cred.password; names.push('パスワード'); } }
   if (cred.serialKey || cred.clear) { if (cred.serialKey !== String(row['シリアルキー'] || '')) { changes['シリアルキー'] = cred.serialKey; names.push('シリアルキー'); } }
   if (names.length) {
@@ -1093,7 +1183,7 @@ function moveDevice(params) {
       const deviceId = String(dev['機器ID']);
       const from = String(dev['顧客ID']);
       const toId = String(to['顧客ID']);
-      if (from === toId) throw appError_('invalid', 'いまと同じ顧客です。');
+      if (from === toId) throw appError_('invalid', '今と同じ顧客です。');
       const now = nowStamp_();
       const moved = { activities: [], repairs: [], maintenances: [], credentials: [], allocations: 0 };
 
@@ -1114,7 +1204,7 @@ function moveDevice(params) {
           const rowsToMove = [];
           rowsWhere_(t[1], '機器ID', deviceId).forEach(function (r) {
             const mine = String(r['顧客ID']) !== toId;
-            if (t[0] === 'activity') actCust[String(r['対応ID'])] = mine ? toId : String(r['顧客ID']);   // 動かしたあとの顧客（あとで読み直さない）
+            if (t[0] === 'activity') actCust[String(r['対応ID'])] = mine ? toId : String(r['顧客ID']);   // 動かした後の顧客（後で読み直さない）
             if (!mine) return;
             rowsToMove.push(r._row);
             photoPairs.push([t[0], String(r[t[2]])]);
@@ -1163,7 +1253,7 @@ function moveDevice(params) {
       // 書いた値から返事を作る（読み直さない。v0.126.0）
       return { record: toClient_('device', echoRow_(SHEET_DEVICES, dev, { '顧客ID': toId, '更新日時': now })), moved: moved, clearedRepairIds: clearedRepairs, clearedLoanIds: clearedLoans, allocIds: allocIds };
     });
-    // v0.126.0：ほかの項目も変えていたら、同じ実行で続けて保存する（前は画面がもう1回サーバーを呼んでいて、待ちが2回分だった）
+    // v0.126.0：他の項目も変えていたら、同じ実行で続けて保存する（前は画面がもう1回サーバーを呼んでいて、待ちが2回分だった）
     if (p.data && typeof p.data === 'object') {
       const data = Object.assign({}, p.data, { '機器ID': String(p.deviceId), '顧客ID': String(p.customerId) });
       fillOwnWarranty_(data, getSettings_());
@@ -1178,7 +1268,7 @@ function moveDevice(params) {
 // ---------------------------------------------------------------------------
 // 仮受付の機器を削除する（管理者・v0.64.0）
 //   収集ツールがトークンなしで送ってきて「仮受付（未割り当て）」に入った機器だけ、消せる。
-//   ほかの顧客の機器は消せない（消すのではなく、廃棄にする）。
+//   他の顧客の機器は消せない（消すのではなく、廃棄にする）。
 //   対応・修理・保守・認証情報・ライセンスの割当がもう付いている機器は、消さない（先に顧客を選び直して振り分ける）。
 //   機器診断（収集ツールの情報）と写真は、機器と一緒に消す。
 // ---------------------------------------------------------------------------
@@ -1404,7 +1494,7 @@ function deleteAttachment(params) {
     const me = requireSession_(p.token);
     return withLock_(function () {
       const row = attachById_(p.id);
-      // 消せるのは管理者。記録に付けた写真だけは、付けた本人も消せる（撮りまちがいを直せるように）
+      // 消せるのは管理者。記録に付けた写真だけは、付けた本人も消せる（撮り間違いを直せるように）
       const ownPhoto = ownPhoto_(row, me);
       if (!me.isAdmin && !ownPhoto) throw appError_('forbidden', 'この操作は管理者だけができます。');
       if (!row) throw appError_('notfound', 'その添付が見つかりません。');
@@ -1544,7 +1634,7 @@ function uploadPhoto(params) {
   });
 }
 
-/** 写真の本体（画面で大きく見るとき）。ドライブから読んで渡すので、リンクで共有していなくても見られる。@param {{token:string, id:string}} params */
+/** 写真の本体（画面で大きく見る時）。ドライブから読んで渡すので、リンクで共有していなくても見られる。@param {{token:string, id:string}} params */
 function getPhoto(params) {
   return api_(function () {
     const p = params || {};
@@ -1559,7 +1649,7 @@ function getPhoto(params) {
 }
 
 /**
- * 記録の顧客を変えたときに、付いていた写真の顧客も合わせる（withLock_ の中で呼ぶこと）。
+ * 記録の顧客を変えた時に、付いていた写真の顧客も合わせる（withLock_ の中で呼ぶこと）。
  * 「お客様に見せる」は「いいえ」に戻す（前の顧客に見せていたものが、そのまま新しい顧客のページに出ないように）。
  */
 function movePhotosOf_(key, id, customerId) { movePhotosMany_([[key, id]], customerId); }
@@ -1580,11 +1670,11 @@ function movePhotosMany_(pairs, customerId) {
   updateRowsSame_(SHEET_ATTACH, rows, { '顧客ID': customerId, 'お客様に見せる': NO });
 }
 
-/** 記録を消すときに、付いていた写真も消す（ドライブのファイルはゴミ箱へ）。withLock_ の中で呼ぶこと */
+/** 記録を消す時に、付いていた写真も消す（ドライブのファイルはゴミ箱へ）。withLock_ の中で呼ぶこと */
 function removePhotosOf_(key, id) {
   const def = Object.prototype.hasOwnProperty.call(PHOTO_TARGETS, key) ? PHOTO_TARGETS[key] : null;
   if (!def) return 0;
-  // 機器を消すときは、収集ツールのレポート（v0.25.0）も一緒に消す
+  // 機器を消す時は、収集ツールのレポート（v0.25.0）も一緒に消す
   const rows = photoRows_(def[2], String(id)).concat(key === 'device' ? photoRows_(REPORT_TARGET_LABEL, String(id)) : []);
   rows.map(function (r) { trashFile_(r['DriveファイルID']); return r._row; })
     .sort(function (a, b) { return b - a; })
@@ -1635,7 +1725,7 @@ function layoutColor_(v, fallback) {
   return typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : fallback;
 }
 
-/** 回転（度）。0〜359 の整数にする。0 のときは持たせない（保存する量を増やさない） */
+/** 回転（度）。0〜359 の整数にする。0 の時は持たせない（保存する量を増やさない） */
 function layoutRot_(el, out) {
   const n = Number(el.r);
   if (!isFinite(n)) return out;
@@ -1656,7 +1746,7 @@ function layoutText_(v, max) {
 
 /**
  * 画面から来た図形の一覧を検査して、決めた形だけにする。位置と大きさは図の幅・高さに対する％。
- * 知らない種類・ほかの顧客の機器を指すピンは捨てる。箱型・文字・アイコンは r（回転の度数）を持てる。
+ * 知らない種類・他の顧客の機器を指すピンは捨てる。箱型・文字・アイコンは r（回転の度数）を持てる。
  */
 function sanitizeLayoutElements_(elements, customerId) {
   if (!Array.isArray(elements)) throw appError_('invalid', '図形の形式が正しくありません。');
@@ -1684,7 +1774,7 @@ function sanitizeLayoutElements_(elements, customerId) {
   const gcount = {};
   out.forEach(function (x) { if (x.grp) gcount[x.grp] = (gcount[x.grp] || 0) + 1; });
   out.forEach(function (x) { if (x.grp && gcount[x.grp] < 2) delete x.grp; });
-  // 回線：つなぎ先の記号が無いもの、同じ2つをつなぐ2本目は捨てる（記号を消したあとに残った回線を、ここでも掃除する）
+  // 回線：つなぎ先の記号が無いもの、同じ2つをつなぐ2本目は捨てる（記号を消した後に残った回線を、ここでも掃除する）
   const pairs = {};
   return out.filter(function (el) {
     if (el.type !== 'link') return true;
@@ -1696,7 +1786,7 @@ function sanitizeLayoutElements_(elements, customerId) {
   });
 }
 
-/** 図形1つを検査して、よければ out に足す（捨てるときは何も足さない） */
+/** 図形1つを検査して、よければ out に足す（捨てる時は何も足さない） */
 function layoutOneElement_(el, mine, out, netIds) {
   {
     const type = String(el.type || '');
@@ -1736,7 +1826,7 @@ function layoutOneElement_(el, mine, out, netIds) {
         deviceId: Object.prototype.hasOwnProperty.call(mine, devId) ? devId : ''
       });
     } else if (type === 'link') {
-      // 回線：記号の番号 a と b をつなぐ。あとで、つなぎ先が無いもの・同じ組み合わせの2本目を捨てる
+      // 回線：記号の番号 a と b をつなぐ。後で、つなぎ先が無いもの・同じ組み合わせの2本目を捨てる
       const a = layoutId_(el.a), b = layoutId_(el.b);
       if (!a || !b || a === b || LAYOUT_LINK_KINDS.indexOf(el.kind) === -1) return;
       out.push({ type: type, a: a, b: b, kind: el.kind, text: layoutText_(el.text, 20) });
@@ -1883,7 +1973,7 @@ function saveLayout(params) {
     const me = requireSession_(p.token);
     return withLock_(function () {
       const row = findById_(SHEET_LAYOUTS, 'レイアウトID', p.layoutId);
-      if (!row) throw appError_('notfound', 'そのレイアウトが見つかりません。ほかの人が消した可能性があります。');
+      if (!row) throw appError_('notfound', 'そのレイアウトが見つかりません。他の人が消した可能性があります。');
       const elements = sanitizeLayoutElements_(p.elements, row['顧客ID']);
       const json = JSON.stringify(elements);
       if (json.length > LAYOUT_MAX_JSON) throw appError_('invalid', '図形が多すぎて保存できません。レイアウトを分けてください。');

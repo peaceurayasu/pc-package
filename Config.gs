@@ -3,11 +3,11 @@
  * Config.gs … 版、シートの定義、固定の選択肢、入力項目の定義
  *
  * このファイルは「何を持つか」だけを書く。処理は書かない。
- * シートの列を足すときは SCHEMA に追記して「初期設定」を実行する（既存の列は消さない・並べ替えない）。
+ * シートの列を足す時は SCHEMA に追記して「初期設定」を実行する（既存の列は消さない・並べ替えない）。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.127.3';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
-const APP_VERSION = '0.127.3';
+const APP_VERSION = '0.141.0';
 
 // ---------------------------------------------------------------------------
 // 差し替え漏れの確かめ（v0.111.0）
@@ -15,23 +15,23 @@ const APP_VERSION = '0.127.3';
 //   ファイルを直したら、そのファイルの印と、ここの版を一緒に上げる（Config.gs は毎回差し替える）。
 // ---------------------------------------------------------------------------
 const FILE_MANIFEST = {
-  'Admin.html': '0.111.1',
-  'AdminActions.html': '0.124.0',
-  'AdminCore.html': '0.127.0',
-  'AdminCss.html': '0.127.3',
-  'AdminMobile.html': '0.127.1',
-  'AdminModals.html': '0.127.2',
-  'AdminViews.html': '0.127.3',
-  'Alerts.gs': '0.123.0',
-  'Auth.gs': '0.111.0',
-  'Code.gs': '0.119.0',
-  'Config.gs': '0.127.3',
-  'Db.gs': '0.126.0',
-  'Portal.gs': '0.111.0',
-  'Portal.html': '0.122.0',
-  'Receiver.gs': '0.111.0',
-  'Records.gs': '0.126.0',
-  'Setup.gs': '0.125.0'
+  'Admin.html': '0.141.0',
+  'AdminActions.html': '0.140.0',
+  'AdminCore.html': '0.139.0',
+  'AdminCss.html': '0.140.0',
+  'AdminMobile.html': '0.141.0',
+  'AdminModals.html': '0.140.0',
+  'AdminViews.html': '0.140.0',
+  'Alerts.gs': '0.141.0',
+  'Auth.gs': '0.138.0',
+  'Code.gs': '0.141.0',
+  'Config.gs': '0.141.0',
+  'Db.gs': '0.138.0',
+  'Portal.gs': '0.140.0',
+  'Portal.html': '0.141.0',
+  'Receiver.gs': '0.138.0',
+  'Records.gs': '0.141.0',
+  'Setup.gs': '0.138.0'
 };
 const APP_NAME = '管理システム';
 
@@ -148,7 +148,7 @@ SCHEMA[SHEET_NOTICES] = [
   ['お知らせID', 'text'], ['顧客ID', 'text'], ['本文', 'text'], ['重要度', 'text'], ['掲載期限', 'date'],
   ['登録日時', 'datetime'], ['更新日時', 'datetime']
 ];
-// Windows Update・ドライバーの不具合などの情報。スタッフの画面と、お客様ページのいちばん上に出す
+// Windows Update・ドライバーの不具合などの情報。スタッフの画面と、お客様ページの一番上に出す
 SCHEMA[SHEET_WININFO] = [
   ['情報ID', 'text'], ['日付', 'date'], ['種類', 'text'], ['重要度', 'text'], ['タイトル', 'text'], ['内容', 'text'], ['リンク', 'text'],
   ['顧客に見せる', 'text'], ['登録日時', 'datetime'], ['更新日時', 'datetime']
@@ -160,7 +160,7 @@ SCHEMA[SHEET_TIPS] = [
 SCHEMA[SHEET_ATTACH] = [
   ['添付ID', 'text'], ['顧客ID', 'text'], ['ファイル名', 'text'], ['DriveファイルID', 'text'], ['サイズ', 'number'], ['種類', 'text'],
   ['お客様に見せる', 'text'], ['登録者', 'text'], ['登録日時', 'datetime'],
-  // 記録（対応・修理・機器）に付けた写真のときだけ入る。サムネイルは、一覧に出す小さい画像（data:image/jpeg;base64,…）
+  // 記録（対応・修理・機器）に付けた写真の時だけ入る。サムネイルは、一覧に出す小さい画像（data:image/jpeg;base64,…）
   ['対象区分', 'text'], ['対象ID', 'text'], ['サムネイル', 'text'],
   // 付けた人のスタッフID（v0.20.0。表示名でなくIDで本人を見分ける。前からある行は空＝表示名で見分ける）
   ['登録者ID', 'text']
@@ -189,7 +189,7 @@ SCHEMA[SHEET_PROJECTS] = [
   ['備考', 'text'], ['お客様に見せる', 'text'], ['商談ID', 'text'], ['登録日時', 'datetime'], ['更新日時', 'datetime'],
   ['ひとこと', 'text']      // v0.103.0：一覧にカーソルを当てると吹き出しで出る短いメモ（200文字まで）
 ];
-// 商談（v0.81.0 のテスト版のシート）。v0.82.0 で開発案件に統合した。初期設定のとき、中身を開発案件へ移すためだけに残す
+// 商談（v0.81.0 のテスト版のシート）。v0.82.0 で開発案件に統合した。初期設定の時、中身を開発案件へ移すためだけに残す
 SCHEMA[SHEET_DEALS] = [
   ['商談ID', 'text'], ['見込み客名', 'text'], ['顧客ID', 'text'], ['先方担当者', 'text'], ['電話', 'text'], ['メール', 'text'],
   ['状態', 'text'], ['確度', 'number'], ['金額', 'number'], ['次の連絡日', 'date'], ['担当', 'text'], ['内容', 'text'],
@@ -201,7 +201,7 @@ SCHEMA[SHEET_SALESLOGS] = [
   ['内容', 'text'], ['次回アクション', 'text'], ['次回予定日', 'date'], ['アクション完了', 'text'], ['担当', 'text'],
   ['登録日時', 'datetime'], ['更新日時', 'datetime'], ['案件ID', 'text']
 ];
-// 要対応アラートの状態（通知したか、対応済みにしたか）。毎朝の処理が、いま出ているアラートに合わせて行を足し引きする
+// 要対応アラートの状態（通知したか、対応済みにしたか）。毎朝の処理が、今出ているアラートに合わせて行を足し引きする
 SCHEMA[SHEET_ALERTS] = [
   ['キー', 'text'], ['カテゴリ', 'text'], ['顧客ID', 'text'], ['対象ID', 'text'], ['判定値', 'text'],
   ['初回検知日時', 'datetime'], ['通知日時', 'datetime'], ['対応済み日時', 'datetime'], ['対応者', 'text']
@@ -231,7 +231,7 @@ const CONTRACT_TYPES = ['定期保守', 'スポット保守', 'なし'];
 const CUSTOMER_STATES = ['有効', '停止'];
 const DEVICE_STATES = ['使用中', '未使用', '廃棄'];
 const ACTIVITY_STATUSES = ['完了', '対応中'];      // v0.64.0：「保留中」は廃止
-const ACTIVITY_HOLD = '対応中';     // 新しく記録するときの、最初のステータス
+const ACTIVITY_HOLD = '対応中';     // 新しく記録する時の、最初のステータス
 const ACTIVITY_DONE = '完了';
 const REPAIR_STATUSES = ['受付', '対応中', '完了'];   // v0.64.0：「実施中」→「対応中」、「保留中」は廃止
 // 古い名前 → 新しい名前（初期設定で、シートの値を書き換える）
@@ -263,8 +263,8 @@ const DEAL_WON = '受注';
 const SALES_KINDS = ['訪問', '電話', 'メール', 'オンライン', 'その他'];
 const NOTICE_LEVELS = ['通常', '重要'];
 const WININFO_KINDS = ['更新プログラム', 'ドライバー', 'その他'];
-const WININFO_SHOW_DAYS = 45;            // いちばん上に出すのは、日付がこの日数以内のもの
-const WININFO_SHOW_MAX = 5;              // いちばん上に出す件数
+const WININFO_SHOW_DAYS = 45;            // 一番上に出すのは、日付がこの日数以内のもの
+const WININFO_SHOW_MAX = 5;              // 一番上に出す件数
 const WININFO_PIN_PROPERTY = 'WININFO_PINS';   // ピン留めした Windows情報のID（スクリプトのプロパティ。シートの列は増やさない。v0.33.0）
 const WININFO_PIN_MAX = 10;
 const WININFO_TIDY_MAX = 200;            // 毎朝の片づけで、1回に消す行数の上限（v0.34.0）
@@ -382,12 +382,12 @@ const BACKUP_KEEP = 7;                       // バックアップを残す数�
 const BACKUP_TRIGGER_FUNCTION = 'runDailyBackup';
 const BACKUP_HOUR = 3;                      // 毎日のバックアップの時刻（3時台）
 const BACKUP_STATUS_PROPERTY = 'BACKUP_STATUS';
-const SHEET_AUDIT_ARCHIVE = '変更履歴_退避';   // 古い変更履歴の移し先（メニューから移したときに作る。SHEET_ORDER には入れない）
-const SHEET_ACTIVITIES_ARCHIVE = '対応履歴_退避';   // 古い対応履歴の移し先（メニューから移したときに作る。v0.112.0）
+const SHEET_AUDIT_ARCHIVE = '変更履歴_退避';   // 古い変更履歴の移し先（メニューから移した時に作る。SHEET_ORDER には入れない）
+const SHEET_ACTIVITIES_ARCHIVE = '対応履歴_退避';   // 古い対応履歴の移し先（メニューから移した時に作る。v0.112.0）
 const ACTIVITY_KEEP_DAYS = 365;             // 完了した対応履歴をシートに残す日数。これより古いものを「対応履歴_退避」へ移せる
 const AUDIT_KEEP_DAYS = 365;                // 変更履歴をシートに残す日数。これより古いものを「変更履歴_退避」へ移せる
 const FORMAT_MARK_PREFIX = 'fmt_';          // 空き行の書式を付けた印の、プロパティ名の頭（v0.97.0）
-const CHANGES_MARGIN_MIN = 30;              // 新着だけ読み込むとき、取りこぼさないようにさかのぼる分（v0.67.0）
+const CHANGES_MARGIN_MIN = 30;              // 新着だけ読み込む時、取りこぼさないようにさかのぼる分（v0.67.0）
 const RECEIVE_MAX_CHARS = 300000;        // 1回の送信の上限（文字数）
 const PENDING_CUSTOMER_NAME = '仮受付（未割り当て）';   // トークンなしで届いたPCを入れる顧客（v0.64.0）
 const PENDING_MAX_PER_10MIN = 60;       // トークンなしの受付：全体で10分間に受け付ける回数
@@ -400,7 +400,7 @@ const OPTION_DEFAULTS = {
   'メーカー': ['HP', 'Dell', 'Lenovo', 'NEC', '富士通', 'Dynabook', 'マウスコンピューター', 'Apple', 'ASUS',
     'Microsoft', 'パナソニック', 'VAIO', 'iiyama', 'その他'],
   '購入元': ['自社', 'その他'],
-  // ライセンスの製品マスター（v0.103.0）。ライセンスの「製品名」を入れるときの候補。設定の「選択肢」で足せる
+  // ライセンスの製品マスター（v0.103.0）。ライセンスの「製品名」を入れる時の候補。設定の「選択肢」で足せる
   'ライセンス製品': ['Microsoft 365 Business Basic', 'Microsoft 365 Business Standard', 'Microsoft 365 Apps for business', 'Microsoft Office Home & Business', 'Windows 11 Pro', 'Adobe Acrobat', 'ESET', 'Google Workspace', 'その他'],
   '受付方法': ['電話', 'メール', '訪問時', 'その他'],
   '対応種別': ['訪問', 'リモート', '電話', 'あいさつ'],
@@ -408,10 +408,10 @@ const OPTION_DEFAULTS = {
   '修理種別': ['修理', '設定', 'データ復旧'],
   '保守種別': ['定期保守', 'スポット保守', 'その他'],
   '地域': [],
-  // 状態の選択肢（v0.82.0）。基本の値は OPTION_BASE にあり、ここには「あとから足した値」だけが入る
+  // 状態の選択肢（v0.82.0）。基本の値は OPTION_BASE にあり、ここには「後から足した値」だけが入る
   '機器の状況': [], '対応のステータス': [], '修理のステータス': [], 'レンタルの状態': [], '案件の状態': [],
   '案件の種類': PROJECT_KINDS.slice(), '営業の区分': SALES_KINDS.slice(),
-  // 対応を記録するときに、ひと押しで「内容」に入れられる文（40文字まで）
+  // 対応を記録する時に、ひと押しで「内容」に入れられる文（40文字まで）
   '対応の定型文': [
     'Windows Updateを適用し、再起動して動作を確認。',
     'プリンタードライバーを入れ直し、テスト印刷を確認。',
@@ -439,11 +439,14 @@ const OPTION_BASE = {
 // 設定シートの項目  [キー, 既定値, 説明]
 const SETTING_DEFAULTS = [
   ['自社名', '', '画面の見出しと、お客様ビューに出す社名'],
-  ['開いた直後の画面', 'PC管理', 'ログインした直後に開く画面（PC管理・対応履歴・修理履歴・ライセンス・レンタル・案件・営業・ミーティング・お知らせ）。スタッフが自分で選んでいないときに使う'],
+  ['開いた直後の画面', 'PC管理', 'ログインした直後に開く画面（PC管理・対応履歴・修理履歴・ライセンス・レンタル・案件・営業・ミーティング・お知らせ）。スタッフが自分で選んでいない時に使う'],
   ['ウェブアプリURL', '', 'デプロイしたウェブアプリのURL（.../exec）。お客様ビューのURLを作るのに使う'],
+  ['公開サイトのURL', '', 'Netlify などで、この画面を埋め込んで公開する時のサイトのURL（例：https://xxxx.netlify.app/）。入れると、お客様ページのURLと通知メールのリンクがこのサイトになり、このサイト以外に埋め込まれた時は画面を出さない。収集ツールは今までどおりウェブアプリURLへ送る（v0.141.0）'],
   ['ライセンス期限の手前日数', '30', '有効期限がこの日数以内になったライセンスと、機器のESET期限を「期限が近い」として出す'],
   ['保証期限の手前日数', '60', '保証期限がこの日数以内になった機器を「保証が切れる」として出す'],
   ['スタッフに認証情報を見せる', YES, '「いいえ」にすると、パスワード類を表示できるのは管理者だけになる'],
+  ['韓国語を日本語に訳す', YES, '対応・修理・保守・社内メモの文に韓国語（ハングル）があったら、保存の時に日本語に訳す。原文も下に残す（v0.140.0）'],
+  ['放置の目安の日数', '3', '未完了の対応・修理で、この日数以上動き（更新）が無いものを、一覧で目立たせる。0で目立たせない（v0.140.0）'],
   ['通知先メール', '', '要対応の通知メールを送る先。複数は「,」で区切る（5件まで）。空なら送らない'],
   ['通知の時刻', '8', '毎朝の通知を送る時刻（0〜23時）。変えたらメニューの「毎朝の通知を設定」をやり直す'],
   ['イベントエラーのしきい値', '200', '収集ツールのイベントエラーがこの件数以上の機器を出す。0で出さない'],
@@ -460,7 +463,7 @@ const SETTING_DEFAULTS = [
   ['レンタル返却の手前日数', '3', '返却予定日がこの日数以内になった貸出を出す（予定日を過ぎたものは常に出す）'],
   ['営業・案件ツール（テスト版）を使う', YES, '「いいえ」にすると、案件・営業の画面と、それらの要対応を出さない（テスト版）'],
   ['案件の納期の手前日数', '7', '開発案件の納期がこの日数以内になったものを要対応に出す（納期を過ぎたものは常に出す。テスト版）'],
-  ['Tipsを出す', YES, 'Windowsの便利機能（Tips）を、管理画面とお客様ページのいちばん上に出す'],
+  ['Tipsを出す', YES, 'Windowsの便利機能（Tips）を、管理画面とお客様ページの一番上に出す'],
   ['RSSで自動取得する', YES, '窓の杜・PC Watch・ITmedia・JPCERT/CC・IPA・Security NEXT・AKIBA PC Hotline! の RSS から、Windows情報を自動で取り込む。「いいえ」なら RSS は読まない'],
   ['RSSの言葉（不具合・ドライバー）', 'Windows,Windows Update,更新プログラム,KB5,不具合,既知の問題,障害,ドライバー,ドライバ,BIOS,ファームウェア,ブルースクリーン,起動しない,Microsoft 365,Office,Edge,Teams,OneDrive,Copilot', 'RSS の記事のタイトル・概要にこの言葉が入っていたら取り込む（Windows の不具合・ドライバー）。カンマ区切り。窓の杜・PC Watch・ITmedia PC USER で使う'],
   ['RSSの言葉（セキュリティ）', '脆弱性,セキュリティ,ゼロデイ,ランサムウェア,不正アクセス,マルウェア,注意喚起,CVE,悪用', 'RSS の記事のタイトル・概要にこの言葉が入っていたら取り込む（セキュリティ）。カンマ区切り。窓の杜・PC Watch・ITmedia・JPCERT・IPA・Security NEXT で使う'],
@@ -473,16 +476,16 @@ const SETTING_DEFAULTS = [
   ['Tipsを取り込む', YES, '新しい版の Tips を、Tips のシートに足す。「いいえ」なら足さない'],
   ['取り込んだWindows情報をお客様に見せる', NO, '「はい」なら、取り込んだ Windows情報をすぐお客様ページにも出す。「いいえ」は社内だけ（確かめてから見せる）'],
   ['Windows情報を残す日数', '365', '日付がこれ（日）より古い Windows情報を、毎朝の処理で消す。ピン留めしたものは消さない。0で消さない'],
-  ['カレンダーID', '', 'ミーティングの「スケジュール」に出す Google カレンダーのID。いくつかあるときはカンマで区切る（10個まで）。空なら出さない（カレンダーの「設定と共有」→「カレンダーの統合」にあります）'],
+  ['カレンダーID', '', 'ミーティングの「スケジュール」に出す Google カレンダーのID。いくつかある時はカンマで区切る（10個まで）。空なら出さない（カレンダーの「設定と共有」→「カレンダーの統合」にあります）'],
   ['納品の予定に使う言葉', '納品,搬入,設置,キッティング', 'この言葉が予定名か説明に入っていれば、納品の予定として色を付け、台数を数える（カンマで区切る）'],
   ['カレンダーの表示名', '', 'ミーティングの「スケジュール」の見出しの横に出す名前（例：納品スケジュール）。空なら、Google カレンダーに付いている名前を出す'],
-  ['納品以外の予定も出す', NO, '「いいえ」なら、ミーティングのスケジュールには納品の予定（上の言葉が入っているもの）だけを出す。「はい」なら、ほかの予定も出す'],
+  ['納品以外の予定も出す', NO, '「いいえ」なら、ミーティングのスケジュールには納品の予定（上の言葉が入っているもの）だけを出す。「はい」なら、他の予定も出す'],
   ['スポット料金：訪問（円/回）', '10000', '保守のご報告書の「保守がなかったら」で、訪問1回をこの金額で数える'],
   ['スポット料金：リモート（円/回）', '3000', '同じく、リモート1回の金額'],
   ['スポット料金：電話（円/回）', '0', '同じく、電話1回の金額（0なら数えない）'],
   ['契約更新のお知らせ（日前）', '60', '顧客の「契約更新日」のこの日数前から、要対応に「保守のご報告書をお持ちする」を出す'],
-  ['定期保守のカレンダーID', '', '定期保守の日程を入れる Google カレンダーのID。担当（ルート）ごとに分けるときは、カンマで区切っていくつでも（10個まで）。空なら日程の自動作成は使えない'],
-  ['定期保守の1日の上限（社）', '3', '定期保守の日程を作るとき、1つのカレンダー（担当）で1日に回る社数の上限'],
+  ['定期保守のカレンダーID', '', '定期保守の日程を入れる Google カレンダーのID。担当（ルート）ごとに分ける時は、カンマで区切っていくつでも（10個まで）。空なら日程の自動作成は使えない'],
+  ['定期保守の1日の上限（社）', '3', '定期保守の日程を作る時、1つのカレンダー（担当）で1日に回る社数の上限'],
   ['定期保守の10台あたりの時間（分）', '30', '1社にかける時間の目安。PC 10台ごとにこの時間（10台以下はこの時間）'],
   ['定期保守の開始時刻', '9:00', '定期保守の1日の始まり（例 9:00）'],
   ['定期保守の終了時刻', '17:00', '定期保守の1日の終わり（例 17:00）。この時刻までに終わる社だけ入れる'],
@@ -498,11 +501,14 @@ const SETTING_TYPES = {
   '自社名': 'text',
   '開いた直後の画面': 'start',
   'ウェブアプリURL': 'url',
+  '公開サイトのURL': 'url',
   'ライセンス期限の手前日数': 'days',
   'スポット料金：訪問（円/回）': 'count', 'スポット料金：リモート（円/回）': 'count', 'スポット料金：電話（円/回）': 'count',
   '契約更新のお知らせ（日前）': 'days',
   '保証期限の手前日数': 'days',
   'スタッフに認証情報を見せる': 'yesno',
+  '韓国語を日本語に訳す': 'yesno',
+  '放置の目安の日数': 'days',
   '通知先メール': 'emails',
   '通知の時刻': 'hour',
   'イベントエラーのしきい値': 'count',
@@ -572,7 +578,7 @@ const ACTIVITY_KIND_VISIT = '訪問';
 const ALERT_TRIGGER_FUNCTION = 'runDailyAlerts';
 const FEED_TRIGGER_FUNCTION = 'runFeedCheck';     // RSS を確かめる（1時間ごとに呼び、設定の間隔がたっていれば読む。v0.113.0）
 // GAS を起こしておく（v0.21.0）。時間のトリガーで30分ごとに呼び、この時間帯だけ、控え（キャッシュ）を作っておく。
-// しばらくだれも使わないと、最初に開く人のときに控えが切れていて遅くなるため
+// しばらく誰も使わないと、最初に開く人の時に控えが切れていて遅くなるため
 const WARM_TRIGGER_FUNCTION = 'runWarmUp';
 const WARM_EVERY_MINUTES = 30;
 const WARM_FROM_HOUR = 6;      // この時から
@@ -584,7 +590,7 @@ const ALERT_MAIL_MAX_LINES = 60;
 //   type: text / longtext / date / datetime / number / select（固定の選択肢）/ option（選択肢シート）
 //         / multi（固定の選択肢から複数）/ yesno / customer / device / staff / secret / rental（レンタル機器）/ project（開発案件）/ deal（商談）
 //   quick: true … いつも出す項目（それ以外は「詳しい項目」にたたむ）。1つも無い種類は全部出す
-//   chips: true … 選択肢が少ないときは、プルダウンでなく押しやすいボタンで出す
+//   chips: true … 選択肢が少ない時は、プルダウンでなく押しやすいボタンで出す
 //   suggest     … 文字の入力欄に添える候補（押すと足す・外す）
 // ---------------------------------------------------------------------------
 const ENTITIES = {
@@ -624,7 +630,7 @@ const ENTITIES = {
       { name: 'ふりがな', type: 'text', max: 60 },
       { name: '購入日', type: 'date', label: 'キッティング日／購入日', hint: '購入元が自社（EN・GROW）ならキッティング日' },     // 画面の名前だけ変える（シートの列は「購入日」のまま。v0.113.0・v0.122.0）
       { name: '購入元', type: 'option', category: '購入元' },
-      { name: '保証期限', type: 'date', hint: '購入元が自社で空なら、キッティング日から1年で自動で入ります（延長保証のときは入れてください）' },
+      { name: '保証期限', type: 'date', hint: '購入元が自社で空なら、キッティング日から1年で自動で入ります（延長保証の時は入れてください）' },
       { name: 'ESET', type: 'date' },
       { name: 'ひとこと', type: 'text', max: 200 },
       { name: '備考', type: 'longtext', max: 2000 }
@@ -654,11 +660,13 @@ const ENTITIES = {
       { name: '内容', type: 'longtext', required: true, max: 5000, quick: true },
       { name: '案件ID', type: 'project' },
       { name: 'ステータス', type: 'option', category: '対応のステータス', required: true, def: ACTIVITY_HOLD, quick: true, chips: true },
+      // v0.133.0：担当（受付スタッフ）と開始日時は、いつも出す。開始日時は、新しく記録するとき今の日時が入る。
+      //   完了日時は「詳しい項目」へ（ステータスを完了にすると、自動で今の日時が入る）
+      { name: '受付スタッフ', type: 'staff', def: 'me', quick: true },
+      { name: '開始日時', type: 'datetime', quick: true },
       { name: '受付日', type: 'date', required: true, def: 'today' },
-      { name: '先方担当者', type: 'text', max: 60 },
-      { name: '受付スタッフ', type: 'staff', def: 'me' },
-      { name: '開始日時', type: 'datetime' },
       { name: '完了日時', type: 'datetime' },
+      { name: '先方担当者', type: 'text', max: 60 },
       { name: 'ピン留め', type: 'yesno', def: NO },
       { name: '会議で共有', type: 'yesno', def: NO },
       { name: 'ひとこと', type: 'text', max: 200 }
@@ -672,15 +680,16 @@ const ENTITIES = {
       { name: '種別', type: 'option', category: '修理種別', required: true, quick: true, chips: true },
       { name: '件名', type: 'text', required: true, max: 100, quick: true },
       { name: '預かり品', type: 'text', max: 200, quick: true, suggest: REPAIR_ITEM_SUGGESTIONS },
+      // v0.133.0：型番・シリアル・担当は、いつも出す（機器を選ぶと、型番とシリアルは台帳から入る）
+      { name: '型番', type: 'text', max: 100, quick: true },
+      { name: 'シリアル', type: 'text', max: 60, quick: true },
       { name: '内容', type: 'longtext', max: 5000, quick: true },
       { name: 'ステータス', type: 'option', category: '修理のステータス', required: true, def: '受付', quick: true, chips: true },
+      { name: '担当スタッフ', type: 'staff', def: 'me', quick: true },
       { name: '受付日', type: 'date', required: true, def: 'today' },
       { name: '完了日', type: 'date' },
-      { name: '型番', type: 'text', max: 100 },
-      { name: 'シリアル', type: 'text', max: 60 },
       { name: '元の対応ID', type: 'text', max: 20, ref: 'activity' },
       { name: '先方担当者', type: 'text', max: 60 },
-      { name: '担当スタッフ', type: 'staff', def: 'me' },
       { name: 'ひとこと', type: 'text', max: 200 }
     ]
   },
@@ -809,10 +818,11 @@ const ENTITIES = {
 };
 
 // 上限
+const PHONE_ACT_DAYS = 90;                // スマホに最初に渡す対応履歴：完了していないものと、この日数以内のもの（v0.132.0）
 const MAX_ACTIVITIES_IN_BOOTSTRAP = 1000; // 管理画面に最初に渡す対応履歴の件数（新しい順）
 const PORTAL_ACTIVITY_LIMIT = 50;         // お客様ビューに出す対応履歴の件数
 const SESSION_SECONDS = 21600;            // ログインの有効時間（6時間。CacheServiceの上限）
-const LOGIN_MAX_FAILS = 5;                // この回数まちがえると一時的にログインできなくする
+const LOGIN_MAX_FAILS = 5;                // この回数間違えると一時的にログインできなくする
 const LOGIN_LOCK_SECONDS = 600;
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_HASH_ROUNDS = 300;
@@ -846,7 +856,7 @@ const CACHE_DEPS = {
   saleslogs: [SHEET_SALESLOGS],
   photoCounts: [SHEET_ATTACH],
   wininfo: [SHEET_WININFO],
-  // 要対応は、もとのシートごとに分けて持つ（設定のしきい値と、顧客の状態・保守契約は、どれにも効く）
+  // 要対応は、元のシートごとに分けて持つ（設定のしきい値と、顧客の状態・保守契約は、どれにも効く）
   alertsLicense: [SHEET_SETTINGS, SHEET_CUSTOMERS, SHEET_LICENSES, SHEET_DEVICES],
   alertsRental: [SHEET_SETTINGS, SHEET_CUSTOMERS, SHEET_RENTALS, SHEET_LOANS],
   alertsDevice: [SHEET_SETTINGS, SHEET_CUSTOMERS, SHEET_DEVICES, SHEET_DIAGNOSTICS],
@@ -872,11 +882,11 @@ const DIAG_LEAN_SKIP = ['イベントエラー（内容）', 'プリンター情
 /**
  * Tips.gs … Windows の便利機能（Tips）
  *
- * 管理画面とお客様ページのいちばん上に、1件ずつ出す。日替わりで変わる。
+ * 管理画面とお客様ページの一番上に、1件ずつ出す。日替わりで変わる。
  * 設定の「Tipsを出す」を「いいえ」にすると、どちらにも出さない。
  *
- * ここにあるのは「最初に入れる文」。初期設定のときに Tips のシートへ入り、そのあとはシートのほうを使う
- * （新しい文は RSS の確認のときに足される。シートで直接、直す・消す・足すこともできる）。
+ * ここにあるのは「最初に入れる文」。初期設定の時に Tips のシートへ入り、そのあとはシートのほうを使う
+ * （新しい文は RSS の確認の時に足される。シートで直接、直す・消す・足すこともできる）。
  * 文は、短く・やさしく。[見出し, 説明]
  */
 const WINDOWS_TIPS = [
