@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.143.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -144,8 +144,7 @@ function makerListHtml() {
     .sort(function (a, b) { return cmp(a['メーカー名'], b['メーカー名']); });
   if (!rows.length) return '<p class="empty">' + (t ? '当てはまる窓口はありません。' : 'まだ登録されていません。「＋ 窓口を追加」から、よく電話するメーカーを入れてください。') + '</p>';
   return '<div class="mkgrid">' + rows.map(function (m) {
-    return '<div class="mkcard' + (m._pending ? ' pending' : '') + '">' + makerCardInner(m, false) +
-      (m._pending ? '' : '<button type="button" class="link small" data-act="editRecord:maker" data-id="' + esc(m['メーカーID']) + '">直す</button>') + '</div>';
+    return '<div class="mkcard' + (m._pending ? ' pending' : '') + '">' + (m._pending ? '' : makerEditBtn(m)) + makerCardInner(m, false) + '</div>';
   }).join('') + '</div>';
 }
 VIEWS.makers = function () {

@@ -5,9 +5,9 @@
  * このファイルは「何を持つか」だけを書く。処理は書かない。
  * シートの列を足す時は SCHEMA に追記して「初期設定」を実行する（既存の列は消さない・並べ替えない）。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.142.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.143.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
-const APP_VERSION = '0.142.0';
+const APP_VERSION = '0.143.0';
 
 // ---------------------------------------------------------------------------
 // 差し替え漏れの確かめ（v0.111.0）
@@ -16,21 +16,21 @@ const APP_VERSION = '0.142.0';
 // ---------------------------------------------------------------------------
 const FILE_MANIFEST = {
   'Admin.html': '0.141.0',
-  'AdminActions.html': '0.142.0',
+  'AdminActions.html': '0.143.0',
   'AdminCore.html': '0.142.0',
-  'AdminCss.html': '0.142.0',
-  'AdminMobile.html': '0.142.0',
-  'AdminModals.html': '0.142.0',
+  'AdminCss.html': '0.143.0',
+  'AdminMobile.html': '0.143.0',
+  'AdminModals.html': '0.143.0',
   'AdminViews.html': '0.142.0',
   'Alerts.gs': '0.142.0',
   'Auth.gs': '0.138.0',
   'Code.gs': '0.142.0',
-  'Config.gs': '0.142.0',
+  'Config.gs': '0.143.0',
   'Db.gs': '0.138.0',
   'Portal.gs': '0.140.0',
   'Portal.html': '0.141.0',
   'Receiver.gs': '0.138.0',
-  'Records.gs': '0.142.0',
+  'Records.gs': '0.143.0',
   'Setup.gs': '0.138.0'
 };
 const APP_NAME = '管理システム';
@@ -725,7 +725,7 @@ const ENTITIES = {
     fields: [
       { name: 'メーカー名', type: 'text', required: true, max: 60, quick: true, hint: '機器の「メーカー」と同じ名前にすると、機器の画面にこの窓口が出ます（別の書き方はメモに「別名：○○」）' },
       { name: '窓口', type: 'text', max: 60, quick: true, hint: '例：法人向けサポート・修理受付' },
-      { name: '電話', type: 'text', max: 60, quick: true },
+      { name: '電話', type: 'phones', max: 800, quick: true, hint: '「＋ 番号を追加」で、いくつでも（修理受付・法人サポートなど、窓口の名前も付けられます）' },
       { name: '受付時間', type: 'text', max: 60, quick: true, hint: '例：平日 9:00〜18:00' },
       { name: 'URL', type: 'text', max: 300, quick: true, hint: 'サポートのページ・修理の申し込みページ' },
       { name: 'メール', type: 'text', max: 120 },

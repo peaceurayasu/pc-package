@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.142.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.143.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -46,6 +46,15 @@ function normalizeField_(f, raw, current, ctx) {
     case 'text':
     case 'secret': {
       const s = cleanText_(raw).replace(/\n/g, ' ');
+      if (f.max && s.length > f.max) throw bad('は' + f.max + '文字までです。');
+      return s;
+    }
+    case 'phones': {
+      // v0.143.0：電話番号をいくつも（1行に1つ。「修理受付：0120-…」のように名前も付けられる）
+      const lines = cleanText_(raw).split('\n').map(function (l) { return l.replace(/\s+/g, ' ').trim(); }).filter(function (l) { return l; });
+      if (lines.length > 10) throw bad('は10件までです。');
+      if (lines.some(function (l) { return l.length > 80; })) throw bad('は1件80文字までです。');
+      const s = lines.join('\n');
       if (f.max && s.length > f.max) throw bad('は' + f.max + '文字までです。');
       return s;
     }

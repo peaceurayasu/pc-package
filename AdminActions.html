@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.143.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -895,6 +895,27 @@ var ACT = {
       toast((key === 'activity' ? '対応' : '修理') + 'を完了にしました');
       refreshPartSoon(key); softRender();
     }).catch(function (e) { delete el.dataset.busy; el.textContent = '✓ 完了'; failToast(e); });
+  },
+  // v0.143.0：✏️ で、すぐ窓口の編集を開く（機器の窓の中から押した時は、その窓の上に重ねる）
+  makerEdit: function (el) {
+    var rec = findRecord('maker', el.dataset.id);
+    if (!rec || rec._pending) return;
+    openForm('maker', rec, null);
+  },
+  // v0.143.0：メーカー窓口の電話の行を足す・消す
+  phoneAdd: function (el) {
+    var box = el.closest('.field').querySelector('[data-phones]');
+    if (!box) return;
+    if (box.querySelectorAll('.phrow').length >= 10) { toast('電話は10件までです', true); return; }
+    box.insertAdjacentHTML('beforeend', phoneRowHtml({ label: '', num: '' }));
+    var rows = box.querySelectorAll('.phrow'); rows[rows.length - 1].querySelector('.ph-label').focus();
+  },
+  phoneDel: function (el) {
+    var box = el.closest('[data-phones]'), row = el.closest('.phrow');
+    if (!box || !row) return;
+    if (box.querySelectorAll('.phrow').length > 1) row.remove(); else { row.querySelector('.ph-label').value = ''; row.querySelector('.ph-num').value = ''; }
+    phonesSync(box);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
   },
   // v0.142.0：機器の窓から、そのメーカーの窓口を登録する（メーカー名を入れて開く）
   newMaker: function (el) { openForm('maker', null, { 'メーカー名': el.dataset.name || '' }); },
@@ -2218,6 +2239,7 @@ document.addEventListener('input', function (e) {
   if (t && t.dataset && t.dataset.mtgmemo) mtgState().memos[mtgMemoKey()] = t.value;
   if (t && t.dataset && t.dataset.mmq) { S.mm.q = t.value; var box = $('mmCustList'); if (box) box.innerHTML = mmCustListHtml(); }
   if (t && t.dataset && t.dataset.mmnote) S.mm.notes[t.dataset.mmnote] = t.value;
+  if (t && t.closest && t.closest('[data-phones]')) phonesSync(t.closest('[data-phones]'));      // v0.143.0
   if (t && t.dataset && t.dataset.mkq) { MAKER_Q = t.value; var mkl = $('mkList'); if (mkl) mkl.innerHTML = makerListHtml(); }
 });
 // 入力の途中の内容を、端末に下書きとして残す（打つ・選ぶ・押すの後、少し待ってから）

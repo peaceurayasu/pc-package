@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.143.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1315,6 +1315,15 @@ function fieldHtml(key, f, value, ctx) {
       '<label class="chkline" for="' + id + '"><input type="checkbox" id="' + id + '" data-yn="' + name + '"' + (on ? ' checked' : '') + '><span>' + esc(label) + '</span></label>' +
       (f.hint ? '<small class="fhint">' + esc(f.hint) + '</small>' : '') + '</div>';
   }
+  // v0.143.0：電話番号をいくつも（窓口の名前＋番号の行を足していく）。値は隠した欄に「名前：番号」を1行に1つで持つ
+  if (f.type === 'phones') {
+    var plist = parsePhones(value);
+    if (!plist.length) plist = [{ label: '', num: '' }];
+    return '<div class="field wide" data-field="' + name + '"><span class="lab">' + esc(label) + (f.hint ? '<small class="fhint">' + esc(f.hint) + '</small>' : '') + '</span>' +
+      '<input type="hidden" name="' + name + '" value="' + esc(phonesText(plist)) + '">' +
+      '<div class="phrows" data-phones="' + name + '">' + plist.map(phoneRowHtml).join('') + '</div>' +
+      '<button type="button" class="btn small" data-act="phoneAdd">＋ 番号を追加</button></div>';
+  }
   var req = f.required ? ' required' : '';
   var common = ' id="' + id + '" name="' + name + '"' + req;
   var input, group = false, wide = WIDE[f.type];
@@ -1788,22 +1797,49 @@ function repairMaker(r) {
   var d = r['機器ID'] ? IDX.dev[r['機器ID']] : null;
   return (d && d['メーカー']) || r['メーカー'] || '';
 }
+/** 電話の値（1行に1つ。前の版の「/」区切りも読む）→ [{label, num}] */
+function parsePhones(v) {
+  var lines = String(v || '').split(/\n/);
+  if (lines.length === 1) lines = lines[0].split(/\s*[\/、,]\s*|\s{2,}/);
+  return lines.map(function (l) {
+    l = l.trim();
+    if (!l) return null;
+    var m = /(\+?[0-9０-９][0-9０-９\-‐－ー()（）\s]{4,}[0-9０-９])/.exec(l);
+    var num = m ? m[1].trim() : '';
+    var label = (m ? l.replace(m[1], '') : l).replace(/[：:\s]+$/, '').replace(/^[：:\s]+/, '').trim();
+    return { label: num ? label : '', num: num || l };
+  }).filter(function (x) { return x; });
+}
+function phonesText(list) { return list.filter(function (p) { return String(p.num || '').trim(); }).map(function (p) { return (p.label ? p.label.trim() + '：' : '') + String(p.num).trim(); }).join('\n'); }
+function phoneRowHtml(p) {
+  return '<div class="phrow"><input type="text" class="ph-label" maxlength="30" placeholder="窓口名（任意）" value="' + esc(p.label || '') + '">' +
+    '<input type="text" class="ph-num" maxlength="40" inputmode="tel" placeholder="0120-000-000" value="' + esc(p.num || '') + '">' +
+    '<button type="button" class="btn small ph-del" data-act="phoneDel" aria-label="この番号を消す" title="この番号を消す">×</button></div>';
+}
+/** 電話の行から、隠した欄を作り直す */
+function phonesSync(box) {
+  var form = box.closest('form'), hid = form && form.elements[box.dataset.phones];
+  if (!hid) return;
+  hid.value = phonesText(Array.prototype.map.call(box.querySelectorAll('.phrow'), function (r) { return { label: r.querySelector('.ph-label').value, num: r.querySelector('.ph-num').value }; }));
+}
 function safeUrl(v) { v = String(v || '').trim(); if (/^www\./i.test(v)) v = 'https://' + v; return /^https?:\/\/[^\s<>"']+$/i.test(v) ? v : ''; }
-function telHref(v) { return 'tel:' + String(v || '').replace(/[^0-9+]/g, ''); }
+function telHref(v) { return 'tel:' + String(v || '').replace(/[０-９＋]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }).replace(/[^0-9+]/g, ''); }
 /** 窓口の中身（カード・機器の窓で同じ） */
 function makerCardInner(m, compact) {
-  var tel = String(m['電話'] || '').split(/[\/、,]|\s{2,}/).map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+  var tel = parsePhones(m['電話']);
   return '<div class="mk-top"><b class="mk-name">' + esc(m['メーカー名']) + '</b>' + (m['窓口'] ? '<span class="mk-desk">' + esc(m['窓口']) + '</span>' : '') + '</div>' +
-    '<div class="mk-acts">' + tel.map(function (t) { return '<a class="btn small primary" href="' + esc(telHref(t)) + '">📞 ' + esc(t) + '</a>'; }).join('') +
+    '<div class="mk-acts">' + tel.map(function (t) { return '<a class="btn small primary mk-tel" href="' + esc(telHref(t.num)) + '">📞 ' + (t.label ? '<span class="mk-tl">' + esc(t.label) + '</span>' : '') + esc(t.num) + '</a>'; }).join('') +
       (safeUrl(m['URL']) ? '<a class="btn small" href="' + esc(safeUrl(m['URL'])) + '" target="_blank" rel="noopener noreferrer">🌐 サポートのページ</a>' : '') +
       (m['メール'] ? '<a class="btn small" href="mailto:' + esc(m['メール']) + '">✉ メール</a>' : '') + '</div>' +
     (m['受付時間'] ? '<div class="mk-time">🕘 ' + esc(m['受付時間']) + '</div>' : '') +
     (m['メモ'] && !compact ? '<div class="mk-memo">' + linkify(m['メモ']) + '</div>' : m['メモ'] ? '<div class="mk-memo">' + esc(String(m['メモ']).split('\n')[0]) + '</div>' : '');
 }
+/** 窓口を直すボタン（✏️ だけ。v0.143.0） */
+function makerEditBtn(m) { return '<button type="button" class="mk-edit" data-act="makerEdit" data-id="' + esc(m['メーカーID']) + '" title="この窓口を直す" aria-label="' + esc(m['メーカー名']) + 'の窓口を直す">✏️</button>'; }
 function makerBoxHtml(name) {
   var m = findMaker(name);
   if (!m) return name && S.D && S.D.makers ? '<div class="box mkbox none"><span class="sub">「' + esc(name) + '」の窓口はまだ登録されていません。</span> <button type="button" class="btn small" data-act="newMaker" data-name="' + esc(name) + '">＋ 窓口を登録</button></div>' : '';
-  return '<div class="box mkbox"><div class="mk-cap">メーカーの窓口</div>' + makerCardInner(m, true) + '<button type="button" class="link small" data-act="editRecord:maker" data-id="' + esc(m['メーカーID']) + '">窓口の内容を見る・直す</button></div>';
+  return '<div class="box mkbox"><div class="mk-cap"><span class="grow">メーカーの窓口</span>' + makerEditBtn(m) + '</div>' + makerCardInner(m, true) + '</div>';
 }
 /** スマホの「☰ メニュー」に並べる画面（下のメニューに無いものだけ。v0.136.0） */
 function menuScreens() {
