@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.138.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1348,6 +1348,9 @@ function fieldHtml(key, f, value, ctx) {
   } else if (f.type === 'date' || f.type === 'datetime') {
     // v0.130.0：日付は、ふつうの文字の欄。「20260426」「4/26」のように打つと、欄を離れた時に 2026-04-26 に直る（datefield.js）
     input = dateFieldHtml(f.type, common, value);
+    // v0.140.0：対応の「作業開始」「作業終了」。押すと今の日時が入る（終了はステータスも完了に）。保存は、いつもの「保存」で
+    //   2つとも開始日時の下に並べる（完了日時は「詳しい項目」の中にあって、新しく記録する時は隠れているため）
+    if (key === 'activity' && f.name === '開始日時') input += '<span class="workbtns"><button type="button" class="btn small workbtn" data-act="workStart">▶ 作業開始</button><button type="button" class="btn small workbtn" data-act="workEnd">■ 作業終了</button></span>';
   } else if (f.type === 'number') {
     input = '<input type="number" min="0" step="1" inputmode="numeric"' + common + ' value="' + esc(value) + '">';
   } else if (f.type === 'select') {
@@ -1961,23 +1964,50 @@ function submitRecordForm(form, next) {
   if (key === 'device' && form.dataset.id && S.D.me.isAdmin && !form.elements['顧客ID'].disabled) {
     var origDev = findRecord('device', form.dataset.id);
     if (origDev && !origDev._pending && data['顧客ID'] && data['顧客ID'] !== origDev['顧客ID']) {
-      Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
-      var toCust = data['顧客ID'];
+      var toCust = data['顧客ID'], fromCust = origDev['顧客ID'], devId = form.dataset.id;
       // v0.126.0：他の項目の変更も一緒に送って、1回で済ませる。済んだら、手元のデータを直すだけ（全部を読み直さない）
       var restChanged = recordChanges('device', Object.assign({}, origDev, { '顧客ID': toCust }), data).length > 0;
-      call('moveDevice', { deviceId: form.dataset.id, customerId: toCust, data: restChanged ? data : null }).then(function (r) {
-        noteRecentCust(toCust);
-        var ov = form.closest('.overlay'); if (ov) ov._noDraft = true;
-        if (form._draftId) draftDropId(form._draftId);
-        closeModal(form);
-        applyMovedDevice(origDev['顧客ID'], toCust, r);
+      // v0.140.0：先に画面で移す（窓を閉じて、機器と、その機器の対応・修理・保守を新しい顧客に付け替える）。
+      //   サーバーの返事は裏で待つので、待っている間も操作できる。だめだったら元に戻して、窓を開き直す
+      var snapDev = Object.assign({}, origDev), moved = [];
+      ['activities', 'repairs', 'maintenances'].forEach(function (n) {
+        (S.D[n] || []).forEach(function (x) { if (x['機器ID'] === devId && x['顧客ID'] === fromCust) { moved.push(x); x['顧客ID'] = toCust; } });
+      });
+      Object.keys(data).forEach(function (k) { if (k !== 'lockCustomer') origDev[k] = data[k]; });
+      origDev['顧客ID'] = toCust;
+      if (S.custActs) { delete S.custActs[fromCust]; delete S.custActs[toCust]; }
+      var mov = form.closest('.overlay'); if (mov) mov._noDraft = true;
+      var movDraft = form._draftId || '';
+      noteRecentCust(toCust);
+      closeModal(form);
+      reindex();
+      render();
+      toast(custName(toCust) + 'へ移しています…（このまま操作できます）');
+      var movTok = S.token;
+      call('moveDevice', { deviceId: devId, customerId: toCust, data: restChanged ? data : null }, 'nolock').then(function (r) {
+        if (!S.D || S.token !== movTok) return;
+        if (movDraft) draftDropId(movDraft);
+        applyMovedDevice(fromCust, toCust, r);
         var m = r.moved;
         toast(custName(toCust) + 'へ移しました' + (m.activities.length + m.repairs.length + m.maintenances.length ? '（対応' + m.activities.length + '・修理' + m.repairs.length + '・保守' + m.maintenances.length + '件も一緒に）' : ''));
+        refreshPartSoon('device');
       }).catch(function (e) {
-        Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+        if (!S.D || S.token !== movTok) return;
+        Object.keys(origDev).forEach(function (k) { if (!(k in snapDev)) delete origDev[k]; });
+        Object.keys(snapDev).forEach(function (k) { origDev[k] = snapDev[k]; });
+        moved.forEach(function (x) { x['顧客ID'] = fromCust; });
+        reindex();
+        softRender();
+        // 移すだけ済んでいた時のために、その分を裏で読み直す（画面は止めない）
+        ['device', 'activity', 'repair', 'maintenance'].forEach(refreshPartSoon);
         if (e && e.error === 'unauthorized') return;
-        showMsg((e && e.message) || '保存できませんでした。');
-        ACT.refreshFull();          // 移すだけ済んでいた時のために、最新を読み込み直す
+        var again = openForm('device', Object.assign({}, snapDev, data), null);
+        var af = again && again.querySelector('form');
+        if (af) {
+          af._forceDirty = true;
+          if (movDraft) af._draftId = movDraft;
+          var am = af.querySelector('.msg'); am.textContent = (e && e.message) || '移せませんでした。'; am.hidden = false;
+        }
       });
       return;
     }
@@ -2066,7 +2096,7 @@ function submitRecordForm(form, next) {
     if (key === 'activity') S.actRange = {};
     reindex();
     S.alertsStale = true;
-    toast(r.created ? schema.label + 'を追加しました' : '保存しました');
+    toast((r.created ? schema.label + 'を追加しました' : '保存しました') + (r.translated && r.translated.length ? '（韓国語を日本語に訳しました。原文も残しています）' : ''));
     if (draftId) { draftDropId(draftId); delete S.sending[draftId]; setTimeout(function () { draftDropId(draftId); if (S.D && $('draftBar')) softRender(); }, 1200); }
     S.savedAt[key + ':' + r.record[idField]] = Date.now();
     noteSaved(key, r.record);

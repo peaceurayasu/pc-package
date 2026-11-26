@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.138.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -95,11 +95,11 @@ var P_CARD = {
       devLabel(id) || id, [custName(d['顧客ID']), d['設置場所'], d['利用者'], devStamp(d) ? '更新 ' + devStamp(d).slice(5, 16).replace('-', '/') : ''].filter(function (x) { return x; }).join('・'), isPendingCust(d['顧客ID']) ? 'unassigned' : '', memoText(d));
   },
   act: function (a) {
-    return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + quickDoneHtml('activity', a, 'span') + (a._pending ? ' ' + pill('保存中…', 'warn') : '') + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + (a['会議で共有'] === 'はい' ? ' ' + pill('共有', 'brand') : '') + photoMark('activity', a['対応ID']),
+    return pCard('editRecord:activity', a['対応ID'], esc(a['受付日']) + ' ' + statusPill(a['ステータス']) + quickDoneHtml('activity', a, 'span') + staleHtml('activity', a) + (a._pending ? ' ' + pill('保存中…', 'warn') : '') + (a['対応種別'] ? ' ' + esc(a['対応種別']) : '') + (a['会議で共有'] === 'はい' ? ' ' + pill('共有', 'brand') : '') + photoMark('activity', a['対応ID']),
       custName(a['顧客ID']) + (a['機器ID'] ? '　' + devLabel(a['機器ID']) : ''), a['内容'], '', memoText(a));
   },
   rep: function (r) {
-    return pCard('editRecord:repair', r['修理ID'], esc(r['受付日']) + ' ' + statusPill(r['ステータス']) + quickDoneHtml('repair', r, 'span') + (r._pending ? ' ' + pill('保存中…', 'warn') : '') + (r['種別'] ? ' ' + esc(r['種別']) : '') + photoMark('repair', r['修理ID']),
+    return pCard('editRecord:repair', r['修理ID'], esc(r['受付日']) + ' ' + statusPill(r['ステータス']) + quickDoneHtml('repair', r, 'span') + staleHtml('repair', r) + (r._pending ? ' ' + pill('保存中…', 'warn') : '') + (r['種別'] ? ' ' + esc(r['種別']) : '') + photoMark('repair', r['修理ID']),
       r['件名'], [custName(r['顧客ID']), r['預かり品'], r['型番']].filter(function (x) { return x; }).join('・'), '', memoText(r));
   },
   lic: function (l) {
@@ -977,6 +977,7 @@ VIEWS.customer = function () {
     '<div class="head"><h1>' + esc(c['顧客名']) + '</h1>' + contractPill(c['保守契約']) + (c['状態'] === '停止' ? pill('停止') : '') +
       '<button type="button" class="btn" data-act="printCustomer">印刷・PDFにする</button>' +
       '<button type="button" class="btn" data-act="editRecord:customer" data-id="' + esc(id) + '">顧客の情報を編集</button></div>' +
+    recentLineHtml(id, acts, reps, mnts) +
     (function () {
       // スマホ：会社の情報と要対応はたたんで、タブをすぐ押せるようにする（v0.108.0）
       var info = '<section class="panel"><div class="pad"><dl class="facts">' +
@@ -999,6 +1000,24 @@ VIEWS.customer = function () {
  * 今開いているタブが「その他」の中なら、「その他」のところにその名前を出す。
  */
 var CUST_TABS_MAIN = ['devices', 'activities', 'repairs', 'maint', 'licenses', 'memos'];
+/** v0.140.0：顧客の画面の一番上の「最近の動き」（最後の対応・最後の保守・未完了の数）。押すと、その記録・タブが開く */
+function recentLineHtml(id, acts, reps, mnts) {
+  var parts = [];
+  var md = function (s) { s = String(s || ''); return s.length >= 10 ? Number(s.slice(5, 7)) + '/' + Number(s.slice(8, 10)) : s; };
+  if (S.have.act) {
+    var last = acts.filter(function (a) { return !a._pending; }).slice().sort(function (a, b) { return cmp(b['受付日'] + b['対応ID'], a['受付日'] + a['対応ID']); })[0];
+    parts.push(last
+      ? '<button type="button" class="rl-item" data-act="editRecord:activity" data-id="' + esc(last['対応ID']) + '"><b>最後の対応</b>' + esc(md(last['受付日'])) + (last['対応種別'] ? ' ' + esc(last['対応種別']) : '') +
+        '<span class="rl-text">' + esc(String(last['内容'] || '').split('\n')[0]) + '</span></button>'
+      : '<span class="rl-item"><b>最後の対応</b>なし</span>');
+  }
+  var lm = (mnts && mnts[0] && mnts[0]['実施日']) || IDX.lastMaint[id];
+  parts.push('<span class="rl-item"><b>最後の保守</b>' + (lm ? esc(md(lm)) + (daysUntil(lm) !== null ? '（' + (-daysUntil(lm)) + '日前）' : '') : 'なし') + '</span>');
+  var oa = S.have.act ? acts.filter(isOpenActivity).length : null, or = S.have.rep ? reps.filter(isOpenRepair).length : null;
+  if (oa !== null) parts.push('<button type="button" class="rl-item" data-act="sub" data-sub="activities"><b>未完了の対応</b>' + (oa ? '<span class="warn-t">' + oa + '件</span>' : '0件') + '</button>');
+  if (or !== null) parts.push('<button type="button" class="rl-item" data-act="sub" data-sub="repairs"><b>未完了の修理</b>' + (or ? '<span class="warn-t">' + or + '件</span>' : '0件') + '</button>');
+  return '<div class="recentline" aria-label="最近の動き">' + parts.join('') + '</div>';
+}
 function custTabsHtml(tabs) {
   var btn = function (t) { return '<button type="button" role="tab" data-act="sub" data-sub="' + t[0] + '" aria-selected="' + (S.sub === t[0]) + '">' + esc(t[1]) + '</button>'; };
   var main = tabs.filter(function (t) { return CUST_TABS_MAIN.indexOf(t[0]) !== -1; });
@@ -1626,7 +1645,7 @@ function repCols() {
   return REP_COLS || (REP_COLS = [COL.repDate, COL.repCustomer, COL.repTitle, COL.repKind, COL.repItems,
     { label: 'ステータス', html: function (r) {
       var n = repElapsed(r);
-      return statusPill(r['ステータス']) + quickDoneHtml('repair', r) + (isOpenRepair(r) && n !== null ? '<span class="minor">' + (repIsLong(r) ? pill(n + '日経過', 'danger') : n + '日経過') + '</span>' : '');
+      return statusPill(r['ステータス']) + quickDoneHtml('repair', r) + staleHtml('repair', r) + (isOpenRepair(r) && n !== null ? '<span class="minor">' + (repIsLong(r) ? pill(n + '日経過', 'danger') : n + '日経過') + '</span>' : '');
     }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
     COL.repDone,
     { label: '担当', html: function (r) { return esc(r['担当スタッフ']); }, key: function (r) { return r['担当スタッフ']; }, cls: 'nowrap', ml: '担当' }]);
@@ -2077,6 +2096,8 @@ var SETTING_FIELDS = [
   ['ウェブアプリURL', 'text', 'デプロイしたURL（…/exec）。お客様ページのURLを作るのに使います'],
   ['保証期限の手前日数', 'number:3650', 'この日数以内になったら「保証がもうすぐ切れる」として出します'],
   ['スタッフに認証情報を見せる', 'yesno', '「いいえ」にすると、パスワード類を表示できるのは管理者だけになります'],
+  ['韓国語を日本語に訳す', 'yesno', '対応・修理・保守・社内メモの文に韓国語（ハングル）があったら、保存の時に日本語に訳します。原文も下に残します'],
+  ['放置の目安の日数', 'number:3650', '未完了の対応・修理で、この日数以上動き（更新）が無いものを、一覧で目立たせます。0で目立たせません'],
   ['レンタル機器を使う', 'yesno', '「いいえ」にすると、レンタルの画面と返却のアラートを出しません'],
   ['営業・案件ツール（テスト版）を使う', 'yesno', '「いいえ」にすると、案件・営業の画面と、その要対応を出しません（テスト版）'],
   ['案件の納期の手前日数', 'number:3650', '案件の納期がこの日数以内になったものを要対応に出します（納期を過ぎたものは常に出します。テスト版）'],
@@ -2130,7 +2151,7 @@ var ALERT_SETTING_FIELDS = [
 var SETTING_GROUPS = [
   ['会社と画面', 'お客様ページ・印刷・ログインの後に出る画面', ['自社名', '開いた直後の画面', 'ウェブアプリURL']],
   ['収集ツールの仮受付', '新しい顧客のPCを、トークンなしで先に受ける時だけ「はい」にします（閉じ忘れに注意）', ['トークンなしの仮受付']],
-  ['使う機能', '使わない機能は「いいえ」にすると、画面から消えます', ['レンタル機器を使う', '営業・案件ツール（テスト版）を使う', '案件の納期の手前日数', 'スタッフに認証情報を見せる', '添付をリンクで共有する', 'レポートは公開した月だけ見せる', '保証期限の手前日数']],
+  ['使う機能', '使わない機能は「いいえ」にすると、画面から消えます', ['レンタル機器を使う', '営業・案件ツール（テスト版）を使う', '案件の納期の手前日数', 'スタッフに認証情報を見せる', '韓国語を日本語に訳す', '放置の目安の日数', '添付をリンクで共有する', 'レポートは公開した月だけ見せる', '保証期限の手前日数']],
   ['保守のご報告書', '顧客の「1年の振り返り」で使います。「保守がなかったら」の金額は、この単価×対応の回数で出します（顧客の「年間保守料金」と比べます）', ['スポット料金：訪問（円/回）', 'スポット料金：リモート（円/回）', 'スポット料金：電話（円/回）', '契約更新のお知らせ（日前）']],
   ['定期保守の日程（自動作成）', '「定期保守 実施状況」の「日程を自動で作る」で使います。土日・祝日を除き、先月と同じ曜日・同じ市区町村でまとめます', ['定期保守のカレンダーID', '定期保守の1日の上限（社）', '定期保守の10台あたりの時間（分）', '定期保守の開始時刻', '定期保守の終了時刻', '定期保守の移動時間（分）']],
   ['ミーティングのスケジュール', 'Google カレンダーの今週の予定を、ミーティングに出します（読むだけ。予定は変えません）', ['カレンダーID', 'カレンダーの表示名', '納品の予定に使う言葉', '納品以外の予定も出す']],

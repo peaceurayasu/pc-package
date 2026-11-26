@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.138.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -555,6 +555,19 @@ function refreshPartNow() {
   S.lastRefreshAt = Date.now();
   ACT.refreshAll(null, { auto: true, silent: true, groups: groups });
 }
+// ---- v0.140.0：PC のショートカットキー（文字を打っている時・窓が開いている時は効かない。Esc で窓を閉じるのは前から）
+//   N … 対応を記録（顧客の画面なら、その顧客で）　／ … その画面の検索欄へ
+document.addEventListener('keydown', function (e) {
+  if (!S.D || !S.ready || isPhone() || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  var a = document.activeElement;
+  if (a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return;
+  if ($('modals').children.length || (S.view === 'customer' && S.sub === 'layout') || $('acct').open) return;
+  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); ACT.quickNew({ dataset: { key: 'activity' }, closest: function () { return null; } }); return; }
+  if (e.key === '/') {
+    var box = Array.prototype.filter.call(document.querySelectorAll('#main input[type="search"]'), function (x) { return x.offsetParent !== null && !x.disabled; })[0];
+    if (box) { e.preventDefault(); box.focus(); if (box.select) box.select(); }
+  }
+});
 setInterval(function () { autoRefresh(false); }, 60 * 1000);
 var hiddenAt = 0;
 document.addEventListener('visibilitychange', function () {
@@ -562,6 +575,15 @@ document.addEventListener('visibilitychange', function () {
   if (hiddenAt && Date.now() - hiddenAt >= AUTO_AWAY_MS && Date.now() - (S.lastRefreshAt || S.loadedAt || 0) >= AUTO_AWAY_MS) setTimeout(function () { autoRefresh(true); }, 800);
   hiddenAt = 0;
 });
+/** 窓の選ぶ欄（ボタンの並び・プルダウン）に値を入れる（v0.140.0） */
+function setFormChoice(form, name, value) {
+  var el = form.elements[name];
+  if (!el) return;
+  el.value = value;
+  var set = form.querySelector('[data-chips="' + name + '"]');
+  if (set) Array.prototype.forEach.call(set.querySelectorAll('[data-chip]'), function (b) { b.setAttribute('aria-pressed', String(b.dataset.chip === value)); });
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
 /** 窓が開いていたら、閉じた時に描き直す。開いていなければ、すぐ描き直す */
 function softRender() {
   if ($('modals').children.length) S.renderPending = true; else render();
@@ -873,6 +895,22 @@ var ACT = {
       toast((key === 'activity' ? '対応' : '修理') + 'を完了にしました');
       refreshPartSoon(key); softRender();
     }).catch(function (e) { delete el.dataset.busy; el.textContent = '✓ 完了'; failToast(e); });
+  },
+  // v0.140.0：作業開始・終了（対応の窓）
+  workStart: function (el) {
+    var form = el.closest('form'), inp = form && form.elements['開始日時'];
+    if (!inp) return;
+    inp.value = nowYmdHm(); inp.classList.remove('bad'); inp.dispatchEvent(new Event('input', { bubbles: true }));
+    toast('開始日時に ' + inp.value + ' を入れました');
+  },
+  workEnd: function (el) {
+    var form = el.closest('form'), inp = form && form.elements['完了日時'];
+    if (!inp) return;
+    inp.value = nowYmdHm(); inp.classList.remove('bad'); inp.dispatchEvent(new Event('input', { bubbles: true }));
+    setFormChoice(form, 'ステータス', S.D.activityDone);
+    var st = form.elements['開始日時'];
+    var mins = st && st.value ? Math.round((new Date(inp.value.replace(' ', 'T')) - new Date(st.value.replace(' ', 'T'))) / 60000) : NaN;
+    toast('完了日時に ' + inp.value + ' を入れ、ステータスを完了にしました' + (isFinite(mins) && mins >= 0 ? '（作業 ' + (mins >= 60 ? Math.floor(mins / 60) + '時間' : '') + (mins % 60) + '分）' : '') + '。「保存」で記録します');
   },
   // PC の入力画面：顧客を先に選ぶ（v0.133.0）
   homeCustPick: function (el) { S.homeCust = el.dataset.id; S.homeCustQ = ''; noteRecentCust(el.dataset.id); render(); },
@@ -2278,6 +2316,7 @@ document.addEventListener('submit', function (e) {
       D.rentalOn = r.settings['レンタル機器を使う'] !== 'いいえ';
       D.bizOn = r.settings['営業・案件ツール（テスト版）を使う'] !== 'いいえ';
       D.repairLongDays = Number(r.settings['修理の長期化の日数']) || 0;
+      D.staleDays = r.settings['放置の目安の日数'] === undefined ? 3 : Number(r.settings['放置の目安の日数']) || 0;
       if (!D.me.startView) D.startView = START_KEY[r.settings['開いた直後の画面']] ? r.settings['開いた直後の画面'] : D.startViews[0];
       S.alertsStale = true; S.files = null; S.cal = null;
       // RSS の設定を保存した時の表示（読みにいくのは、毎朝の処理か「いますぐ更新」）

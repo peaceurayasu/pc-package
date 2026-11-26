@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -271,6 +271,53 @@ function customerIdOf_(key, row) {
 }
 
 // ---------------------------------------------------------------------------
+// v0.140.0：韓国語（ハングル）の文を、保存の時に日本語に訳す（設定「韓国語を日本語に訳す」）
+//   ハングルのある行だけを訳す（日本語の行はそのまま）。長い文の欄は、下に原文も残す。
+//   すでに訳した文（原文の印がある）を直した時は、印より上の新しいハングルの行だけを訳し、原文の所に足す
+// ---------------------------------------------------------------------------
+const TRANSLATE_KEYS = { activity: true, repair: true, maintenance: true, memo: true };
+const HANGUL_RE = /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7A3]/;
+const TRANSLATE_MARK = '――― 原文（韓国語）―――';
+function koToJa_(lines) {
+  if (!lines.length) return [];
+  const joined = LanguageApp.translate(lines.join('\n'), 'ko', 'ja');
+  const out = String(joined || '').split('\n');
+  if (out.length === lines.length) return out;
+  return lines.map(function (l) { return String(LanguageApp.translate(l, 'ko', 'ja') || l); });      // 行の数が合わない時は、1行ずつ
+}
+/** @param {Object=} prev 直す前の記録（あれば、前と同じ行は訳し直さない。訳した後もハングルが残る行（名前など）を、直すたびに訳さないため） */
+function translateKorean_(key, data, settings, prev) {
+  if (!TRANSLATE_KEYS[key] || !data || (settings && settings['韓国語を日本語に訳す'] === NO)) return [];
+  const done = [];
+  ENTITIES[key].fields.forEach(function (f) {
+    if (f.type !== 'longtext' && f.name !== '件名') return;
+    const v = data[f.name];
+    if (typeof v !== 'string' || !HANGUL_RE.test(v)) return;
+    const at = v.indexOf(TRANSLATE_MARK);
+    const head = at === -1 ? v : v.slice(0, at);
+    const tail = at === -1 ? '' : v.slice(at + TRANSLATE_MARK.length).replace(/^\n+/, '').replace(/\s+$/, '');
+    const lines = head.replace(/\s+$/, '').split('\n');
+    const same = {};
+    if (prev && typeof prev[f.name] === 'string') String(prev[f.name]).split(TRANSLATE_MARK)[0].split('\n').forEach(function (l) { same[l] = true; });
+    const idx = [];
+    lines.forEach(function (l, i) { if (HANGUL_RE.test(l) && !same[l]) idx.push(i); });
+    if (!idx.length) return;
+    let ja;
+    try { ja = koToJa_(idx.map(function (i) { return lines[i]; })); } catch (e) { console.warn('翻訳できませんでした（そのまま保存します）: ' + e); return; }
+    const orig = idx.map(function (i) { return lines[i]; });
+    idx.forEach(function (i, n) { lines[i] = ja[n] || lines[i]; });
+    let out = lines.join('\n');
+    if (f.type === 'longtext') {
+      const full = out + '\n\n' + TRANSLATE_MARK + '\n' + (tail ? tail + '\n' : '') + orig.join('\n');
+      if (full.length <= (f.max || 5000)) out = full;
+    }
+    data[f.name] = out;
+    done.push(f.name);
+  });
+  return done;
+}
+
+// ---------------------------------------------------------------------------
 // 登録・編集の共通処理
 // ---------------------------------------------------------------------------
 function saveEntity_(key, params, after) {
@@ -283,6 +330,12 @@ function saveEntity_(key, params, after) {
   // 選択肢とスタッフの名前は、ロックの前に控えから読んでおく（v0.18.0。ロックの中でシートを読まない）
   const ctx0 = { options: getOptions_(), staffNames: activeStaffNames_() };
   const tStart = Date.now();
+  let translated = [];      // ロックの前に訳す（v0.140.0）
+  if (TRANSLATE_KEYS[key] && Object.keys(data).some(function (k) { return typeof data[k] === 'string' && HANGUL_RE.test(data[k]); })) {
+    let prev = null;
+    try { prev = id ? findById_(ent.sheet, ent.idField, id) : null; } catch (e) { prev = null; }
+    translated = translateKorean_(key, data, getSettings_(), prev);
+  }
   // v0.136.0：同じ保存を2回受けても、2件にしない。画面は電波が切れた時、同じ reqId でもう一度送る
   //   （1回目がサーバーに届いていて、返事だけが届かなかったこともある）。1回目の返事を6時間覚えておき、2回目はそれを返す
   const reqKey = typeof p.reqId === 'string' && /^r[0-9a-z]{6,40}$/.test(p.reqId) ? 'req_' + me.id + '_' + p.reqId : '';
@@ -342,6 +395,7 @@ function saveEntity_(key, params, after) {
     const saved = { record: toClient_(key, echoRow_(ent.sheet, existing, changes)), created: false };
     return after ? Object.assign(saved, after(Object.assign({}, existing, changes), me)) : saved;
   }
+  if (translated.length) res.translated = translated;
   res.srvMs = Date.now() - tStart;      // サーバーで使った時間（画面の下の「読み込み：…」に出す。v0.88.0）
   // 控えの作り直しは、画面がこのあと別に呼ぶ warmAfterSave で（v0.112.0。保存の返事を待たせない）
   if (key !== 'credential') res.warm = ent.sheet;

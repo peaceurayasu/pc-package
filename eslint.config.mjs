@@ -9,7 +9,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 
 // GAS が用意しているもの
 const GAS_GLOBALS = [
-  'SpreadsheetApp', 'CacheService', 'PropertiesService', 'LockService', 'Utilities', 'Session',
+  'SpreadsheetApp', 'LanguageApp', 'CacheService', 'PropertiesService', 'LockService', 'Utilities', 'Session',
   'HtmlService', 'ContentService', 'DriveApp', 'MailApp', 'ScriptApp', 'UrlFetchApp', 'CalendarApp',
   'GmailApp', 'DocumentApp', 'Logger', 'console'
 ];

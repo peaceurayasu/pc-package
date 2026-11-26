@@ -1,5 +1,5 @@
 <style>
-:root { --file-version: "@file-version 0.138.0"; }
+:root { --file-version: "@file-version 0.140.0"; }
 /* 配置の考え方：上に固定の帯（名前・画面の切り替え・利用者）、その下は1本の列。一覧は表、編集は重ねた窓。 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
@@ -755,6 +755,20 @@ details.rest[open] > summary { margin-bottom: 10px; }
 /* v0.134.0：一覧の「完了」ボタン */
 .qdone { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 10px; border: 1px solid var(--ok); border-radius: 999px; background: var(--panel); color: var(--ok); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; line-height: 1.6; }
 .qdone:hover { background: var(--ok-soft); }
+/* v0.140.0：放置（未完了で、しばらく動きが無いもの） */
+.pill.stale { background: #fff1d6; color: #8a5a00; border: 1px solid #f0c674; font-weight: 600; }
+tr:has(.pill.stale) > td { background: #fffaf0; }
+tr:has(.pill.stale) > td:first-child { box-shadow: inset 4px 0 0 #e0a63a; }
+.plist button:has(.pill.stale) { box-shadow: inset 4px 0 0 #e0a63a; background: #fffaf0; }
+.workbtns { display: flex; gap: 8px; margin-top: 6px; }
+.workbtns .workbtn { flex: 1; }
+.recentline { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 10px 14px; margin: 0 0 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; font-size: 13px; }
+.recentline b { font-weight: 700; margin-right: 4px; color: var(--muted); }
+.recentline .rl-item { display: inline-flex; gap: 4px; align-items: baseline; min-width: 0; }
+.recentline .rl-text { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 28em; }
+.recentline button.rl-item { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-align: left; }
+.recentline button.rl-item:hover .rl-text { text-decoration: underline; }
+#printArea .pill.stale { display: none; }
 #printArea .qdone { display: none; }
 /* v0.133.0：PC の入力画面（① 顧客 → ② 記録するもの） */
 .hstep > h2 { display: flex; align-items: center; gap: 10px; }

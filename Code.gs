@@ -9,7 +9,7 @@
  * 公開関数：doGet / getBootstrap / listActivities
  * （収集ツールからの受信 doPost は Receiver.gs）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.138.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.140.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 /**
  * 初期設定が済んでいるか（シートが全部あるか）。
@@ -185,6 +185,7 @@ function bootCore_(me) {
     licenseWarnDays: settingDays_(settings, 'ライセンス期限の手前日数', 30),
     warrantyWarnDays: settingDays_(settings, '保証期限の手前日数', 60),
     repairLongDays: settingDays_(settings, '修理の長期化の日数', 7),
+    staleDays: settingDays_(settings, '放置の目安の日数', 3),      // v0.140.0：未完了で、この日数動きが無いものを一覧で目立たせる
     options: getOptions_(),
     optionCategories: OPTION_CATEGORIES,
     staffNames: activeStaffNames_(),

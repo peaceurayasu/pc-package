@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.138.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -16,6 +16,19 @@ var NAV_MORE = ['notices', 'settings'];
  * 一覧の行に出す「完了」ボタン（v0.134.0）。完了していない対応・修理だけ。押すと、開かずに完了にする（完了日時・完了日も入る）。
  * tag：表の中は button、スマホのカード（カード自体がボタン）の中は span にする
  */
+/** v0.140.0：未完了で、最後の更新から「放置の目安の日数」以上たったもの。日数を返す（目立たせないものは 0） */
+function staleDaysOf(key, r) {
+  var limit = S.D.staleDays === undefined ? 3 : Number(S.D.staleDays) || 0;
+  if (!limit || !r || r._pending) return 0;
+  if (key === 'activity' ? !isOpenActivity(r) : !isOpenRepair(r)) return 0;
+  var base = String(r['更新日時'] || r['登録日時'] || r['受付日'] || '').slice(0, 10);
+  var d = daysUntil(base);
+  return d !== null && -d >= limit ? -d : 0;
+}
+function staleHtml(key, r) {
+  var n = staleDaysOf(key, r);
+  return n ? ' <span class="pill stale" title="最後の更新から' + n + '日、動きがありません">' + n + '日動きなし</span>' : '';
+}
 function quickDoneHtml(key, r, tag) {
   var open = key === 'activity' ? isOpenActivity(r) : isOpenRepair(r);
   if (!open || r._pending) return '';
@@ -179,7 +192,7 @@ function feedStatusHtml() {
 // ---- 各ページの使い方（短く） ----
 var HELP = {
   mmaint: ['保守', ['顧客を選ぶと、収集ツールの情報が新しい順にPCが並びます。', 'PCを押すと、イベント・ウイルス対策・更新などをまとめて確認できます。', '備考を書いて「この台は完了」。すぐ ✓ が付き、保守の記録ができます。', '最後に「報告書を撮って終わる」→「書類をスキャン」で報告書を付けます。', '「戻る」は、PC → 一覧 → 顧客を選ぶ、の順に戻ります。']],
-  home: ['入力', ['「保守を始める」で、定期保守の顧客を1台ずつ進めます（スポットは名前で探す）。', '大きいボタンで、対応・修理・ライセンス・機器・メモを記録します。', '「探して直す」で、機器やライセンスを探して開けます。', '入力の途中で閉じても、下書きに残ります（「続きから」で戻せます）。', '一覧は下のメニュー、設定・ログアウトは右上の「☰ メニュー」から。']],
+  home: ['入力', ['「保守を始める」で、定期保守の顧客を1台ずつ進めます（スポットは名前で探す）。', '大きいボタンで、対応・修理・ライセンス・機器・メモを記録します。', '「探して直す」で、機器やライセンスを探して開けます。', '入力の途中で閉じても、下書きに残ります（「続きから」で戻せます）。', '一覧は下のメニュー、設定・ログアウトは右上の「☰ メニュー」から。', 'PC では、N で対応を記録、／ で検索欄へ、Esc で窓を閉じます。']],
   meeting: ['ミーティング', ['毎週の会議用。上から話す順に並んでいます。', '②その週の対応 ⑤前回決まったこと ⑥議題メモ。', '月初は「先月のまとめ」（対応ランキングなど）も出ます。', '週は上の矢印で切替。行を押すと編集が開きます。', '⑥のメモは「社内メモに残す」で、次回の⑤に出ます。']],
   customers: ['顧客情報', ['上に、要対応・今月の定期保守（まだのところだけ）・社内メモ。赤は急ぎの時だけ。', '検索欄で、全社の機器をシリアル・利用者・顧客名から探せます。', '顧客はカードで並びます。押すと、その顧客の機器や履歴が開きます。', '右上の名前のメニューに、自分の設定・全て読み直す。', '「⟳ 更新」は、見ている画面の新着だけを読みます。ログアウトは確認つき。']],
   customer: ['顧客の画面', ['タブで、機器・対応履歴・修理・ライセンスなどを切り替えます。', 'スキャンは何枚かを1つのPDFにまとめて付けられます。', '機器の窓の「別の顧客へ移す」で、納品先へ移せます（管理者）。', '「レポート」の月を、お客様ページに出せます（管理者）。', '「1年の振り返り」で、12か月の対応・修理・保守の回数を見られます。']],
@@ -550,7 +563,7 @@ var COL = {
   actCustomer: { label: '顧客', html: function (a) { return esc(custName(a['顧客ID'])); }, key: function (a) { return custName(a['顧客ID']); }, cls: 'cname' },
   actKind: { label: '種別', html: function (a) { return esc(a['対応種別']) + (a['インシデント種別'] ? '<span class="minor">' + esc(a['インシデント種別']) + '</span>' : ''); }, key: function (a) { return a['対応種別']; }, cls: 'nowrap' },
   actBody: { label: '内容', html: function (a) { return '<span>' + linkify(a['内容']) + '</span>' + photoMark('activity', a['対応ID']) + (a['機器ID'] ? '<span class="minor">' + esc(devLabel(a['機器ID'])) + '</span>' : ''); }, cls: 'clamp' },
-  actStatus: { label: 'ステータス', html: function (a) { return statusPill(a['ステータス']) + quickDoneHtml('activity', a); }, key: function (a) { return a['ステータス']; }, cls: 'nowrap' },
+  actStatus: { label: 'ステータス', html: function (a) { return statusPill(a['ステータス']) + quickDoneHtml('activity', a) + staleHtml('activity', a); }, key: function (a) { return a['ステータス']; }, cls: 'nowrap' },
   actStaff: { label: 'スタッフ', html: function (a) { return esc(a['受付スタッフ']); }, key: function (a) { return a['受付スタッフ']; }, cls: 'nowrap', ml: '受付' },
 
   repDate: { label: '受付日', html: function (r) { return esc(r['受付日']); }, key: function (r) { return r['受付日'] + r['修理ID']; }, cls: 'nowrap' },
@@ -558,7 +571,7 @@ var COL = {
   repTitle: { label: '件名', html: function (r) { return esc(r['件名']) + photoMark('repair', r['修理ID']) + (r['型番'] ? '<span class="minor">' + esc(r['型番']) + '</span>' : ''); }, key: function (r) { return r['件名']; }, cls: 'title' },
   repKind: { label: '種別', html: function (r) { return esc(r['種別']); }, key: function (r) { return r['種別']; }, cls: 'nowrap' },
   repItems: { label: '預かり品', html: function (r) { return esc(r['預かり品']); }, ml: '預かり' },
-  repStatus: { label: 'ステータス', html: function (r) { return statusPill(r['ステータス']) + quickDoneHtml('repair', r); }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
+  repStatus: { label: 'ステータス', html: function (r) { return statusPill(r['ステータス']) + quickDoneHtml('repair', r) + staleHtml('repair', r); }, key: function (r) { return r['ステータス']; }, cls: 'nowrap' },
   repDone: { label: '完了日', html: function (r) { return r['完了日'] ? esc(r['完了日']) : DASH; }, key: function (r) { return r['完了日']; }, cls: 'nowrap', ml: '完了' },
 
   licCustomer: { label: '顧客', html: function (l) { return esc(custName(l['顧客ID'])); }, key: function (l) { return custName(l['顧客ID']); }, cls: 'cname' },

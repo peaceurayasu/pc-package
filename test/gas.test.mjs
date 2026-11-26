@@ -380,3 +380,26 @@ test('新しい番号：覚えた番号の次を使い、手で足した大き�
     assert.equal(fullReads, 2);
   } finally { g.tableHead_ = realHead; }
 });
+
+test('韓国語の翻訳：ハングルの行だけを訳し、長い文の欄は原文を下に残す。訳したものを直した時は、新しい行だけ', () => {
+  const g = G.$global;
+  const calls = [];
+  g.LanguageApp = { translate: (t, from, to) => { calls.push([t, from, to]); return t.split('\n').map((l) => '訳:' + l).join('\n'); } };
+  try {
+    const data = { '内容': '日本語の行\n안녕하세요\nもう1行\n감사합니다', '件名': 'x' };
+    assert.deepEqual(plain(G.translateKorean_('activity', data, {})), ['内容']);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][1], 'ko');
+    const mark = G.TRANSLATE_MARK;
+    assert.equal(data['内容'], '日本語の行\n訳:안녕하세요\nもう1行\n訳:감사합니다\n\n' + mark + '\n안녕하세요\n감사합니다');
+    // 訳した文に、韓国語の行を足して直した
+    const again = { '内容': data['内容'].replace('もう1行', 'もう1行\n좋아요') };
+    G.translateKorean_('activity', again, {}, { '内容': data['内容'] });      // 前と同じ行（訳した後もハングルが残る行も）は訳し直さない
+    assert.equal(again['内容'], '日本語の行\n訳:안녕하세요\nもう1行\n訳:좋아요\n訳:감사합니다\n\n' + mark + '\n안녕하세요\n감사합니다\n좋아요');
+    // 設定で「いいえ」・対象外の記録・ハングルなし は何もしない
+    const off = { '内容': '안녕' };
+    assert.deepEqual(plain(G.translateKorean_('activity', off, { '韓国語を日本語に訳す': 'いいえ' })), []);
+    assert.deepEqual(plain(G.translateKorean_('customer', { '備考': '안녕' }, {})), []);
+    assert.deepEqual(plain(G.translateKorean_('repair', { '内容': 'ふつうの日本語' }, {})), []);
+  } finally { delete g.LanguageApp; }
+});
