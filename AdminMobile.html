@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMOBILE = '@file-version 0.141.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMOBILE = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // スマホの一覧（v0.16.0）
 //   スマホでは、数字のタイル・グラフ・Windows情報・Tips などのダッシュボードは出さない。
@@ -136,6 +136,24 @@ function pAlertSheetInner() {
       '<button type="button" class="btn small" data-act="resolveAlert" data-key="' + esc(a.key) + '">対応済みにする</button></div></div>';
   }).join('') + '</div>';
 }
+// v0.142.0：メーカー窓口（PC もスマホも同じ。探す欄で、名前・窓口・メモから絞る）
+var MAKER_Q = '';
+function makerListHtml() {
+  var t = MAKER_Q.trim();
+  var rows = (S.D.makers || []).filter(function (m) { return !t || textMatch(t, [m['メーカー名'], m['窓口'], m['メモ'], m['電話']]); })
+    .sort(function (a, b) { return cmp(a['メーカー名'], b['メーカー名']); });
+  if (!rows.length) return '<p class="empty">' + (t ? '当てはまる窓口はありません。' : 'まだ登録されていません。「＋ 窓口を追加」から、よく電話するメーカーを入れてください。') + '</p>';
+  return '<div class="mkgrid">' + rows.map(function (m) {
+    return '<div class="mkcard' + (m._pending ? ' pending' : '') + '">' + makerCardInner(m, false) +
+      (m._pending ? '' : '<button type="button" class="link small" data-act="editRecord:maker" data-id="' + esc(m['メーカーID']) + '">直す</button>') + '</div>';
+  }).join('') + '</div>';
+}
+VIEWS.makers = function () {
+  if (!S.have.misc) return '<div class="head"><h1>メーカー窓口</h1></div>' + notReadyHtml();
+  return '<div class="head"><h1>メーカー窓口</h1><button type="button" class="btn primary' + (isPhone() ? ' small' : '') + '" data-act="newRecord" data-key="maker">＋ 窓口を追加</button></div>' +
+    '<section class="panel"><div class="pad"><input type="search" id="mkQ" data-mkq="1" autocomplete="off" placeholder="メーカー名・窓口・メモで探す" value="' + esc(MAKER_Q) + '">' +
+    '<div id="mkList">' + makerListHtml() + '</div></div></section>';
+};
 var PHONE_VIEWS = {
   customers: function () {
     var alerts = '';
@@ -2187,7 +2205,7 @@ function settingInputHtml(f, id) {
 var OPTION_GROUPS = [
   ['💻 PC管理（機器）', '機器の登録・一覧で選ぶ値', [['機器種類', '機器の「種類」', 'PC管理とレンタル機器の「種類」'], ['メーカー', '機器の「メーカー」', 'PC管理とレンタル機器の「メーカー」'], ['購入元', '機器の「購入元」', 'PC管理'], ['機器の状況', '機器の「状況」', 'PC管理']]],
   ['🏢 顧客', '顧客の登録で選ぶ値', [['地域', '顧客の「地域」', '顧客。ミーティングの並び順にも使います']]],
-  ['🛠 対応履歴', '対応を記録する時に選ぶ値', [['対応種別', '対応の「対応種別」', '対応履歴'], ['インシデント種別', '対応の「インシデント種別」', '対応履歴'], ['受付方法', '対応の「受付方法」', '対応履歴'], ['対応のステータス', '対応の「ステータス」', '対応履歴'], ['対応の定型文', '対応の「定型文」', '対応履歴の入力のひと押し文']]],
+  ['🛠 対応履歴', '対応を記録する時に選ぶ値', [['対応種別', '対応の「対応種別」', '対応履歴'], ['インシデント種別', '対応の「インシデント種別」', '対応履歴'], ['受付方法', '対応の「受付方法」', '対応履歴'], ['対応のステータス', '対応の「ステータス」', '対応履歴'], ['対応の定型文', '対応の「定型文」', '対応履歴の入力のひと押し文'], ['翻訳の言い換え', '韓国語の翻訳の言い換え', '対応・修理などの韓国語の翻訳']]],
   ['🔧 修理', '修理を受け付ける時に選ぶ値', [['修理種別', '修理の「種別」', '修理'], ['修理のステータス', '修理の「ステータス」', '修理']]],
   ['🔑 ライセンス', 'ライセンスを登録する時の候補', [['ライセンス製品', 'ライセンスの「製品名」', '製品マスター。入力欄に候補として出ます（ここに無い名前も入れられます）']]],
   ['🗓 保守', '保守の実施を記録する時に選ぶ値', [['保守種別', '保守実施の「種別」', 'ミーティングの保守の欄']]],
@@ -2239,6 +2257,7 @@ function keepScroll(fn) { var y = window.scrollY; fn(); window.scrollTo(0, y); }
 var OPTION_HINT = {
   '地域': 'ミーティングの並び順にも使います。',
   '対応種別': '対応履歴の「対応種別」です（訪問・リモートの回数を数える項目は、名前を変えずに残してください）。', '対応の定型文': '対応を記録する時、ひと押しで内容に入れる文です（40文字まで）。',
+  '翻訳の言い換え': '韓国語を日本語に訳す時の言い換えです。「前=後」で入れます。前が韓国語なら訳す前に（例：재부팅=再起動）、日本語なら訳した後に（例：リブート=再起動）置き換えます。よく使う PC の言葉は、最初から入っています。',
   '機器の状況': 'PC管理の「状況」です。基本の値（🔒）は消せません。足した値は「使用中」と同じ扱い（廃棄だけが別）です。',
   '対応のステータス': '対応履歴の「ステータス」です。足した値は「未完了」として扱い、対応の保留の要対応にも出ます。',
   '修理のステータス': '修理の「ステータス」です。足した値は「未完了」として扱います（「完了」にした時だけ完了日が入ります）。',

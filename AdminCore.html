@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINCORE = '@file-version 0.139.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINCORE = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 状態
 // ===========================================================================
@@ -493,7 +493,7 @@ function sessionExpired() {
 // S.have … 届いたグループ。S.ready … 今の画面に要るぶんが届いたか。S.all … 全部届いたか。
 // 届く前の画面は「読み込んでいます…」を出す。
 var REST_EMPTY = { diagnostics: [], licenses: [], allocations: [], repairs: [], repairTotal: 0, activities: [], activityTotal: 0, activityMonthCounts: {},
-  maintenances: [], memos: [], notices: [], rentals: [], loans: [], projects: [], saleslogs: [], photoCounts: {}, wininfo: [], alerts: [], notify: null };
+  maintenances: [], memos: [], notices: [], rentals: [], loans: [], projects: [], saleslogs: [], makers: [], photoCounts: {}, wininfo: [], alerts: [], notify: null };
 // ---- 前回のデータを端末に残す（v0.112.0）
 //   ログインした時、前回の残りのデータ（対応・修理・ライセンスなど）をすぐ画面に出し、裏で差分だけ受けて入れ替える。
 //   残すのはこの端末のブラウザの中だけ（同じスタッフ・同じ版・7日以内の時だけ使う）。ログアウトで消す。
@@ -501,7 +501,7 @@ var REST_EMPTY = { diagnostics: [], licenses: [], allocations: [], repairs: [], 
 var SNAP_KEY = 'pcpkg_snap';
 var SNAP_MAX_AGE = 7 * 86400000;
 var SNAP_GROUP_KEYS = { act: ['activities', 'activityTotal', 'activityMonthCounts'], win: ['wininfo'], lic: ['licenses', 'allocations', 'rentals', 'loans'],
-  rep: ['repairs', 'repairTotal'], mnt: ['maintenances'], misc: ['memos', 'notices', 'photoCounts', 'projects', 'saleslogs', 'notify'], alert: [] };
+  rep: ['repairs', 'repairTotal'], mnt: ['maintenances'], misc: ['memos', 'notices', 'photoCounts', 'projects', 'saleslogs', 'makers', 'notify'], alert: [] };
 /** 送る量を小さくするのと同じ形（列名＋値）にする。サーバーの packRecords_ と同じ */
 function packRecordsClient(v) {
   if (Array.isArray(v)) {
@@ -713,7 +713,7 @@ function pcByCust() { return !!(S.p && S.p.pcmode && S.p.pcmode.f === 'cust'); }
 /** 記録の窓を開くのに要るグループ。機器は収集ツールの情報だけ、顧客は何も要らない（v0.79.0） */
 function groupsForKey(key) { return key === 'device' ? ['diag'] : key === 'customer' ? [] : ALL_GROUPS; }
 var ALL_GROUPS = ['alert', 'act', 'diag', 'win', 'lic', 'rep', 'mnt', 'misc'];
-var RECORD_GROUP = { activity: 'act', repair: 'rep', license: 'lic', rental: 'lic', loan: 'lic', maintenance: 'mnt', memo: 'misc', notice: 'misc', wininfo: 'win', project: 'misc', saleslog: 'misc' };     // 記録の種類 → それが入っているグループ
+var RECORD_GROUP = { maker: 'misc', activity: 'act', repair: 'rep', license: 'lic', rental: 'lic', loan: 'lic', maintenance: 'mnt', memo: 'misc', notice: 'misc', wininfo: 'win', project: 'misc', saleslog: 'misc' };     // 記録の種類 → それが入っているグループ
 var PREFETCH_ORDER = ['alert', 'mnt', 'misc', 'win', 'lic', 'rep', 'act', 'diag'];     // 先読みの順（重いものは後ろ）
 var groupBusy = {};          // 読んでいる途中のグループ → その約束（二重に読まないため）
 var prefetchFails = {};      // 先読みに失敗した回数（続けて失敗するものは、あきらめる）
@@ -729,6 +729,7 @@ function viewNeed(view, sub) {
     case 'licenses': case 'rentals': return ['lic'];
     case 'notices': return ['misc', 'win'];
     case 'projects': return ['misc'];
+    case 'makers': return ['misc'];
     case 'settings': return ['misc'];
     case 'mmaint': return ['mnt', 'diag', 'lic'];
     case 'meeting': return ['act', 'rep', 'mnt', 'lic', 'misc'];      // ミーティングが使うぶんだけ（v0.95.0。要対応・Windows情報・収集ツールは使わない）

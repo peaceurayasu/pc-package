@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.141.1';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.142.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -288,17 +288,66 @@ function forCustomer_(rec) {
   ['内容', '件名'].forEach(function (k) { if (rec && typeof rec[k] === 'string') rec[k] = withoutOriginal_(rec[k]); });
   return rec;
 }
-function koToJa_(lines) {
+/**
+ * v0.142.0：翻訳の言い換え。[前, 後]
+ *   前がハングル … 訳す前に置き換える（PC の言葉を、決まった日本語にしておく）
+ *   前が日本語など … 訳した後に置き換える（機械翻訳が出しがちな言い方を、ふだんの言い方に直す）
+ * 設定の「選択肢」→「翻訳の言い換え」に「前=後」で足せる（足したものが先に効く）
+ */
+const TRANSLATE_GLOSSARY = [
+  // 訳す前（韓国語 → 日本語の言葉）
+  ['윈도우 업데이트', 'Windows Update'], ['윈도우업데이트', 'Windows Update'], ['윈도우', 'Windows'], ['재부팅', '再起動'], ['리부팅', '再起動'],
+  ['백신', 'ウイルス対策ソフト'], ['공유기', 'ルーター'], ['라우터', 'ルーター'], ['복합기', '複合機'], ['프린터', 'プリンター'], ['드라이버', 'ドライバー'],
+  ['공유 폴더', '共有フォルダー'], ['공유폴더', '共有フォルダー'], ['노트북', 'ノートPC'], ['데스크탑', 'デスクトップPC'], ['데스크톱', 'デスクトップPC'],
+  ['랜선', 'LANケーブル'], ['랜 케이블', 'LANケーブル'], ['와이파이', 'Wi-Fi'], ['아웃룩', 'Outlook'], ['엑셀', 'Excel'], ['파워포인트', 'PowerPoint'],
+  ['오피스', 'Office'], ['원격 지원', 'リモートサポート'], ['원격지원', 'リモートサポート'], ['용지 걸림', '紙詰まり'], ['토너', 'トナー'],
+  ['비밀번호', 'パスワード'], ['이메일', 'メール'], ['백업', 'バックアップ'], ['정기 점검', '定期点検'], ['정기점검', '定期点検'], ['견적', '見積もり'],
+  // 訳した後（日本語の言い方をそろえる）
+  ['リブート', '再起動'], ['再起動を行いました', '再起動しました'], ['ウィンドウズ', 'Windows'], ['ワクチン', 'ウイルス対策ソフト'], ['共有器', 'ルーター'],
+  ['ノートブック', 'ノートPC'], ['プリンタ ', 'プリンター '], ['プリンタ。', 'プリンター。'], ['ドライバ ', 'ドライバー '], ['ドライバ。', 'ドライバー。'],
+  ['複写機', '複合機'], ['顧客様', 'お客様'], ['お客さん', 'お客様'], ['ランケーブル', 'LANケーブル'], ['ワイファイ', 'Wi-Fi'], ['用紙詰まり', '紙詰まり']
+];
+function translateGlossary_() {
+  let extra = [];
+  try {
+    extra = ((getOptions_() || {})['翻訳の言い換え'] || []).filter(function (o) { return o.active !== false; }).map(function (o) {
+      const m = /^(.+?)\s*[=＝]\s*(.*)$/.exec(String(o.value || ''));
+      return m ? [m[1].trim(), m[2].trim()] : null;
+    }).filter(function (x) { return x && x[0]; });
+  } catch (e) { extra = []; }
+  const all = extra.concat(TRANSLATE_GLOSSARY);
+  // 長いものから置き換える（「윈도우 업데이트」を「윈도우」より先に）
+  const sortLen = function (a, b) { return b[0].length - a[0].length; };
+  return {
+    pre: all.filter(function (g) { return HANGUL_RE.test(g[0]); }).sort(sortLen),
+    post: all.filter(function (g) { return !HANGUL_RE.test(g[0]); }).sort(sortLen)
+  };
+}
+function replaceAll_(s, pairs) {
+  pairs.forEach(function (g) { s = s.split(g[0]).join(g[1]); });
+  return s;
+}
+function koToJa_(lines, gloss) {
   if (!lines.length) return [];
-  const joined = LanguageApp.translate(lines.join('\n'), 'ko', 'ja');
-  const out = String(joined || '').split('\n');
-  if (out.length === lines.length) return out;
-  return lines.map(function (l) { return String(LanguageApp.translate(l, 'ko', 'ja') || l); });      // 行の数が合わない時は、1行ずつ
+  gloss = gloss || { pre: [], post: [] };
+  const pre = lines.map(function (l) { return replaceAll_(l, gloss.pre); });
+  // 置き換えでハングルが無くなった行は、訳さない
+  const need = [];
+  pre.forEach(function (l, i) { if (HANGUL_RE.test(l)) need.push(i); });
+  const out = pre.slice();
+  if (need.length) {
+    const src = need.map(function (i) { return pre[i]; });
+    let got = String(LanguageApp.translate(src.join('\n'), 'ko', 'ja') || '').split('\n');
+    if (got.length !== src.length) got = src.map(function (l) { return String(LanguageApp.translate(l, 'ko', 'ja') || l); });      // 行の数が合わない時は、1行ずつ
+    need.forEach(function (i, n) { out[i] = got[n]; });
+  }
+  return out.map(function (l) { return replaceAll_(l, gloss.post); });
 }
 /** @param {Object=} prev 直す前の記録（あれば、前と同じ行は訳し直さない。訳した後もハングルが残る行（名前など）を、直すたびに訳さないため） */
 function translateKorean_(key, data, settings, prev) {
   if (!TRANSLATE_KEYS[key] || !data || (settings && settings['韓国語を日本語に訳す'] === NO)) return [];
   const done = [];
+  let gloss = null;
   ENTITIES[key].fields.forEach(function (f) {
     if (f.type !== 'longtext' && f.name !== '件名') return;
     const v = data[f.name];
@@ -313,7 +362,7 @@ function translateKorean_(key, data, settings, prev) {
     lines.forEach(function (l, i) { if (HANGUL_RE.test(l) && !same[l]) idx.push(i); });
     if (!idx.length) return;
     let ja;
-    try { ja = koToJa_(idx.map(function (i) { return lines[i]; })); } catch (e) { console.warn('翻訳できませんでした（そのまま保存します）: ' + e); return; }
+    try { gloss = gloss || translateGlossary_(); ja = koToJa_(idx.map(function (i) { return lines[i]; }), gloss); } catch (e) { console.warn('翻訳できませんでした（そのまま保存します）: ' + e); return; }
     const orig = idx.map(function (i) { return lines[i]; });
     idx.forEach(function (i, n) { lines[i] = ja[n] || lines[i]; });
     let out = lines.join('\n');
@@ -325,6 +374,16 @@ function translateKorean_(key, data, settings, prev) {
     done.push(f.name);
   });
   return done;
+}
+
+/** シートが無ければ、見出しだけのシートを作る（withLock_ の中で呼ぶ。v0.142.0） */
+function ensureSheet_(sheetName) {
+  const ss = getSs_();
+  if (ss.getSheetByName(sheetName)) return;
+  const wanted = SCHEMA[sheetName].map(function (c) { return c[0]; });
+  const sheet = ss.insertSheet(sheetName, ss.getNumSheets());
+  sheet.getRange(1, 1, 1, wanted.length).setValues([wanted]);
+  forgetSheet_(sheetName);
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +419,7 @@ function saveEntity_(key, params, after) {
     return out;
   });
   function saveBody_() {
+    if (key === 'maker') ensureSheet_(ent.sheet);      // v0.142.0：初期設定の前でも、最初の保存でシートを作る
     ensureColumns_(ent.sheet);
     let existing = id ? findById_(ent.sheet, ent.idField, id) : null;
     // 退避した古い対応を直す時は、元のシートに戻してから（v0.112.0）
@@ -598,6 +658,7 @@ function saveRental(params) { return api_(function () { return saveEntity_('rent
 function saveLoan(params) { return api_(function () { return saveEntity_('loan', params); }); }
 function saveProject(params) { return api_(function () { return saveEntity_('project', params); }); }
 function saveSalesLog(params) { return api_(function () { return saveEntity_('saleslog', params); }); }
+function saveMaker(params) { return api_(function () { return saveEntity_('maker', params); }); }
 
 // 公開関数：削除（管理者）。@param {{token:string, id:string}} params
 function deleteActivity(params) { return api_(function () { return deleteEntity_('activity', params); }); }
@@ -612,6 +673,7 @@ function deleteRental(params) { return api_(function () { return deleteEntity_('
 function deleteLoan(params) { return api_(function () { return deleteEntity_('loan', params); }); }
 function deleteProject(params) { return api_(function () { return deleteEntity_('project', params); }); }
 function deleteSalesLog(params) { return api_(function () { return deleteEntity_('saleslog', params); }); }
+function deleteMaker(params) { return api_(function () { return deleteEntity_('maker', params); }); }
 
 /**
  * 見込みの案件を、顧客につなげる／受注して開発に入る（v0.82.0。v0.81.0 の convertDeal を案件1本にした）。

@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINMODALS = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINMODALS = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 重ねる窓
 // ===========================================================================
@@ -1235,11 +1235,11 @@ document.addEventListener('pointercancel', layoutEndDrag);
 
 // ---- 登録・編集のフォーム ----
 var COLLECTION = { customer: 'customers', device: 'devices', license: 'licenses', activity: 'activities', repair: 'repairs',
-  maintenance: 'maintenances', memo: 'memos', notice: 'notices', wininfo: 'wininfo', rental: 'rentals', loan: 'loans', project: 'projects', saleslog: 'saleslogs' };
+  maintenance: 'maintenances', memo: 'memos', notice: 'notices', wininfo: 'wininfo', rental: 'rentals', loan: 'loans', project: 'projects', maker: 'makers', saleslog: 'saleslogs' };
 var SAVE_FN = { customer: 'saveCustomer', device: 'saveDevice', license: 'saveLicense', activity: 'saveActivity', repair: 'saveRepair', credential: 'saveCredential',
-  maintenance: 'saveMaintenance', memo: 'saveMemo', notice: 'saveNotice', wininfo: 'saveWinInfo', rental: 'saveRental', loan: 'saveLoan', project: 'saveProject', saleslog: 'saveSalesLog' };
+  maintenance: 'saveMaintenance', memo: 'saveMemo', notice: 'saveNotice', wininfo: 'saveWinInfo', rental: 'saveRental', loan: 'saveLoan', project: 'saveProject', maker: 'saveMaker', saleslog: 'saveSalesLog' };
 var DELETE_FN = { activity: 'deleteActivity', repair: 'deleteRepair', license: 'deleteLicense', credential: 'deleteCredential',
-  maintenance: 'deleteMaintenance', memo: 'deleteMemo', notice: 'deleteNotice', wininfo: 'deleteWinInfo', rental: 'deleteRental', loan: 'deleteLoan', device: 'deleteDevice', project: 'deleteProject', saleslog: 'deleteSalesLog' };
+  maintenance: 'deleteMaintenance', memo: 'deleteMemo', notice: 'deleteNotice', wininfo: 'deleteWinInfo', rental: 'deleteRental', loan: 'deleteLoan', device: 'deleteDevice', project: 'deleteProject', maker: 'deleteMaker', saleslog: 'deleteSalesLog' };
 var FIELD_LABEL = { '貸出先': '現場名', '顧客ID': '顧客', '機器ID': '機器', '元の対応ID': '元になった対応', '対象ID': '対象', 'レンタルID': 'レンタル機器', '修理ID': '修理案件のID', '案件ID': '案件' };
 // 顧客を選ばなくてもよい種類で、顧客の欄に添える説明
 var CUSTOMER_HINT = { memo: '選ばなければ、全体のメモになります。', notice: '選ばなければ、全ての顧客のお客様ページに出ます。', loan: '顧客でない相手に貸す時は、下の「現場名」に書きます。', project: '見込みの段階（問い合わせ・提案中・見積）は、空でも構いません。一覧の「顧客にする」「受注」で自動で入ります。', saleslog: '顧客でない相手の時は、「相手先」か「案件」を入れます。' };
@@ -1308,6 +1308,13 @@ function fieldHtml(key, f, value, ctx) {
   var id = 'f' + ctx.seq + '_' + ctx.i;
   var name = esc(f.name);
   var label = f.label || FIELD_LABEL[f.name] || f.name;
+  // v0.142.0：「はい／いいえ」をチェックで入れる項目（対応のピン留め・会議で共有）。値は隠した欄に「はい」「いいえ」で持つ
+  if (f.type === 'yesno' && f.check) {
+    var on = String(value === '' || value === undefined || value === null ? (f.def || 'いいえ') : value) === 'はい';
+    return '<div class="field chkfield" data-field="' + name + '"><input type="hidden" name="' + name + '" value="' + (on ? 'はい' : 'いいえ') + '">' +
+      '<label class="chkline" for="' + id + '"><input type="checkbox" id="' + id + '" data-yn="' + name + '"' + (on ? ' checked' : '') + '><span>' + esc(label) + '</span></label>' +
+      (f.hint ? '<small class="fhint">' + esc(f.hint) + '</small>' : '') + '</div>';
+  }
   var req = f.required ? ' required' : '';
   var common = ' id="' + id + '" name="' + name + '"' + req;
   var input, group = false, wide = WIDE[f.type];
@@ -1482,7 +1489,8 @@ function previewRecord(key, rec) {
   };
   var rows = fields.map(show).join('');
   var extra = '';
-  if (key === 'device') extra = '<div class="box" id="diagBox">' + diagBoxInner(id) + '</div>';
+  if (key === 'device') extra = makerBoxHtml(rec['メーカー']) + '<div class="box" id="diagBox">' + diagBoxInner(id) + '</div>';
+  if (key === 'repair') extra = makerBoxHtml(repairMaker(rec));
   var hasPhoto = PHOTO_LABEL[key] && S.D.photoKinds.indexOf(key) !== -1;
   var canEdit = !rec._pending;
   var wrap = openModal(
@@ -1549,6 +1557,7 @@ function openForm(key, rec, preset) {
   if (key === 'project' && !isNew) extra = '<div class="row"><button type="button" class="btn small" data-act="salesFromProject" data-id="' + esc(id) + '">この案件の営業を記録</button></div>';
   if (key === 'saleslog' && !isNew && !rec['案件ID']) extra = '<div class="row"><button type="button" class="btn small" data-act="projectFromSales" data-id="' + esc(id) + '">この内容で案件にする</button></div>';
   if (key === 'rental' && !isNew) extra = '<div class="box" id="rtHist">' + rentalHistoryHtml(id) + '</div>';
+  if ((key === 'device' || key === 'repair') && !isNew) extra += makerBoxHtml(key === 'device' ? rec['メーカー'] : repairMaker(rec));      // v0.142.0
   if (key === 'loan' && !isNew) extra = '<div class="row"><button type="button" class="btn small" data-act="printLoan" data-id="' + esc(id) + '">' + (rec['返却日'] ? '返却確認書を印刷' : '貸出書を印刷') + '</button></div>';
   // 同じ種類（同じ記録）の入力しかけが残っていたら、窓の上で知らせる
   var offer = draftOpening ? null : draftsLive().filter(function (d) { return d.key === key && d.id === (id || ''); })[0];      // v0.135.0：送っている最中・もう保存されたものは出さない
@@ -1749,7 +1758,7 @@ function sameValue(a, b) {
 }
 /** 前の記録と、窓に入っている値の違い → [{label, before, after}] */
 /** スマホの下のメニュー：自分で選んだ4つ（選んでいなければ、PC管理・対応・修理・ライセンス） */
-var BNAV_CHOICES = [['customers', '顧客情報'], ['activities', '対応'], ['repairs', '修理'], ['licenses', 'ライセンス'], ['meeting', 'ミーティング'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ']];
+var BNAV_CHOICES = [['customers', '顧客情報'], ['activities', '対応'], ['repairs', '修理'], ['licenses', 'ライセンス'], ['meeting', 'ミーティング'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ'], ['makers', 'メーカー窓口']];
 function bnavOptions() { return BNAV_CHOICES.filter(function (c) { return navVisible(c[0]); }); }
 function bnavList() {
   var opts = bnavOptions(), byId = {}, out = [];
@@ -1758,6 +1767,43 @@ function bnavList() {
   ['customers', 'activities', 'repairs', 'licenses'].forEach(function (id) { if (byId[id] && out.indexOf(byId[id]) === -1 && out.length < 4) out.push(byId[id]); });
   opts.forEach(function (c) { if (out.indexOf(c) === -1 && out.length < 4) out.push(c); });
   return out;
+}
+// ---- v0.142.0：メーカー窓口（サポートの電話・受付時間など）
+function makerNorm(s) { return String(s || '').toLowerCase().replace(/株式会社|（株）|\(株\)|有限会社|inc\.?|corp\.?|co\.,?\s*ltd\.?|ltd\.?|japan|ジャパン|日本/g, '').replace(/[\s・･.,、。\-‐ー_（）()]/g, ''); }
+function makerNames(m) {
+  var names = [m['メーカー名']];
+  var al = /別名[：:]\s*([^\n]+)/.exec(String(m['メモ'] || ''));
+  if (al) names = names.concat(al[1].split(/[、,，\/]/));
+  return names.map(makerNorm).filter(function (x) { return x; });
+}
+/** 機器の「メーカー」などから、その窓口を探す（名前の書き方の違い・別名も見る） */
+function findMaker(name) {
+  var n = makerNorm(name);
+  if (!n || !S.D || !S.D.makers) return null;
+  return S.D.makers.filter(function (m) { return makerNames(m).indexOf(n) !== -1; })[0] ||
+    S.D.makers.filter(function (m) { return makerNames(m).some(function (x) { return x.length >= 3 && (n.indexOf(x) !== -1 || x.indexOf(n) !== -1); }); })[0] || null;
+}
+function repairMaker(r) {
+  if (!r) return '';
+  var d = r['機器ID'] ? IDX.dev[r['機器ID']] : null;
+  return (d && d['メーカー']) || r['メーカー'] || '';
+}
+function safeUrl(v) { v = String(v || '').trim(); if (/^www\./i.test(v)) v = 'https://' + v; return /^https?:\/\/[^\s<>"']+$/i.test(v) ? v : ''; }
+function telHref(v) { return 'tel:' + String(v || '').replace(/[^0-9+]/g, ''); }
+/** 窓口の中身（カード・機器の窓で同じ） */
+function makerCardInner(m, compact) {
+  var tel = String(m['電話'] || '').split(/[\/、,]|\s{2,}/).map(function (x) { return x.trim(); }).filter(function (x) { return x; });
+  return '<div class="mk-top"><b class="mk-name">' + esc(m['メーカー名']) + '</b>' + (m['窓口'] ? '<span class="mk-desk">' + esc(m['窓口']) + '</span>' : '') + '</div>' +
+    '<div class="mk-acts">' + tel.map(function (t) { return '<a class="btn small primary" href="' + esc(telHref(t)) + '">📞 ' + esc(t) + '</a>'; }).join('') +
+      (safeUrl(m['URL']) ? '<a class="btn small" href="' + esc(safeUrl(m['URL'])) + '" target="_blank" rel="noopener noreferrer">🌐 サポートのページ</a>' : '') +
+      (m['メール'] ? '<a class="btn small" href="mailto:' + esc(m['メール']) + '">✉ メール</a>' : '') + '</div>' +
+    (m['受付時間'] ? '<div class="mk-time">🕘 ' + esc(m['受付時間']) + '</div>' : '') +
+    (m['メモ'] && !compact ? '<div class="mk-memo">' + linkify(m['メモ']) + '</div>' : m['メモ'] ? '<div class="mk-memo">' + esc(String(m['メモ']).split('\n')[0]) + '</div>' : '');
+}
+function makerBoxHtml(name) {
+  var m = findMaker(name);
+  if (!m) return name && S.D && S.D.makers ? '<div class="box mkbox none"><span class="sub">「' + esc(name) + '」の窓口はまだ登録されていません。</span> <button type="button" class="btn small" data-act="newMaker" data-name="' + esc(name) + '">＋ 窓口を登録</button></div>' : '';
+  return '<div class="box mkbox"><div class="mk-cap">メーカーの窓口</div>' + makerCardInner(m, true) + '<button type="button" class="link small" data-act="editRecord:maker" data-id="' + esc(m['メーカーID']) + '">窓口の内容を見る・直す</button></div>';
 }
 /** スマホの「☰ メニュー」に並べる画面（下のメニューに無いものだけ。v0.136.0） */
 function menuScreens() {

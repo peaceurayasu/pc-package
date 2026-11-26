@@ -5,9 +5,9 @@
  * このファイルは「何を持つか」だけを書く。処理は書かない。
  * シートの列を足す時は SCHEMA に追記して「初期設定」を実行する（既存の列は消さない・並べ替えない）。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.141.1';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.142.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
-const APP_VERSION = '0.141.1';
+const APP_VERSION = '0.142.0';
 
 // ---------------------------------------------------------------------------
 // 差し替え漏れの確かめ（v0.111.0）
@@ -16,21 +16,21 @@ const APP_VERSION = '0.141.1';
 // ---------------------------------------------------------------------------
 const FILE_MANIFEST = {
   'Admin.html': '0.141.0',
-  'AdminActions.html': '0.140.0',
-  'AdminCore.html': '0.139.0',
-  'AdminCss.html': '0.140.0',
-  'AdminMobile.html': '0.141.0',
-  'AdminModals.html': '0.140.0',
-  'AdminViews.html': '0.140.0',
-  'Alerts.gs': '0.141.0',
+  'AdminActions.html': '0.142.0',
+  'AdminCore.html': '0.142.0',
+  'AdminCss.html': '0.142.0',
+  'AdminMobile.html': '0.142.0',
+  'AdminModals.html': '0.142.0',
+  'AdminViews.html': '0.142.0',
+  'Alerts.gs': '0.142.0',
   'Auth.gs': '0.138.0',
-  'Code.gs': '0.141.0',
-  'Config.gs': '0.141.1',
+  'Code.gs': '0.142.0',
+  'Config.gs': '0.142.0',
   'Db.gs': '0.138.0',
   'Portal.gs': '0.140.0',
   'Portal.html': '0.141.0',
   'Receiver.gs': '0.138.0',
-  'Records.gs': '0.141.1',
+  'Records.gs': '0.142.0',
   'Setup.gs': '0.138.0'
 };
 const APP_NAME = '管理システム';
@@ -64,6 +64,7 @@ const SHEET_TIPS = 'Tips';
 const SHEET_PROJECTS = '開発案件';
 const SHEET_DEALS = '商談';
 const SHEET_SALESLOGS = '営業活動';
+const SHEET_MAKERS = 'メーカー窓口';      // v0.142.0：メーカーのサポート窓口（電話・受付時間など）
 
 // ---------------------------------------------------------------------------
 // 列の定義  [列名, 型]
@@ -196,6 +197,10 @@ SCHEMA[SHEET_DEALS] = [
   ['失注理由', 'text'], ['案件ID', 'text'], ['登録日時', 'datetime'], ['更新日時', 'datetime']
 ];
 // 営業活動のログ（テスト版）。訪問・電話・メールの記録と、次回アクション
+SCHEMA[SHEET_MAKERS] = [
+  ['メーカーID', 'text'], ['メーカー名', 'text'], ['窓口', 'text'], ['電話', 'text'], ['受付時間', 'text'], ['URL', 'text'],
+  ['メール', 'text'], ['メモ', 'text'], ['登録日時', 'datetime'], ['更新日時', 'datetime']
+];
 SCHEMA[SHEET_SALESLOGS] = [
   ['営業ID', 'text'], ['日付', 'date'], ['区分', 'text'], ['商談ID', 'text'], ['顧客ID', 'text'], ['相手先', 'text'],
   ['内容', 'text'], ['次回アクション', 'text'], ['次回予定日', 'date'], ['アクション完了', 'text'], ['担当', 'text'],
@@ -215,7 +220,7 @@ SCHEMA[SHEET_AUDIT] = [
 const SHEET_ORDER = [
   SHEET_CUSTOMERS, SHEET_DEVICES, SHEET_DIAGNOSTICS, SHEET_ACTIVITIES, SHEET_REPAIRS, SHEET_MAINT, SHEET_LICENSES, SHEET_ALLOCATIONS,
   SHEET_CREDENTIALS, SHEET_MEMOS, SHEET_NOTICES, SHEET_ATTACH, SHEET_LAYOUTS, SHEET_RENTALS, SHEET_LOANS,
-  SHEET_PROJECTS, SHEET_SALESLOGS,
+  SHEET_PROJECTS, SHEET_SALESLOGS, SHEET_MAKERS,
   SHEET_WININFO, SHEET_TIPS, SHEET_OPTIONS, SHEET_STAFF, SHEET_SETTINGS, SHEET_ALERTS, SHEET_AUDIT
 ];
 
@@ -411,6 +416,8 @@ const OPTION_DEFAULTS = {
   // 状態の選択肢（v0.82.0）。基本の値は OPTION_BASE にあり、ここには「後から足した値」だけが入る
   '機器の状況': [], '対応のステータス': [], '修理のステータス': [], 'レンタルの状態': [], '案件の状態': [],
   '案件の種類': PROJECT_KINDS.slice(), '営業の区分': SALES_KINDS.slice(),
+  // v0.142.0：韓国語を日本語に訳す時の言い換え（「前=後」。前がハングルなら訳す前、そうでなければ訳した後に置き換える）
+  '翻訳の言い換え': [],
   // 対応を記録する時に、ひと押しで「内容」に入れられる文（40文字まで）
   '対応の定型文': [
     'Windows Updateを適用し、再起動して動作を確認。',
@@ -667,8 +674,8 @@ const ENTITIES = {
       { name: '受付日', type: 'date', required: true, def: 'today' },
       { name: '完了日時', type: 'datetime' },
       { name: '先方担当者', type: 'text', max: 60 },
-      { name: 'ピン留め', type: 'yesno', def: NO },
-      { name: '会議で共有', type: 'yesno', def: NO },
+      { name: 'ピン留め', type: 'yesno', def: NO, check: true },      // v0.142.0：チェックで入れる
+      { name: '会議で共有', type: 'yesno', def: NO, check: true },
       { name: 'ひとこと', type: 'text', max: 200 }
     ]
   },
@@ -711,6 +718,18 @@ const ENTITIES = {
       { name: '本文', type: 'longtext', required: true, max: 3000, quick: true },
       { name: 'ピン留め', type: 'yesno', def: NO, quick: true },
       { name: '作成者', type: 'staff', def: 'me' }
+    ]
+  },
+  maker: {
+    label: 'メーカー窓口', sheet: SHEET_MAKERS, idField: 'メーカーID', prefix: 'MK', digits: 4, nameField: 'メーカー名',
+    fields: [
+      { name: 'メーカー名', type: 'text', required: true, max: 60, quick: true, hint: '機器の「メーカー」と同じ名前にすると、機器の画面にこの窓口が出ます（別の書き方はメモに「別名：○○」）' },
+      { name: '窓口', type: 'text', max: 60, quick: true, hint: '例：法人向けサポート・修理受付' },
+      { name: '電話', type: 'text', max: 60, quick: true },
+      { name: '受付時間', type: 'text', max: 60, quick: true, hint: '例：平日 9:00〜18:00' },
+      { name: 'URL', type: 'text', max: 300, quick: true, hint: 'サポートのページ・修理の申し込みページ' },
+      { name: 'メール', type: 'text', max: 120 },
+      { name: 'メモ', type: 'longtext', max: 2000, quick: true, hint: '保証の確かめ方・聞かれること（シリアル・購入日など）・別名' }
     ]
   },
   notice: {
@@ -854,6 +873,7 @@ const CACHE_DEPS = {
   loans: [SHEET_LOANS],
   projects: [SHEET_PROJECTS],
   saleslogs: [SHEET_SALESLOGS],
+  makers: [SHEET_MAKERS],
   photoCounts: [SHEET_ATTACH],
   wininfo: [SHEET_WININFO],
   // 要対応は、元のシートごとに分けて持つ（設定のしきい値と、顧客の状態・保守契約は、どれにも効く）

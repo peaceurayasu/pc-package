@@ -1,5 +1,5 @@
 <style>
-:root { --file-version: "@file-version 0.140.0"; }
+:root { --file-version: "@file-version 0.142.0"; }
 /* 配置の考え方：上に固定の帯（名前・画面の切り替え・利用者）、その下は1本の列。一覧は表、編集は重ねた窓。 */
 :root {
   --bg: #f3f5f8; --panel: #ffffff; --ink: #18222d; --muted: #5b6876; --line: #dde3ea; --line-soft: #edf0f4;
@@ -755,6 +755,27 @@ details.rest[open] > summary { margin-bottom: 10px; }
 /* v0.134.0：一覧の「完了」ボタン */
 .qdone { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 10px; border: 1px solid var(--ok); border-radius: 999px; background: var(--panel); color: var(--ok); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; line-height: 1.6; }
 .qdone:hover { background: var(--ok-soft); }
+/* v0.142.0：チェックで入れる項目・メーカー窓口 */
+.field.chkfield { align-self: end; }
+.chkline { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); cursor: pointer; font-weight: 600; min-height: 44px; box-sizing: border-box; }
+.chkline input[type="checkbox"] { width: 20px; height: 20px; margin: 0; accent-color: var(--brand); flex: none; }
+.chkline:has(input:checked) { border-color: var(--brand); background: var(--brand-soft); }
+.mkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 12px; }
+.mkcard { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; }
+.mkcard.pending { opacity: .6; }
+.mk-top { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.mk-name { font-size: 16px; }
+.mk-desk { color: var(--muted); font-size: 13px; }
+.mk-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.mk-acts a { text-decoration: none; }
+.mk-time { font-size: 13px; }
+.mk-memo { font-size: 13px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+.mkbox { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.mkbox .mk-cap { font-size: 12px; font-weight: 700; color: var(--muted); }
+.mkbox.none { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+#mkQ { width: 100%; box-sizing: border-box; }
+.btn.hmaker { display: flex; align-items: center; gap: 10px; width: 100%; margin: 0 0 14px; padding: 12px 16px; font-weight: 700; text-align: left; }
+.btn.hmaker .sub { font-weight: 400; }
 /* v0.140.0：放置（未完了で、しばらく動きが無いもの） */
 .pill.stale { background: #fff1d6; color: #8a5a00; border: 1px solid #f0c674; font-weight: 600; }
 tr:has(.pill.stale) > td { background: #fffaf0; }

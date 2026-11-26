@@ -9,7 +9,7 @@
  * 公開関数：doGet / getBootstrap / listActivities
  * （収集ツールからの受信 doPost は Receiver.gs）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Code.gs'] = '0.142.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 /**
  * 初期設定が済んでいるか（シートが全部あるか）。
@@ -275,6 +275,8 @@ function bootBuilders_() {
     loans: rowsOf(SHEET_LOANS),
     projects: rowsOf(SHEET_PROJECTS),
     saleslogs: rowsOf(SHEET_SALESLOGS),
+    // v0.142.0：初期設定の前（シートがまだ無い）でも、ほかの読み込みを止めない
+    makers: function () { return getSs_().getSheetByName(SHEET_MAKERS) ? rowsOf(SHEET_MAKERS)() : []; },
     photoCounts: photoCounts_,
     wininfo: function () { return sortWinInfo_(readTable_(SHEET_WININFO).rows).map(function (r) { return publicRecord_(r); }); },
     alertStates: alertStatesForCache_
@@ -324,7 +326,7 @@ function bootGroupDefs_() {
     lic: ['licenses', 'allocations', 'rentals', 'loans'],
     rep: ['repairs'],
     mnt: ['maintenances'],
-    misc: ['memos', 'notices', 'photoCounts', 'projects', 'saleslogs']
+    misc: ['memos', 'notices', 'photoCounts', 'projects', 'saleslogs', 'makers']
   };
 }
 
@@ -381,6 +383,7 @@ function bootRest_(me, groups, lite) {
     out.photoCounts = parts.photoCounts;
     out.projects = parts.projects;
     out.saleslogs = parts.saleslogs;
+    out.makers = parts.makers;
     out.notify = me.isAdmin ? { triggerOn: dailyTriggerOn_() } : null;
   }
   if (has('win')) out.wininfo = parts.wininfo;
@@ -469,7 +472,7 @@ function changesCore_(p) {
 /** 差分で返す表（グループごとのデータ名 → ID の列）。更新日時が無い表（割当）や、軽いもの（写真の数など）は、そのまま返す */
 const VIEW_DELTA_TABLES = {
   activities: '対応ID', repairs: '修理ID', maintenances: '実施ID', licenses: 'ライセンスID', rentals: 'レンタルID', loans: '貸出ID',
-  memos: 'メモID', notices: 'お知らせID', projects: '案件ID', saleslogs: '営業ID', wininfo: '情報ID'
+  memos: 'メモID', notices: 'お知らせID', projects: '案件ID', saleslogs: '営業ID', makers: 'メーカーID', wininfo: '情報ID'
 };
 
 /**
@@ -528,6 +531,7 @@ function getViewChanges(params) {
       delta('misc', 'notices', parts.notices);
       delta('misc', 'projects', parts.projects);
       delta('misc', 'saleslogs', parts.saleslogs);
+      delta('misc', 'makers', parts.makers);
       out.full.photoCounts = parts.photoCounts;
       out.full.notify = me.isAdmin ? { triggerOn: dailyTriggerOn_() } : null;
     }

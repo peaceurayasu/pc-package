@@ -19,7 +19,7 @@
  * 公開関数：getAlerts / resolveAlert / unresolveAlert / sendAlertMailNow
  *           runDailyAlerts（時間のトリガー用）/ setupDailyTrigger / removeDailyTrigger（メニュー用）
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Alerts.gs'] = '0.142.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 function settingInt_(settings, key, fallback, max) {
   const n = parseInt(settings[key], 10);
@@ -626,7 +626,7 @@ function removeDailyTrigger() {
 function warmUpCore_() {
   cachePrime_();
   bootParts_(['customers', 'devices', 'diagnostics', 'licenses', 'allocations', 'repairs', 'activities', 'maintenances', 'memos', 'notices',
-    'rentals', 'loans', 'projects', 'saleslogs', 'photoCounts', 'wininfo', 'alertStates'].concat(ALERT_PART_NAMES));
+    'rentals', 'loans', 'projects', 'saleslogs', 'makers', 'photoCounts', 'wininfo', 'alertStates'].concat(ALERT_PART_NAMES));
   refPart_('refSettings'); refPart_('refOptions'); refPart_('refStaff');
 }
 

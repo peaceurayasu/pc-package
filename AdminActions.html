@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINACTIONS = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINACTIONS = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 書類のスキャン（v0.18.0）
 //   カメラの映像から用紙の四隅を見つけ、止まったら自動で撮る（使える端末だけ。GAS の画面は Google の枠の中なので、
@@ -896,6 +896,8 @@ var ACT = {
       refreshPartSoon(key); softRender();
     }).catch(function (e) { delete el.dataset.busy; el.textContent = '✓ 完了'; failToast(e); });
   },
+  // v0.142.0：機器の窓から、そのメーカーの窓口を登録する（メーカー名を入れて開く）
+  newMaker: function (el) { openForm('maker', null, { 'メーカー名': el.dataset.name || '' }); },
   // v0.140.0：作業開始・終了（対応の窓）
   workStart: function (el) {
     var form = el.closest('form'), inp = form && form.elements['開始日時'];
@@ -2216,6 +2218,7 @@ document.addEventListener('input', function (e) {
   if (t && t.dataset && t.dataset.mtgmemo) mtgState().memos[mtgMemoKey()] = t.value;
   if (t && t.dataset && t.dataset.mmq) { S.mm.q = t.value; var box = $('mmCustList'); if (box) box.innerHTML = mmCustListHtml(); }
   if (t && t.dataset && t.dataset.mmnote) S.mm.notes[t.dataset.mmnote] = t.value;
+  if (t && t.dataset && t.dataset.mkq) { MAKER_Q = t.value; var mkl = $('mkList'); if (mkl) mkl.innerHTML = makerListHtml(); }
 });
 // 入力の途中の内容を、端末に下書きとして残す（打つ・選ぶ・押すの後、少し待ってから）
 ['input', 'change', 'click'].forEach(function (type) {
@@ -2233,6 +2236,8 @@ window.addEventListener('pagehide', draftFlush);
 document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') draftFlush(); });
 document.addEventListener('change', function (e) {
   var t = e.target;
+  // v0.142.0：チェックで入れる「はい／いいえ」
+  if (t && t.dataset && t.dataset.yn) { var ynf = t.closest('form'); if (ynf && ynf.elements[t.dataset.yn]) ynf.elements[t.dataset.yn].value = t.checked ? 'はい' : 'いいえ'; }
   if (t && t.dataset && t.dataset.pjmove) { movePj(t.dataset.pjmove, t.value); return; }
   if (t.dataset && (t.dataset.q || t.dataset.permonth || t.dataset.perfrom || t.dataset.perto || t.dataset.layprop)) { onFilter(e); return; }
   if (t.dataset && t.dataset.photofile) { onPhotoFiles(t); return; }

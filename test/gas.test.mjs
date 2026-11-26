@@ -410,3 +410,20 @@ test('お客様に見せる文：原文（韓国語）の所は外す', () => {
   assert.equal(G.withoutOriginal_('ふつうの文'), 'ふつうの文');
   assert.deepEqual(plain(G.forCustomer_({ '内容': 'a\n' + mark + '\nb', '受付日': '2026-01-01' })), { '内容': 'a', '受付日': '2026-01-01' });
 });
+
+test('翻訳の言い換え：訳す前に PC の言葉を置き換え、ハングルが無くなった行は訳さない。訳した後の言い方もそろえる', () => {
+  const g = G.$global;
+  const calls = [];
+  g.LanguageApp = { translate: (t) => { calls.push(t); return t.split('\n').map((l) => l.replace('을 했습니다', 'をリブートしました')).join('\n'); } };
+  try {
+    const gl = { pre: [['재부팅', '再起動'], ['프린터', 'プリンター']], post: [['リブート', '再起動']] };
+    const out = plain(G.koToJa_(['프린터', '프린터 재부팅을 했습니다'], gl));
+    assert.equal(out[0], 'プリンター');                     // 置き換えだけで済んだので、訳していない
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0], 'プリンター 再起動을 했습니다');
+    assert.equal(out[1], 'プリンター 再起動をを再起動しました'.replace('をを再起動', 'を再起動'));
+    // 最初から入っている言い換えは、長いものが先
+    const def = G.translateGlossary_();
+    assert.ok(def.pre.findIndex((x) => x[0] === '윈도우 업데이트') < def.pre.findIndex((x) => x[0] === '윈도우'));
+  } finally { delete g.LanguageApp; }
+});

@@ -1,6 +1,6 @@
 <script>
 'use strict';
-var FILE_VERSION_ADMINVIEWS = '@file-version 0.140.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
+var FILE_VERSION_ADMINVIEWS = '@file-version 0.142.0';   // このファイルの版（差し替え漏れの確かめ。GAS はコメントを消すので、文字で持つ。v0.111.1）
 // ===========================================================================
 // 画面の切り替え
 // ===========================================================================
@@ -8,10 +8,10 @@ var FILE_VERSION_ADMINVIEWS = '@file-version 0.140.0';   // このファイル�
 // v0.130.0：「入力」（記録するだけの画面。スマホと同じ）を一番左に。「PC管理」は「顧客情報」に名前を変えた（設定に入っている値は「PC管理」のまま）
 var NAV = [
   ['home', '入力'], ['customers', '顧客情報'], ['activities', '対応'], ['repairs', '修理'], ['meeting', 'ミーティング'],
-  ['licenses', 'ライセンス'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ'], ['settings', '設定']
+  ['licenses', 'ライセンス'], ['rentals', 'レンタル'], ['projects', '案件・営業'], ['notices', 'お知らせ'], ['makers', 'メーカー窓口'], ['settings', '設定']
 ];
 // rest が届くまで中身を出せない画面
-var NAV_MORE = ['notices', 'settings'];
+var NAV_MORE = ['notices', 'makers', 'settings'];
 /**
  * 一覧の行に出す「完了」ボタン（v0.134.0）。完了していない対応・修理だけ。押すと、開かずに完了にする（完了日時・完了日も入る）。
  * tag：表の中は button、スマホのカード（カード自体がボタン）の中は span にする
@@ -69,7 +69,7 @@ window.addEventListener('resize', function () {
   }, 250);
 });     // 上のメニューの「その他」に入れる画面（v0.37.0）
 // 見出しの絵文字（元のPC管理ダッシュボードに合わせた。文字は変えず、表示だけで付ける。v0.46.0）
-var VIEW_ICON = { customers: '🏢', activities: '🛠', repairs: '🔧', meeting: '👥', licenses: '🔑', rentals: '📦', projects: '🧩', notices: '📢', settings: '⚙️', devices: '💻', customer: '🏢', audit: '🕒', mmaint: '🧰', home: '✏️' };
+var VIEW_ICON = { customers: '🏢', activities: '🛠', repairs: '🔧', meeting: '👥', licenses: '🔑', rentals: '📦', projects: '🧩', notices: '📢', makers: '📞', settings: '⚙️', devices: '💻', customer: '🏢', audit: '🕒', mmaint: '🧰', home: '✏️' };
 var HEAD_ICON = [['対応の多い', '🏢'], ['完了していない', '⏳'], ['月ごと', '📈'], ['内訳', '🧾'], ['週のまとめ', '📊'], ['先月', '📊'], ['対応履歴', '🛠'], ['対応したこと', '🛠'], ['修理', '🔧'], ['定期保守', '📋'], ['保守', '🧰'],
   ['この先', '⚠️'], ['前回決まったこと', '✅'], ['今週の議題', '💬'], ['ライセンス', '🔑'], ['機器', '💻'], ['顧客', '🏢'], ['認証情報', '🔐'], ['メモ', '📝'], ['ひとこと', '📝'], ['添付', '📎'],
   ['レイアウト', '🗺'], ['月次レポート', '📊'], ['お客様ページ', '🌐'], ['収集ツール', '📡'], ['スタッフ', '👤'], ['1年の振り返り', '📅'], ['一覧', '📋']];
@@ -202,6 +202,7 @@ var HELP = {
   licenses: ['ライセンス', ['期限が近い・切れたものを、右のプルダウンで絞れます。', '「割当」で、どの機器で使っているかを登録します。', '「顧客ごとにまとめる」で、顧客別に並びます。', '編集の窓で、ID・パスワード・シリアルキーも入れられます。', 'パスワードは、空のまま保存すると今のままです。']],
   projects: ['案件・営業（テスト版）', ['営業から受注・開発・納品・保守までを、1つのボードで見ます。', '顧客が未定でも登録できます。「受注」で顧客ができます。', '開発中は、納期・次にやること・URLを入れます。', '下の「営業活動」に、訪問・電話・メールを記録します。', '「状態」「種類」は、設定の「選択肢」で足せます。']],
   rentals: ['レンタル機器', ['上のカードを押すと、貸出可・貸出中・遅れで絞れます。', '検索と、種類・状況の絞り込みもあります。', '行の右のボタンで、貸出・延長・返却を記録。', '機器を押すと、貸出の履歴と貸出書の印刷。', '返却日は、昔の日付も選べます。']],
+  makers: ['メーカー窓口', ['メーカーのサポートの電話・受付時間・サポートのページをまとめておく画面です。', '電話の番号を押すと、そのままかけられます（スマホ）。番号が2つある時は「/」で区切って入れます。', '「メーカー名」を機器の「メーカー」と同じにしておくと、機器や修理の窓にも窓口が出ます。書き方が違う時は、メモに「別名：デル」のように書きます。', 'メモには、保証の確かめ方や、電話で聞かれること（シリアル・購入日など）を書いておくと便利です。']],
   notices: ['お知らせ・Windows情報', ['お知らせは、お客様ページの上に出ます。', 'Windows情報は、更新プログラムやドライバーの不具合のメモです。', 'RSS で自動で入ります（最初は「社内だけ」）。', '確かめたら「顧客に見せる」を押すと、お客様ページに出ます。', '手で足す時は「まとめて貼り付け」か「＋ 追加」。']],
   settings: ['設定', ['左の目次か、上の「設定を探す」で見たい項目へ。', '要対応に出す種類は「要対応と通知」で選びます。', '選択肢は、画面ごと（PC管理・対応・修理…）に並んでいます。', '「収集ツールの配布」で、新しいツールを全部のPCに配れます。', 'スタッフの追加・パスワードの再設定は、一番下です。']],
   audit: ['変更履歴', ['誰が・いつ・何を変えたかを見られます。', '見られるのは新しい500件まで。それより前は、スプレッドシートの「変更履歴」です。', '1年より古いぶんは、メニューで「変更履歴_退避」へ移せます。']]
@@ -215,6 +216,7 @@ var HELP_PHONE = {
 };
 // ---- 各ページの一行説明（見出しの下に出す。v0.57.0） ----
 var PAGE_INTRO = {
+  makers: 'メーカーのサポート窓口（電話・受付時間・サポートのページ）。機器の「メーカー」と同じ名前にしておくと、機器や修理の窓にも出ます。',
   customers: '会社を選ぶと、その会社のPC一覧・ライセンス一覧・会社情報が表示されます。',
   activities: 'お客様への対応（電話・訪問・リモートなど）を記録して、後から探せます。',
   repairs: '預かった機器の修理を、受付から完了まで追いかけます。',
@@ -804,6 +806,7 @@ function homePcHtml() {
       '<div class="hgrid4">' + HOME_PC_SUB.map(function (b) {
         return '<button type="button" class="hbtn small" data-act="quickNew" data-key="' + b[0] + '"><span class="hico" aria-hidden="true">' + b[1] + '</span><b>' + b[2] + '</b></button>';
       }).join('') + '</div></div></section>' +
+    '<button type="button" class="btn hmaker" data-act="nav" data-view="makers">📞 メーカー窓口<span class="sub">サポートの電話・受付時間</span><span class="grow"></span>›</button>' +      // v0.142.0
     '<section class="panel" id="homeFind"><h2>探して直す</h2><div class="hpad">' +
       '<input type="search" id="homeQ" data-homeq="1" autocomplete="off" placeholder="機器・ライセンスを探す（利用者・シリアル・顧客名）" value="' + esc(S.homeQ || '') + '">' +
       '<div id="homeHits">' + homeHitsHtml() + '</div></div></section>' +
@@ -816,6 +819,7 @@ VIEWS.home = function () {
     '<div class="hgrid" id="homeBtns">' + HOME_BTNS.map(function (b) {
       return '<button type="button" class="hbtn' + (b[3] ? ' primary' : '') + '" data-act="quickNew" data-key="' + b[0] + '"><b>' + b[1] + '</b><span>' + b[2] + '</span></button>';
     }).join('') + '</div>' +
+    '<button type="button" class="btn hmaker" data-act="nav" data-view="makers">📞 メーカー窓口<span class="sub">サポートの電話・受付時間</span><span class="grow"></span>›</button>' +      // v0.142.0
     '<section class="panel" id="homeFind"><h2>探して直す</h2><div class="hpad">' +
       '<input type="search" id="homeQ" data-homeq="1" autocomplete="off" placeholder="機器・ライセンスを探す（利用者・シリアル・顧客名）" value="' + esc(S.homeQ || '') + '">' +
       '<div id="homeHits">' + homeHitsHtml() + '</div></div></section>' +
