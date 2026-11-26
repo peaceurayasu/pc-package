@@ -5,9 +5,9 @@
  * このファイルは「何を持つか」だけを書く。処理は書かない。
  * シートの列を足す時は SCHEMA に追記して「初期設定」を実行する（既存の列は消さない・並べ替えない）。
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Config.gs'] = '0.141.1';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
-const APP_VERSION = '0.141.0';
+const APP_VERSION = '0.141.1';
 
 // ---------------------------------------------------------------------------
 // 差し替え漏れの確かめ（v0.111.0）
@@ -25,12 +25,12 @@ const FILE_MANIFEST = {
   'Alerts.gs': '0.141.0',
   'Auth.gs': '0.138.0',
   'Code.gs': '0.141.0',
-  'Config.gs': '0.141.0',
+  'Config.gs': '0.141.1',
   'Db.gs': '0.138.0',
   'Portal.gs': '0.140.0',
   'Portal.html': '0.141.0',
   'Receiver.gs': '0.138.0',
-  'Records.gs': '0.141.0',
+  'Records.gs': '0.141.1',
   'Setup.gs': '0.138.0'
 };
 const APP_NAME = '管理システム';
@@ -501,7 +501,7 @@ const SETTING_TYPES = {
   '自社名': 'text',
   '開いた直後の画面': 'start',
   'ウェブアプリURL': 'url',
-  '公開サイトのURL': 'url',
+  '公開サイトのURL': 'siteurl',
   'ライセンス期限の手前日数': 'days',
   'スポット料金：訪問（円/回）': 'count', 'スポット料金：リモート（円/回）': 'count', 'スポット料金：電話（円/回）': 'count',
   '契約更新のお知らせ（日前）': 'days',

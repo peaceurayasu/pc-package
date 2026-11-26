@@ -9,7 +9,7 @@
  *           addAllocation / removeAllocation / listCredentials / revealCredential
  *           addOption / setOptionActive / saveSettings / issuePortalToken / getPortalUrl
  */
-var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.141.0';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
+var FILE_VERSIONS_ = (typeof FILE_VERSIONS_ !== 'undefined' && FILE_VERSIONS_) || {}; FILE_VERSIONS_['Records.gs'] = '0.141.1';   // このファイルの版（差し替え漏れの確かめ。v0.111.0）
 
 // ---------------------------------------------------------------------------
 // 入力の整え
@@ -861,6 +861,12 @@ function saveSettings(params) {
         if (v && !/^https:\/\/script\.google\.com\/[A-Za-z0-9_\-\/.]+\/exec$/.test(v)) {
           throw appError_('invalid', '「' + key + '」は https://script.google.com/…/exec の形で入れてください。');
         }
+      } else if (type === 'siteurl') {
+        // v0.141.1：公開サイト（Netlify など）は https のサイトのURL。最後に「/」が無ければ付ける
+        if (v && !/^https:\/\/[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:\d+)?(\/[A-Za-z0-9_\-.\/~%]*)?$/.test(v)) {
+          throw appError_('invalid', '「' + key + '」は https://xxxx.netlify.app/ の形で入れてください。');
+        }
+        if (v && /^https:\/\/[^/]+$/.test(v)) v += '/';
       } else if (type === 'words') {
         if (v.length > 300) throw appError_('invalid', '「' + key + '」は300文字までです。');
       } else if (type === 'rssurl') {
